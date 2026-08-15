@@ -27,6 +27,7 @@ pub fn run() {
             commands::get_character_skills,
             commands::search_system,
             commands::get_recent_kills,
+            commands::get_kill_detail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

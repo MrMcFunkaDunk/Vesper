@@ -790,10 +790,32 @@ body {
   background: var(--bg-elevated);
 }
 
+.detail-avatar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .detail-portrait {
   width: 64px;
   height: 64px;
   border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg-elevated-2);
+  flex-shrink: 0;
+}
+
+.detail-logo-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   background: var(--bg-elevated-2);
   flex-shrink: 0;
@@ -1163,7 +1185,7 @@ body {
 
 .kills-page {
   width: 100%;
-  max-width: 760px;
+  max-width: 1680px;
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
@@ -1347,16 +1369,54 @@ body {
 
 .kills-row {
   display: grid;
-  grid-template-columns: 56px 1fr auto auto auto;
+  grid-template-columns: 60px 190px 150px minmax(0, 1fr) 130px minmax(0, 1fr);
   align-items: center;
-  gap: 14px;
-  padding: 9px 0;
+  gap: 16px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 .kills-row:last-child {
   border-bottom: none;
+}
+
+.kills-row-header {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-active);
+}
+
+.kills-row-header span {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.kills-date-divider {
+  padding: 12px 0 7px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.kills-row-clickable {
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.kills-row-clickable:hover {
+  background: var(--bg-elevated-2);
+}
+
+.kills-row-clickable:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .kills-time {
@@ -1366,24 +1426,78 @@ body {
   white-space: nowrap;
 }
 
-.kills-victim-cell {
+.kills-victim-cell,
+.kills-finalblow-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .kills-portrait {
-  width: 24px;
-  height: 24px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--bg-elevated-2);
   flex-shrink: 0;
 }
 
-.kills-victim {
+.kills-portrait-blank {
+  visibility: hidden;
+}
+
+.kills-avatar-stack {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.kills-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--bg-elevated-2);
+  flex-shrink: 0;
+}
+
+.kills-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kills-identity-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kills-identity-name {
   color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.kills-identity-corp {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kills-identity-alliance {
+  color: var(--text-muted);
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1392,12 +1506,13 @@ body {
 .kills-ship-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  min-width: 0;
 }
 
 .kills-ship-icon {
-  width: 22px;
-  height: 22px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-sm);
   object-fit: cover;
   background: var(--bg-elevated-2);
@@ -1406,6 +1521,8 @@ body {
 
 .kills-ship {
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1417,11 +1534,156 @@ body {
   white-space: nowrap;
 }
 
+.kills-location-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.kills-location-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.kills-security {
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.kills-security-high {
+  color: var(--success);
+}
+
+.kills-security-low {
+  color: var(--warning);
+}
+
+.kills-security-null {
+  color: var(--danger);
+}
+
 .kills-system {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kills-region {
   color: var(--text-muted);
   font-family: var(--font-label);
-  font-size: 11px;
+  font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kills-tag {
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-label);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.kills-tag-solo {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.kills-tag-npc {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Kill detail: attackers + items */
+
+.kill-attacker-list,
+.kill-item-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.kill-attacker-row {
+  display: grid;
+  grid-template-columns: 100px 1fr auto auto 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.kill-attacker-row:last-child {
+  border-bottom: none;
+}
+
+.kill-attacker-name {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kill-attacker-ship {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.kill-attacker-damage {
+  color: var(--text-secondary);
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.kill-final-blow-badge {
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-family: var(--font-label);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.kill-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.kill-item-row:last-child {
+  border-bottom: none;
+}
+
+.kill-item-name {
+  color: var(--text-secondary);
+}
+
+.kill-item-qty {
+  color: var(--text-muted);
+  font-family: var(--font-label);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

@@ -2,8 +2,32 @@ use crate::auth::{self, sso::SsoConfig};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Duration;
 
 pub(crate) const ESI_BASE: &str = "https://esi.evetech.net/latest";
+
+/// Tranquility itself times out ESI every so often - especially right after
+/// daily downtime while the server is still stabilizing - surfacing as a
+/// 502/503/504 from the gateway rather than anything wrong with the request.
+/// A couple of short retries ride out that blip instead of surfacing a hard
+/// error for something that clears up in a few seconds.
+const RETRY_DELAYS_MS: [u64; 2] = [800, 2000];
+
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::BAD_GATEWAY | reqwest::StatusCode::SERVICE_UNAVAILABLE | reqwest::StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+/// Sleeps for the next retry delay and returns true, or returns false once
+/// attempts are exhausted so the caller falls through to its normal
+/// success/failure handling.
+async fn retry_delay(attempt: usize) -> bool {
+    let Some(&ms) = RETRY_DELAYS_MS.get(attempt) else { return false };
+    tokio::time::sleep(Duration::from_millis(ms)).await;
+    true
+}
 
 enum EsiError {
     /// The character's stored token doesn't have the scope this endpoint needs.
@@ -22,46 +46,70 @@ async fn authorized_get<T: DeserializeOwned>(
     access_token: &str,
     path: &str,
 ) -> Result<T, EsiError> {
-    let response = client
-        .get(format!("{ESI_BASE}{path}"))
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .map_err(|e| EsiError::Failed(format!("ESI request failed: {e}")))?;
+    let mut attempt = 0;
+    loop {
+        let response = match client.get(format!("{ESI_BASE}{path}")).bearer_auth(access_token).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                if retry_delay(attempt).await {
+                    attempt += 1;
+                    continue;
+                }
+                return Err(EsiError::Failed(format!("ESI request failed: {e}")));
+            }
+        };
 
-    if matches!(
-        response.status(),
-        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
-    ) {
-        return Err(EsiError::MissingScope);
-    }
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(EsiError::Failed(format!("ESI {status} on {path}: {text}")));
-    }
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(EsiError::MissingScope);
+        }
+        if is_retryable_status(response.status()) && retry_delay(attempt).await {
+            attempt += 1;
+            continue;
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(EsiError::Failed(format!("ESI {status} on {path}: {text}")));
+        }
 
-    response
-        .json::<T>()
-        .await
-        .map_err(|e| EsiError::Failed(format!("failed to parse ESI response from {path}: {e}")))
+        return response
+            .json::<T>()
+            .await
+            .map_err(|e| EsiError::Failed(format!("failed to parse ESI response from {path}: {e}")));
+    }
 }
 
 pub(crate) async fn public_get<T: DeserializeOwned>(client: &reqwest::Client, path: &str) -> Result<T, String> {
-    let response = client
-        .get(format!("{ESI_BASE}{path}"))
-        .send()
-        .await
-        .map_err(|e| format!("ESI request failed: {e}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        return Err(format!("ESI {status} on {path}: {text}"));
+    let mut attempt = 0;
+    loop {
+        let response = match client.get(format!("{ESI_BASE}{path}")).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                if retry_delay(attempt).await {
+                    attempt += 1;
+                    continue;
+                }
+                return Err(format!("ESI request failed: {e}"));
+            }
+        };
+
+        if is_retryable_status(response.status()) && retry_delay(attempt).await {
+            attempt += 1;
+            continue;
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("ESI {status} on {path}: {text}"));
+        }
+        return response
+            .json::<T>()
+            .await
+            .map_err(|e| format!("failed to parse ESI response from {path}: {e}"));
     }
-    response
-        .json::<T>()
-        .await
-        .map_err(|e| format!("failed to parse ESI response from {path}: {e}"))
 }
 
 /// Any failure to get a usable token (no stored entry, a failed refresh) is
@@ -143,19 +191,31 @@ pub(crate) async fn resolve_names(client: &reqwest::Client, ids: Vec<i64>) -> Ha
         return HashMap::new();
     }
 
-    let result = client
-        .post(format!("{ESI_BASE}/universe/names/"))
-        .json(&ids)
-        .send()
-        .await;
+    let mut attempt = 0;
+    loop {
+        let result = client.post(format!("{ESI_BASE}/universe/names/")).json(&ids).send().await;
+        let response = match result {
+            Ok(r) => r,
+            Err(_) => {
+                if retry_delay(attempt).await {
+                    attempt += 1;
+                    continue;
+                }
+                return HashMap::new();
+            }
+        };
 
-    let Ok(response) = result else { return HashMap::new() };
-    if !response.status().is_success() {
-        return HashMap::new();
-    }
-    match response.json::<Vec<UniverseName>>().await {
-        Ok(names) => names.into_iter().map(|n| (n.id, n.name)).collect(),
-        Err(_) => HashMap::new(),
+        if is_retryable_status(response.status()) && retry_delay(attempt).await {
+            attempt += 1;
+            continue;
+        }
+        if !response.status().is_success() {
+            return HashMap::new();
+        }
+        return match response.json::<Vec<UniverseName>>().await {
+            Ok(names) => names.into_iter().map(|n| (n.id, n.name)).collect(),
+            Err(_) => HashMap::new(),
+        };
     }
 }
 

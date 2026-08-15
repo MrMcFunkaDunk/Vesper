@@ -30,3 +30,35 @@ export function formatRelativeTime(iso: string): string {
   const totalDays = Math.floor(totalHours / 24);
   return `${totalDays}d ago`;
 }
+
+/** Local-calendar-day key for grouping a list of ISO timestamps by date. */
+export function dateKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Rounds a raw ESI security_status value to EVE's usual one-decimal display, e.g. 0.549 -> "0.5". */
+export function formatSecurity(value: number): string {
+  return (Math.round(value * 10) / 10).toFixed(1);
+}
+
+/** Buckets a security_status value into EVE's highsec/lowsec/nullsec bands for color coding. Rounds first so the band always matches what formatSecurity displays. */
+export function securityBand(value: number): "high" | "low" | "null" {
+  const rounded = Math.round(value * 10) / 10;
+  if (rounded >= 0.5) return "high";
+  if (rounded > 0.0) return "low";
+  return "null";
+}
+
+/** Formats an ISO timestamp's local date as a group heading: "Today", "Yesterday", or "14 August 2026". */
+export function formatDateHeading(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(date, now)) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (sameDay(date, yesterday)) return "Yesterday";
+  return new Intl.DateTimeFormat("en-US", { day: "numeric", month: "long", year: "numeric" }).format(date);
+}

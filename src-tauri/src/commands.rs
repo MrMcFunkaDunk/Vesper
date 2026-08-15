@@ -111,6 +111,11 @@ pub async fn get_recent_kills(
     kills::fetch_recent_kills(&state.http_client, &system_ids).await
 }
 
+#[tauri::command]
+pub async fn get_kill_detail(state: State<'_, AppState>, killmail_id: i64) -> Result<kills::KillDetail, String> {
+    kills::fetch_kill_detail(&state.http_client, killmail_id).await
+}
+
 fn now_unix() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
