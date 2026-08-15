@@ -4,6 +4,7 @@ interface CharacterCardProps {
   character: SessionCharacter;
   overview: CharacterOverview | null | undefined;
   isActive: boolean;
+  pending: boolean;
   onSelect: () => void;
   onReauth: () => void;
 }
@@ -28,7 +29,7 @@ function formatTimeRemaining(iso: string): string {
   return `${minutes}m`;
 }
 
-function CharacterCard({ character, overview, isActive, onSelect, onReauth }: CharacterCardProps) {
+function CharacterCard({ character, overview, isActive, pending, onSelect, onReauth }: CharacterCardProps) {
   const loading = overview === undefined;
 
   return (
@@ -61,12 +62,13 @@ function CharacterCard({ character, overview, isActive, onSelect, onReauth }: Ch
           <button
             type="button"
             className="character-card-reauth-btn"
+            disabled={pending}
             onClick={(e) => {
               e.stopPropagation();
               onReauth();
             }}
           >
-            Reconnect
+            {pending ? "Connecting..." : "Reconnect"}
           </button>
         </div>
       ) : (

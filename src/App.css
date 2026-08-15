@@ -836,3 +836,9 @@ body {
   color: var(--danger) !important;
   font-size: 12px !important;
 }
+
+.dashboard-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--danger);
+}

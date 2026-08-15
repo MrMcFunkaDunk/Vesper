@@ -12,6 +12,8 @@ interface DashboardProps {
 
 function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
   const [overviews, setOverviews] = useState<Record<number, CharacterOverview | null>>({});
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
   const characterIds = session.characters.map((c) => c.id).join(",");
 
   function fetchOverview(character: SessionCharacter) {
@@ -34,9 +36,23 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
   // SSO the same way. A reconnect doesn't change the character ID list, so
   // the effect above wouldn't re-fetch on its own - re-fetch explicitly once
   // the login flow completes, for whichever characters are on screen now.
+  //
+  // Guarded against re-entry and reports failures visibly: a silent failure
+  // here (e.g. the loopback port briefly unavailable) previously looked
+  // identical to "nothing happened" from the user's side.
   async function handleAccountAction() {
-    await onAdd();
-    session.characters.forEach(fetchOverview);
+    if (pending) return;
+    setPending(true);
+    setError("");
+    try {
+      await onAdd();
+      session.characters.forEach(fetchOverview);
+    } catch (err) {
+      console.error("Sign-in failed", err);
+      setError(String(err));
+    } finally {
+      setPending(false);
+    }
   }
 
   const activeCharacter =
@@ -49,6 +65,7 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
           <p className="eyebrow">Operations Overview</p>
           <h2>Welcome back, {activeCharacter.name}</h2>
           <StatusChip label={activeCharacter.name} value="Connected" tone="online" />
+          {error && <p className="dashboard-error">{error}</p>}
         </div>
 
         <div className="character-grid">
@@ -58,13 +75,19 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
               character={character}
               overview={overviews[character.id]}
               isActive={character.id === session.active_character_id}
+              pending={pending}
               onSelect={() => onSwitch(character.id)}
               onReauth={handleAccountAction}
             />
           ))}
-          <button type="button" className="character-card character-card-add" onClick={handleAccountAction}>
+          <button
+            type="button"
+            className="character-card character-card-add"
+            onClick={handleAccountAction}
+            disabled={pending}
+          >
             <Plus size={20} strokeWidth={1.75} />
-            <span>Add Character</span>
+            <span>{pending ? "Connecting..." : "Add Character"}</span>
             <span className="character-card-add-hint">Sign in with EVE to get started</span>
           </button>
         </div>

@@ -4,6 +4,7 @@ pub mod pkce;
 pub mod sso;
 
 use sso::SsoConfig;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
@@ -13,6 +14,13 @@ use tokio::sync::Mutex;
 // refreshes; they're infrequent and fast enough that this costs nothing
 // noticeable for a personal app with a handful of characters.
 static REFRESH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+// Bumped at the start of every login attempt. Lets an abandoned attempt's
+// callback listener (browser closed without finishing, app reloaded
+// mid-flow) notice it's been superseded and give up the port promptly
+// instead of holding it for its full 5-minute timeout, which would make
+// every login attempt after it silently fail to bind.
+static LOGIN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 pub struct LoginOutcome {
     pub character_id: i64,
@@ -32,9 +40,19 @@ pub async fn login(
     let state = pkce::generate_state();
     let authorize_url = sso::build_authorize_url(config, &scopes, &state, &pair.challenge);
 
+    // Superseding the generation first means an old abandoned attempt's
+    // listener notices and releases the port within one poll interval,
+    // rather than racing it for the bind below.
+    let my_generation = LOGIN_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+
     // Bind before opening the browser so the redirect always has a listener.
-    let server = callback_server::bind(config.callback_port)?;
-    let callback_task = tauri::async_runtime::spawn_blocking(move || callback_server::wait_for_request(server));
+    let port = config.callback_port;
+    let server = tauri::async_runtime::spawn_blocking(move || callback_server::bind(port))
+        .await
+        .map_err(|e| format!("callback server setup task failed: {e}"))??;
+    let callback_task = tauri::async_runtime::spawn_blocking(move || {
+        callback_server::wait_for_request(server, my_generation, &LOGIN_GENERATION)
+    });
 
     open::that(&authorize_url).map_err(|e| format!("could not open system browser: {e}"))?;
 
