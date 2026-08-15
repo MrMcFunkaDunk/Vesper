@@ -5,6 +5,7 @@ import MainContent from "./components/MainContent";
 import Dashboard from "./components/Dashboard";
 import CharacterDetail from "./components/CharacterDetail";
 import KillsIntel from "./components/KillsIntel";
+import MapView from "./components/MapView";
 import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
 import { DASHBOARD_SCOPES } from "./lib/scopes";
@@ -86,6 +87,8 @@ function App() {
         )
       ) : activeId === "kills" ? (
         <KillsIntel />
+      ) : activeId === "map" ? (
+        <MapView />
       ) : (
         <MainContent icon={active.icon} label={active.label} description={active.description} />
       )}

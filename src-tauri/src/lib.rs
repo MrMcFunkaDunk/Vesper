@@ -4,6 +4,7 @@ mod commands;
 mod config;
 mod esi;
 mod kills;
+mod map;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,6 +36,7 @@ pub fn run() {
             commands::get_character_kills,
             commands::get_character_losses,
             commands::get_character_stats,
+            commands::get_map_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

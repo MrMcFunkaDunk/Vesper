@@ -1,4 +1,4 @@
-use crate::{auth, characters, config, esi, kills};
+use crate::{auth, characters, config, esi, kills, map};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -152,6 +152,11 @@ pub async fn get_character_losses(state: State<'_, AppState>, character_id: i64)
 #[tauri::command]
 pub async fn get_character_stats(state: State<'_, AppState>, character_id: i64) -> Result<kills::CharacterStats, String> {
     kills::fetch_character_stats(&state.http_client, character_id).await
+}
+
+#[tauri::command]
+pub async fn get_map_data(app: AppHandle, state: State<'_, AppState>) -> Result<map::MapData, String> {
+    map::get_map_data(app, &state.http_client).await
 }
 
 fn now_unix() -> i64 {

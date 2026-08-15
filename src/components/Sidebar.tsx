@@ -8,6 +8,7 @@ import {
   Mail,
   UserSearch,
   Settings,
+  Map as MapIcon,
 } from "lucide-react";
 import Wordmark from "./Wordmark";
 import ColorPickerMenu from "./ColorPickerMenu";
@@ -22,6 +23,7 @@ import mailIcon from "../assets/sidebar-icons/mail.png";
 import intelCheckIcon from "../assets/sidebar-icons/intel-check.png";
 import settingsIcon from "../assets/sidebar-icons/settings.png";
 import planetaryIndustryIcon from "../assets/sidebar-icons/planetary-industry.png";
+import mapIcon from "../assets/sidebar-icons/map.png";
 
 export interface NavItem {
   id: string;
@@ -48,6 +50,14 @@ export const NAV_ITEMS: NavItem[] = [
     image: killsIntelIcon,
     description:
       "Recent killmail activity from zKillboard for the systems and regions you care about.",
+  },
+  {
+    id: "map",
+    label: "Map",
+    icon: MapIcon,
+    image: mapIcon,
+    description:
+      "A searchable map of New Eden with live kill activity, so you can see where the action is and plan routes around it.",
   },
   {
     id: "wallet",
