@@ -21,6 +21,7 @@ import walletMarketIcon from "../assets/sidebar-icons/wallet-market.png";
 import mailIcon from "../assets/sidebar-icons/mail.png";
 import intelCheckIcon from "../assets/sidebar-icons/intel-check.png";
 import settingsIcon from "../assets/sidebar-icons/settings.png";
+import planetaryIndustryIcon from "../assets/sidebar-icons/planetary-industry.png";
 
 export interface NavItem {
   id: string;
@@ -58,8 +59,9 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     id: "planetary",
-    label: "Planetary Interaction",
+    label: "Planetary Industry",
     icon: Orbit,
+    image: planetaryIndustryIcon,
     description:
       "Your colonies at a glance, with warnings when an extractor or factory needs attention.",
   },
