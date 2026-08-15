@@ -529,6 +529,37 @@ body {
   line-height: 1.5;
 }
 
+.dashboard-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  max-width: 420px;
+  padding: var(--space-xl);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.dashboard-panel h2 {
+  margin: 4px 0 2px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--text);
+}
+
+.dashboard-panel .status-chip {
+  margin: 2px 0 4px;
+}
+
+.dashboard-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .coming-soon {
   margin-top: var(--space-xs);
   font-family: var(--font-label);

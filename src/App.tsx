@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Sidebar, { NAV_ITEMS } from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import MainContent from "./components/MainContent";
+import Dashboard from "./components/Dashboard";
 import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
 import "./App.css";
@@ -38,6 +39,9 @@ function App() {
     return <LoginScreen onLoggedIn={refreshSession} />;
   }
 
+  const activeCharacter =
+    session.characters.find((c) => c.id === session.active_character_id) ?? session.characters[0];
+
   return (
     <div className="shell">
       <Sidebar activeId={activeId} onSelect={setActiveId} />
@@ -57,7 +61,11 @@ function App() {
           refreshSession();
         }}
       />
-      <MainContent icon={active.icon} label={active.label} description={active.description} />
+      {activeId === "dashboard" ? (
+        <Dashboard characterName={activeCharacter.name} />
+      ) : (
+        <MainContent icon={active.icon} label={active.label} description={active.description} />
+      )}
     </div>
   );
 }
