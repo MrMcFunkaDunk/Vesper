@@ -134,6 +134,26 @@ pub async fn poll_tracked_system_kills(
     kills::poll_tracked_systems(&state.http_client, &system_ids).await
 }
 
+#[tauri::command]
+pub async fn get_character_profile(state: State<'_, AppState>, character_id: i64) -> Result<kills::CharacterProfile, String> {
+    kills::fetch_character_profile(&state.http_client, character_id).await
+}
+
+#[tauri::command]
+pub async fn get_character_kills(state: State<'_, AppState>, character_id: i64) -> Result<Vec<kills::KillEntry>, String> {
+    kills::fetch_character_kills(&state.http_client, character_id).await
+}
+
+#[tauri::command]
+pub async fn get_character_losses(state: State<'_, AppState>, character_id: i64) -> Result<Vec<kills::KillEntry>, String> {
+    kills::fetch_character_losses(&state.http_client, character_id).await
+}
+
+#[tauri::command]
+pub async fn get_character_stats(state: State<'_, AppState>, character_id: i64) -> Result<kills::CharacterStats, String> {
+    kills::fetch_character_stats(&state.http_client, character_id).await
+}
+
 fn now_unix() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

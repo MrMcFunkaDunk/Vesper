@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, Copy, Check } from "lucide-react";
 import { getKillDetail, type KillDetail, type SlotGroup } from "../lib/kills";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { formatIsk, formatSecurity, securityBand } from "../lib/format";
+import { formatIsk, formatSecurity, securityBand, formatPercent } from "../lib/format";
 import FitWheel from "./FitWheel";
 
 interface KillDetailViewProps {
   killmailId: number;
   onBack: () => void;
+  onSelectCharacter: (characterId: number) => void;
+  rootLabel: string;
+  onGoHome: () => void;
 }
 
 function corpLogoUrl(id: number): string {
@@ -51,11 +54,7 @@ function aggregateItems(items: { item_type_id: number; item_type_name: string; q
   return Array.from(byType.values());
 }
 
-function formatPercent(part: number, total: number): string {
-  return total > 0 ? `${((part / total) * 100).toFixed(1)}%` : "0.0%";
-}
-
-function KillDetailView({ killmailId, onBack }: KillDetailViewProps) {
+function KillDetailView({ killmailId, onBack, onSelectCharacter, rootLabel, onGoHome }: KillDetailViewProps) {
   const [detail, setDetail] = useState<KillDetail | null>(null);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const reportError = useErrorReporter();
@@ -90,9 +89,27 @@ function KillDetailView({ killmailId, onBack }: KillDetailViewProps) {
   return (
     <main className="main main-detail">
       <div className="detail">
+        <div className="kills-header kills-header-breadcrumb">
+          <p className="eyebrow">Kills & Intel</p>
+          <h2
+            className="kills-breadcrumb-link"
+            role="button"
+            tabIndex={0}
+            onClick={onGoHome}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onGoHome();
+              }
+            }}
+          >
+            {rootLabel}
+          </h2>
+        </div>
+
         <button type="button" className="detail-back" onClick={onBack}>
           <ArrowLeft size={14} strokeWidth={2} />
-          Back to Recent Activity
+          Back
         </button>
 
         {!detail ? (
@@ -133,7 +150,24 @@ function KillDetailView({ killmailId, onBack }: KillDetailViewProps) {
               </div>
               <div className="detail-identity">
                 <h2>
-                  {detail.victim_character_name ?? "Unknown"}
+                  {detail.victim_character_id ? (
+                    <span
+                      className="detail-name-link"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onSelectCharacter(detail.victim_character_id!)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectCharacter(detail.victim_character_id!);
+                        }
+                      }}
+                    >
+                      {detail.victim_character_name ?? "Unknown"}
+                    </span>
+                  ) : (
+                    (detail.victim_character_name ?? "Unknown")
+                  )}
                   {detail.npc && <span className="kills-tag kills-tag-npc">NPC</span>}
                 </h2>
                 <span className="detail-corp">
@@ -208,7 +242,22 @@ function KillDetailView({ killmailId, onBack }: KillDetailViewProps) {
               {finalBlowAttacker && (
                 <div className="kill-highlight-card">
                   <p className="eyebrow">Final Blow</p>
-                  <div className="kill-highlight-person">
+                  <div
+                    className={`kill-highlight-person ${finalBlowAttacker.character_id ? "kills-person-clickable" : ""}`}
+                    {...(finalBlowAttacker.character_id
+                      ? {
+                          role: "button" as const,
+                          tabIndex: 0,
+                          onClick: () => onSelectCharacter(finalBlowAttacker.character_id!),
+                          onKeyDown: (e: KeyboardEvent) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onSelectCharacter(finalBlowAttacker.character_id!);
+                            }
+                          },
+                        }
+                      : {})}
+                  >
                     <div className="kills-avatar-stack">
                       {finalBlowAttacker.character_id ? (
                         <img
@@ -248,7 +297,22 @@ function KillDetailView({ killmailId, onBack }: KillDetailViewProps) {
               {topDamageAttacker && (
                 <div className="kill-highlight-card">
                   <p className="eyebrow">Top Damage</p>
-                  <div className="kill-highlight-person">
+                  <div
+                    className={`kill-highlight-person ${topDamageAttacker.character_id ? "kills-person-clickable" : ""}`}
+                    {...(topDamageAttacker.character_id
+                      ? {
+                          role: "button" as const,
+                          tabIndex: 0,
+                          onClick: () => onSelectCharacter(topDamageAttacker.character_id!),
+                          onKeyDown: (e: KeyboardEvent) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onSelectCharacter(topDamageAttacker.character_id!);
+                            }
+                          },
+                        }
+                      : {})}
+                  >
                     <div className="kills-avatar-stack">
                       {topDamageAttacker.character_id ? (
                         <img
@@ -359,7 +423,22 @@ function KillDetailView({ killmailId, onBack }: KillDetailViewProps) {
                           />
                         )}
                       </div>
-                      <span className="kill-attacker-name">
+                      <span
+                        className={`kill-attacker-name ${attacker.character_id ? "detail-name-link" : ""}`}
+                        {...(attacker.character_id
+                          ? {
+                              role: "button" as const,
+                              tabIndex: 0,
+                              onClick: () => onSelectCharacter(attacker.character_id!),
+                              onKeyDown: (e: KeyboardEvent) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  onSelectCharacter(attacker.character_id!);
+                                }
+                              },
+                            }
+                          : {})}
+                      >
                         {attacker.character_name ?? "Unknown"}
                         {attacker.corporation_name ? ` (${attacker.corporation_name})` : ""}
                       </span>

@@ -31,6 +31,10 @@ pub fn run() {
             commands::get_recent_activity_kills,
             commands::poll_recent_activity_kills,
             commands::poll_tracked_system_kills,
+            commands::get_character_profile,
+            commands::get_character_kills,
+            commands::get_character_losses,
+            commands::get_character_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

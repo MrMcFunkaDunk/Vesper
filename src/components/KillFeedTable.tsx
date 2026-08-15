@@ -1,9 +1,11 @@
+import type { KeyboardEvent, MouseEvent } from "react";
 import type { KillEntry } from "../lib/kills";
 import { formatIsk, formatExactTime, dateKey, formatDateHeading, formatSecurity, securityBand } from "../lib/format";
 
 interface KillFeedTableProps {
   kills: KillEntry[];
   onSelectKill: (killmailId: number) => void;
+  onSelectCharacter: (characterId: number) => void;
 }
 
 interface KillGroup {
@@ -34,7 +36,27 @@ function groupKillsByDate(kills: KillEntry[]): KillGroup[] {
   return groups;
 }
 
-function KillFeedTable({ kills, onSelectKill }: KillFeedTableProps) {
+function KillFeedTable({ kills, onSelectKill, onSelectCharacter }: KillFeedTableProps) {
+  function characterLinkProps(characterId: number | null) {
+    if (!characterId) return {};
+    return {
+      role: "button" as const,
+      tabIndex: 0,
+      onClick: (e: MouseEvent) => {
+        e.stopPropagation();
+        onSelectCharacter(characterId);
+      },
+      onKeyDown: (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          onSelectCharacter(characterId);
+        }
+      },
+    };
+  }
+
+
   return (
     <div className="kills-table">
       <div className="kills-row kills-row-header">
@@ -87,7 +109,10 @@ function KillFeedTable({ kills, onSelectKill }: KillFeedTableProps) {
                 {kill.region_name && <span className="kills-region">{kill.region_name}</span>}
               </div>
 
-              <div className="kills-victim-cell">
+              <div
+                className={`kills-victim-cell ${kill.victim_character_id ? "kills-person-clickable" : ""}`}
+                {...characterLinkProps(kill.victim_character_id)}
+              >
                 <div className="kills-avatar-stack">
                   {kill.victim_character_id && (
                     <img
@@ -126,7 +151,10 @@ function KillFeedTable({ kills, onSelectKill }: KillFeedTableProps) {
 
               <span className="kills-value">{formatIsk(kill.total_value)}</span>
 
-              <div className="kills-finalblow-cell">
+              <div
+                className={`kills-finalblow-cell ${kill.final_blow_character_id ? "kills-person-clickable" : ""}`}
+                {...characterLinkProps(kill.final_blow_character_id)}
+              >
                 <div className="kills-avatar-stack">
                   {kill.final_blow_character_id && (
                     <img

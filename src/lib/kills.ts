@@ -115,6 +115,47 @@ export function pollTrackedSystemKills(systemIds: number[]): Promise<KillEntry[]
   return invoke("poll_tracked_system_kills", { systemIds });
 }
 
+export interface CharacterProfile {
+  character_id: number;
+  character_name: string;
+  corporation_id: number;
+  corporation_name: string | null;
+  corporation_ticker: string | null;
+  alliance_id: number | null;
+  alliance_name: string | null;
+  alliance_ticker: string | null;
+  security_status: number | null;
+  birthday: string;
+}
+
+export interface CharacterStats {
+  ships_destroyed: number;
+  ships_lost: number;
+  points_destroyed: number;
+  points_lost: number;
+  isk_destroyed: number;
+  isk_lost: number;
+  solo_kills: number;
+  solo_losses: number;
+  danger_ratio: number;
+}
+
+export function getCharacterProfile(characterId: number): Promise<CharacterProfile> {
+  return invoke("get_character_profile", { characterId });
+}
+
+export function getCharacterKills(characterId: number): Promise<KillEntry[]> {
+  return invoke("get_character_kills", { characterId });
+}
+
+export function getCharacterLosses(characterId: number): Promise<KillEntry[]> {
+  return invoke("get_character_losses", { characterId });
+}
+
+export function getCharacterStats(characterId: number): Promise<CharacterStats> {
+  return invoke("get_character_stats", { characterId });
+}
+
 export const MAX_LIVE_KILLS = 150;
 
 /** Merges newly-arrived kills into an existing feed, deduping by killmail_id and keeping newest-first, capped so a long session doesn't grow the list forever. */

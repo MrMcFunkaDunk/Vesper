@@ -243,6 +243,175 @@ pub async fn fetch_recent_kills(client: &reqwest::Client, system_ids: &[i64]) ->
     Ok(enrich_kills(client, raw).await)
 }
 
+const CHARACTER_KILLS_LIMIT: usize = 50;
+
+async fn fetch_character_kills_raw(client: &reqwest::Client, character_id: i64, kind: &str) -> Result<Vec<ZkbKillmail>, String> {
+    let url = format!("{ZKILLBOARD_BASE}/{kind}/characterID/{character_id}/");
+    let response = client.get(&url).send().await.map_err(|e| format!("zKillboard request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(format!("zKillboard returned {status} for character {character_id}"));
+    }
+
+    let mut kills: Vec<ZkbKillmail> = response
+        .json()
+        .await
+        .map_err(|e| format!("failed to parse zKillboard response: {e}"))?;
+    kills.truncate(CHARACTER_KILLS_LIMIT);
+    Ok(kills)
+}
+
+/// A character's own recent kills - a personal killboard, not scoped to any
+/// watchlist. This is a lookup/history view rather than a live monitor, so
+/// zKillboard's up-to-an-hour CDN cache on this endpoint (same as the
+/// system/category ones) isn't a real problem here the way it was for the
+/// "Most Recent Kills" feed.
+pub async fn fetch_character_kills(client: &reqwest::Client, character_id: i64) -> Result<Vec<KillEntry>, String> {
+    let raw = fetch_character_kills_raw(client, character_id, "kills").await?;
+    Ok(enrich_kills(client, raw).await)
+}
+
+/// Same as fetch_character_kills but for the character's own losses.
+pub async fn fetch_character_losses(client: &reqwest::Client, character_id: i64) -> Result<Vec<KillEntry>, String> {
+    let raw = fetch_character_kills_raw(client, character_id, "losses").await?;
+    Ok(enrich_kills(client, raw).await)
+}
+
+#[derive(Deserialize)]
+struct EsiPublicCharacter {
+    name: String,
+    corporation_id: i64,
+    #[serde(default)]
+    alliance_id: Option<i64>,
+    #[serde(default)]
+    security_status: Option<f64>,
+    #[serde(default)]
+    birthday: String,
+}
+
+#[derive(Deserialize)]
+struct EsiCorporationTicker {
+    ticker: String,
+}
+
+#[derive(Deserialize)]
+struct EsiAllianceTicker {
+    ticker: String,
+}
+
+#[derive(Serialize)]
+pub struct CharacterProfile {
+    pub character_id: i64,
+    pub character_name: String,
+    pub corporation_id: i64,
+    pub corporation_name: Option<String>,
+    pub corporation_ticker: Option<String>,
+    pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
+    pub alliance_ticker: Option<String>,
+    pub security_status: Option<f64>,
+    pub birthday: String,
+}
+
+/// Public character info (no auth needed) for the header of a personal
+/// killboard page - works for any character, not just the ones logged in.
+pub async fn fetch_character_profile(client: &reqwest::Client, character_id: i64) -> Result<CharacterProfile, String> {
+    let info: EsiPublicCharacter = esi::public_get(client, &format!("/characters/{character_id}/")).await?;
+
+    let mut lookup_ids = vec![info.corporation_id];
+    if let Some(id) = info.alliance_id {
+        lookup_ids.push(id);
+    }
+    let names = esi::resolve_names(client, lookup_ids).await;
+
+    let corporation_ticker = esi::public_get::<EsiCorporationTicker>(client, &format!("/corporations/{}/", info.corporation_id))
+        .await
+        .ok()
+        .map(|c| c.ticker);
+    let alliance_ticker = match info.alliance_id {
+        Some(id) => esi::public_get::<EsiAllianceTicker>(client, &format!("/alliances/{id}/")).await.ok().map(|a| a.ticker),
+        None => None,
+    };
+
+    Ok(CharacterProfile {
+        character_id,
+        character_name: info.name,
+        corporation_id: info.corporation_id,
+        corporation_name: names.get(&info.corporation_id).cloned(),
+        corporation_ticker,
+        alliance_id: info.alliance_id,
+        alliance_name: info.alliance_id.and_then(|id| names.get(&id).cloned()),
+        alliance_ticker,
+        security_status: info.security_status,
+        birthday: info.birthday,
+    })
+}
+
+#[derive(Deserialize, Default)]
+struct ZkbCharacterStats {
+    #[serde(rename = "shipsLost", default)]
+    ships_lost: i64,
+    #[serde(rename = "shipsDestroyed", default)]
+    ships_destroyed: i64,
+    #[serde(rename = "pointsLost", default)]
+    points_lost: i64,
+    #[serde(rename = "pointsDestroyed", default)]
+    points_destroyed: i64,
+    #[serde(rename = "iskLost", default)]
+    isk_lost: f64,
+    #[serde(rename = "iskDestroyed", default)]
+    isk_destroyed: f64,
+    #[serde(rename = "soloKills", default)]
+    solo_kills: i64,
+    #[serde(rename = "soloLosses", default)]
+    solo_losses: i64,
+    #[serde(rename = "dangerRatio", default)]
+    danger_ratio: i64,
+}
+
+#[derive(Serialize)]
+pub struct CharacterStats {
+    pub ships_destroyed: i64,
+    pub ships_lost: i64,
+    pub points_destroyed: i64,
+    pub points_lost: i64,
+    pub isk_destroyed: f64,
+    pub isk_lost: f64,
+    pub solo_kills: i64,
+    pub solo_losses: i64,
+    pub danger_ratio: i64,
+}
+
+/// zKillboard's all-time aggregate stats for a character (ships/points/isk
+/// destroyed vs lost, danger ratio, solo counts) - a different endpoint
+/// from the kills/losses lists, redirects to a sub-path so this relies on
+/// reqwest's default redirect-following. Best-effort: a character with no
+/// killboard history at all returns defaults rather than an error.
+pub async fn fetch_character_stats(client: &reqwest::Client, character_id: i64) -> Result<CharacterStats, String> {
+    let url = format!("{ZKILLBOARD_BASE}/stats/characterID/{character_id}/");
+    let response = client.get(&url).send().await.map_err(|e| format!("zKillboard request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(format!("zKillboard returned {status} for character stats {character_id}"));
+    }
+
+    let stats: ZkbCharacterStats = response.json().await.unwrap_or_default();
+
+    Ok(CharacterStats {
+        ships_destroyed: stats.ships_destroyed,
+        ships_lost: stats.ships_lost,
+        points_destroyed: stats.points_destroyed,
+        points_lost: stats.points_lost,
+        isk_destroyed: stats.isk_destroyed,
+        isk_lost: stats.isk_lost,
+        solo_kills: stats.solo_kills,
+        solo_losses: stats.solo_losses,
+        danger_ratio: stats.danger_ratio,
+    })
+}
+
 const RECENT_ACTIVITY_CATEGORIES: [&str; 4] = ["highsec", "lowsec", "nullsec", "w-space"];
 const KILLS_PER_CATEGORY: usize = 20;
 const RECENT_ACTIVITY_LIMIT: usize = 60;

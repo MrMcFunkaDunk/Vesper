@@ -2,6 +2,7 @@ import { useState } from "react";
 import TrackedSystemsFeed from "./TrackedSystemsFeed";
 import RecentKillsFeed from "./RecentKillsFeed";
 import KillDetailView from "./KillDetailView";
+import CharacterKillboard from "./CharacterKillboard";
 
 type KillsTab = "tracked" | "recent";
 
@@ -10,12 +11,60 @@ const TABS: { id: KillsTab; label: string }[] = [
   { id: "recent", label: "Most Recent Kills" },
 ];
 
+type KillsView = { type: "feed" } | { type: "killDetail"; killmailId: number } | { type: "character"; characterId: number };
+
 function KillsIntel() {
   const [tab, setTab] = useState<KillsTab>("tracked");
-  const [selectedKillId, setSelectedKillId] = useState<number | null>(null);
+  // A small navigation stack rather than one flag, since kill detail and
+  // character killboard link to each other in both directions (a kill's
+  // attackers link to their killboard, a killboard's rows link back to
+  // kill detail) - "back" needs to unwind wherever that chain actually
+  // came from, not always land on the feed list.
+  const [stack, setStack] = useState<KillsView[]>([{ type: "feed" }]);
 
-  if (selectedKillId != null) {
-    return <KillDetailView killmailId={selectedKillId} onBack={() => setSelectedKillId(null)} />;
+  const current = stack[stack.length - 1];
+
+  function pushKillDetail(killmailId: number) {
+    setStack((s) => [...s, { type: "killDetail", killmailId }]);
+  }
+
+  function pushCharacter(characterId: number) {
+    setStack((s) => [...s, { type: "character", characterId }]);
+  }
+
+  function goBack() {
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  }
+
+  function goHome() {
+    setStack([{ type: "feed" }]);
+  }
+
+  const tabLabel = TABS.find((t) => t.id === tab)!.label;
+
+  if (current.type === "killDetail") {
+    return (
+      <KillDetailView
+        killmailId={current.killmailId}
+        onBack={goBack}
+        onSelectCharacter={pushCharacter}
+        rootLabel={tabLabel}
+        onGoHome={goHome}
+      />
+    );
+  }
+
+  if (current.type === "character") {
+    return (
+      <CharacterKillboard
+        characterId={current.characterId}
+        onBack={goBack}
+        onSelectKill={pushKillDetail}
+        onSelectCharacter={pushCharacter}
+        rootLabel={tabLabel}
+        onGoHome={goHome}
+      />
+    );
   }
 
   return (
@@ -40,9 +89,9 @@ function KillsIntel() {
         </div>
 
         {tab === "tracked" ? (
-          <TrackedSystemsFeed onSelectKill={setSelectedKillId} />
+          <TrackedSystemsFeed onSelectKill={pushKillDetail} onSelectCharacter={pushCharacter} />
         ) : (
-          <RecentKillsFeed onSelectKill={setSelectedKillId} />
+          <RecentKillsFeed onSelectKill={pushKillDetail} onSelectCharacter={pushCharacter} />
         )}
       </div>
     </main>
