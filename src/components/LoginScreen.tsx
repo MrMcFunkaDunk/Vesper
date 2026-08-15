@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { startLogin } from "../lib/eve";
+import { useRef, useState } from "react";
+import { startLogin, cancelLogin } from "../lib/eve";
 import { DASHBOARD_SCOPES } from "../lib/scopes";
 import Wordmark from "./Wordmark";
 
@@ -10,6 +10,7 @@ interface LoginScreenProps {
 function LoginScreen({ onLoggedIn }: LoginScreenProps) {
   const [status, setStatus] = useState<"idle" | "pending" | "error">("idle");
   const [error, setError] = useState("");
+  const cancelledRef = useRef(false);
 
   async function handleLogin() {
     setStatus("pending");
@@ -18,9 +19,19 @@ function LoginScreen({ onLoggedIn }: LoginScreenProps) {
       await startLogin(DASHBOARD_SCOPES);
       onLoggedIn();
     } catch (err) {
-      setStatus("error");
-      setError(String(err));
+      if (cancelledRef.current) {
+        cancelledRef.current = false;
+        setStatus("idle");
+      } else {
+        setStatus("error");
+        setError(String(err));
+      }
     }
+  }
+
+  async function handleCancel() {
+    cancelledRef.current = true;
+    await cancelLogin();
   }
 
   return (
@@ -40,9 +51,14 @@ function LoginScreen({ onLoggedIn }: LoginScreenProps) {
           {status === "pending" ? "Waiting for login..." : "Log in with EVE Online"}
         </button>
         {status === "pending" && (
-          <p className="login-status">
-            Finish signing in in the browser window that just opened.
-          </p>
+          <>
+            <p className="login-status">
+              Finish signing in in the browser window that just opened.
+            </p>
+            <button type="button" className="login-cancel" onClick={handleCancel}>
+              Cancel and try again
+            </button>
+          </>
         )}
         {status === "error" && <p className="login-error">{error}</p>}
       </div>

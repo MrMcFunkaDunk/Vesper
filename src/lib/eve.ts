@@ -16,6 +16,10 @@ export function startLogin(scopes: string[] = []): Promise<void> {
   return invoke("start_login", { scopes });
 }
 
+export function cancelLogin(): Promise<void> {
+  return invoke("cancel_login");
+}
+
 export function getSession(): Promise<Session> {
   return invoke("get_session");
 }

@@ -32,6 +32,11 @@ pub async fn start_login(
     Ok(())
 }
 
+#[tauri::command]
+pub fn cancel_login() {
+    auth::cancel_login();
+}
+
 #[derive(Serialize)]
 pub struct SessionCharacter {
     pub id: i64,

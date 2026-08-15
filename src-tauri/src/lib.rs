@@ -18,6 +18,7 @@ pub fn run() {
         .manage(commands::AppState { http_client })
         .invoke_handler(tauri::generate_handler![
             commands::start_login,
+            commands::cancel_login,
             commands::get_session,
             commands::set_active_character,
             commands::logout_character,

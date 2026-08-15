@@ -22,6 +22,15 @@ static REFRESH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 // every login attempt after it silently fail to bind.
 static LOGIN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Cancels whatever login attempt is currently in flight (if any) by the
+/// same mechanism an abandoned attempt gets superseded by: its callback
+/// listener notices within one poll interval and gives up the port, which
+/// makes the in-flight `login()` call return an error promptly instead of
+/// the caller being stuck until the 5-minute timeout.
+pub fn cancel_login() {
+    LOGIN_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
 pub struct LoginOutcome {
     pub character_id: i64,
     pub character_name: String,

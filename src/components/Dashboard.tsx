@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import StatusChip from "./StatusChip";
 import CharacterCard from "./CharacterCard";
-import { getCharacterOverview, type CharacterOverview, type Session, type SessionCharacter } from "../lib/eve";
+import {
+  cancelLogin,
+  getCharacterOverview,
+  type CharacterOverview,
+  type Session,
+  type SessionCharacter,
+} from "../lib/eve";
 
 interface DashboardProps {
   session: Session;
@@ -14,6 +20,7 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
   const [overviews, setOverviews] = useState<Record<number, CharacterOverview | null>>({});
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const cancelledRef = useRef(false);
   const characterIds = session.characters.map((c) => c.id).join(",");
 
   function fetchOverview(character: SessionCharacter) {
@@ -39,7 +46,9 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
   //
   // Guarded against re-entry and reports failures visibly: a silent failure
   // here (e.g. the loopback port briefly unavailable) previously looked
-  // identical to "nothing happened" from the user's side.
+  // identical to "nothing happened" from the user's side. handleCancel gives
+  // a way out if the SSO page is slow to load or the flow just hangs,
+  // instead of being stuck until the 5-minute backend timeout.
   async function handleAccountAction() {
     if (pending) return;
     setPending(true);
@@ -48,11 +57,20 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
       await onAdd();
       session.characters.forEach(fetchOverview);
     } catch (err) {
-      console.error("Sign-in failed", err);
-      setError(String(err));
+      if (cancelledRef.current) {
+        cancelledRef.current = false;
+      } else {
+        console.error("Sign-in failed", err);
+        setError(String(err));
+      }
     } finally {
       setPending(false);
     }
+  }
+
+  async function handleCancel() {
+    cancelledRef.current = true;
+    await cancelLogin();
   }
 
   const activeCharacter =
@@ -65,6 +83,14 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
           <p className="eyebrow">Operations Overview</p>
           <h2>Welcome back, {activeCharacter.name}</h2>
           <StatusChip label={activeCharacter.name} value="Connected" tone="online" />
+          {pending && (
+            <div className="dashboard-pending">
+              <span>Waiting for you to finish signing in...</span>
+              <button type="button" className="dashboard-pending-cancel" onClick={handleCancel}>
+                Cancel
+              </button>
+            </div>
+          )}
           {error && <p className="dashboard-error">{error}</p>}
         </div>
 
@@ -87,7 +113,7 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
             disabled={pending}
           >
             <Plus size={20} strokeWidth={1.75} />
-            <span>{pending ? "Connecting..." : "Add Character"}</span>
+            <span>Add Character</span>
             <span className="character-card-add-hint">Sign in with EVE to get started</span>
           </button>
         </div>
