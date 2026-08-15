@@ -1,19 +1,73 @@
+import { useEffect, useState } from "react";
+import { Plus } from "lucide-react";
 import StatusChip from "./StatusChip";
+import CharacterCard from "./CharacterCard";
+import { getCharacterOverview, type CharacterOverview, type Session, type SessionCharacter } from "../lib/eve";
 
 interface DashboardProps {
-  characterName: string;
+  session: Session;
+  onSwitch: (id: number) => void;
+  onAdd: () => Promise<void>;
 }
 
-function Dashboard({ characterName }: DashboardProps) {
+function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
+  const [overviews, setOverviews] = useState<Record<number, CharacterOverview | null>>({});
+  const characterIds = session.characters.map((c) => c.id).join(",");
+
+  function fetchOverview(character: SessionCharacter) {
+    getCharacterOverview(character.id)
+      .then((overview) => setOverviews((prev) => ({ ...prev, [character.id]: overview })))
+      .catch((err) => {
+        console.error(`Failed to load overview for ${character.name}`, err);
+        setOverviews((prev) => ({ ...prev, [character.id]: null }));
+      });
+  }
+
+  useEffect(() => {
+    session.characters.forEach(fetchOverview);
+    // Re-fetch when the connected character list changes; handleAccountAction
+    // covers the case where an existing character's tokens change instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characterIds]);
+
+  // Adding a character and reconnecting an existing one both go through EVE
+  // SSO the same way. A reconnect doesn't change the character ID list, so
+  // the effect above wouldn't re-fetch on its own - re-fetch explicitly once
+  // the login flow completes, for whichever characters are on screen now.
+  async function handleAccountAction() {
+    await onAdd();
+    session.characters.forEach(fetchOverview);
+  }
+
+  const activeCharacter =
+    session.characters.find((c) => c.id === session.active_character_id) ?? session.characters[0];
+
   return (
-    <main className="main">
-      <div className="dashboard-panel">
-        <p className="eyebrow">Operations Overview</p>
-        <h2>Welcome back, {characterName}</h2>
-        <StatusChip label={characterName} value="Connected" tone="online" />
-        <p className="dashboard-note">
-          Module summaries will appear here as each system comes online.
-        </p>
+    <main className="main main-dashboard">
+      <div className="dashboard">
+        <div className="dashboard-header">
+          <p className="eyebrow">Operations Overview</p>
+          <h2>Welcome back, {activeCharacter.name}</h2>
+          <StatusChip label={activeCharacter.name} value="Connected" tone="online" />
+        </div>
+
+        <div className="character-grid">
+          {session.characters.map((character) => (
+            <CharacterCard
+              key={character.id}
+              character={character}
+              overview={overviews[character.id]}
+              isActive={character.id === session.active_character_id}
+              onSelect={() => onSwitch(character.id)}
+              onReauth={handleAccountAction}
+            />
+          ))}
+          <button type="button" className="character-card character-card-add" onClick={handleAccountAction}>
+            <Plus size={20} strokeWidth={1.75} />
+            <span>Add Character</span>
+            <span className="character-card-add-hint">Sign in with EVE to get started</span>
+          </button>
+        </div>
       </div>
     </main>
   );

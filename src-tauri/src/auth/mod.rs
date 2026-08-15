@@ -4,6 +4,15 @@ pub mod pkce;
 pub mod sso;
 
 use sso::SsoConfig;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
+
+// EVE SSO rotates the refresh token on each use, so two concurrent refreshes
+// for the same (or even different) characters can race and clobber each
+// other's write to the keychain. A single global lock serializes all
+// refreshes; they're infrequent and fast enough that this costs nothing
+// noticeable for a personal app with a handful of characters.
+static REFRESH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 pub struct LoginOutcome {
     pub character_id: i64,
@@ -67,6 +76,8 @@ pub async fn ensure_fresh_token(
     config: &SsoConfig,
     character_id: i64,
 ) -> Result<(), String> {
+    let _guard = REFRESH_LOCK.lock().await;
+
     let Some(tokens) = keychain::load_tokens(character_id)? else {
         return Err("no stored session for this character".to_string());
     };

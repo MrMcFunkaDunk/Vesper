@@ -30,3 +30,23 @@ pub fn delete_tokens(character_id: i64) -> Result<(), String> {
         Err(e) => Err(format!("could not delete tokens from OS keychain: {e}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Regression test for a real bug hit on Windows with keyring 3.6.3: a
+    /// write via one Entry object was invisible to a read via a second Entry
+    /// object for the same service+username, even immediately afterward in
+    /// the same process. Our code always creates a fresh Entry per call
+    /// (see `entry()` above), so this is the exact pattern that matters.
+    /// Fixed by upgrading to keyring 4.
+    #[test]
+    fn round_trip_fresh_entry_instance() {
+        let write_entry = keyring::Entry::new("vesper-diag-test", "probe").unwrap();
+        write_entry.set_password("hello-again").expect("set_password failed");
+
+        let read_entry = keyring::Entry::new("vesper-diag-test", "probe").unwrap();
+        let read_back = read_entry.get_password().expect("get_password failed on a fresh Entry instance");
+        assert_eq!(read_back, "hello-again");
+        let _ = read_entry.delete_credential();
+    }
+}

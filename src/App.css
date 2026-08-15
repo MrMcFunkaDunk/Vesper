@@ -529,34 +529,201 @@ body {
   line-height: 1.5;
 }
 
-.dashboard-panel {
-  display: flex;
-  flex-direction: column;
+.main-dashboard {
   align-items: flex-start;
-  gap: var(--space-sm);
-  max-width: 420px;
-  padding: var(--space-xl);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  justify-content: flex-start;
 }
 
-.dashboard-panel h2 {
-  margin: 4px 0 2px;
+.dashboard {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.dashboard-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dashboard-header h2 {
+  margin: 0;
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 22px;
   color: var(--text);
 }
 
-.dashboard-panel .status-chip {
-  margin: 2px 0 4px;
+.dashboard-header .status-chip {
+  margin-top: 2px;
 }
 
-.dashboard-note {
+.character-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.character-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.character-card:hover {
+  border-color: var(--border-active);
+  background: var(--bg-elevated-2);
+}
+
+.character-card:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.character-card-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.character-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.character-card-portrait {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg-elevated-2);
+  flex-shrink: 0;
+}
+
+.character-card-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.character-card-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.character-card-corp {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.character-card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.character-card-isk {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.character-card-sp {
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.character-card-training,
+.character-card-location {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.character-card-reauth {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.character-card-reauth p {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
+  color: var(--warning);
+}
+
+.character-card-reauth-btn {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.character-card-reauth-btn:hover {
+  background: var(--warning);
+  color: #1a1206;
+}
+
+.character-card-add {
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  border-style: dashed;
+  background: transparent;
+  font-family: var(--font-label);
+}
+
+.character-card-add:hover {
+  color: var(--text);
+  border-color: var(--border-active);
+  background: var(--bg-elevated-2);
+}
+
+.character-card-add span:first-of-type {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.character-card-add-hint {
+  font-size: 11px;
   color: var(--text-muted);
 }
 

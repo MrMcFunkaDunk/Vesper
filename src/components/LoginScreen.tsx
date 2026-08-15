@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { startLogin } from "../lib/eve";
+import { DASHBOARD_SCOPES } from "../lib/scopes";
 import Wordmark from "./Wordmark";
 
 interface LoginScreenProps {
@@ -14,7 +15,7 @@ function LoginScreen({ onLoggedIn }: LoginScreenProps) {
     setStatus("pending");
     setError("");
     try {
-      await startLogin([]);
+      await startLogin(DASHBOARD_SCOPES);
       onLoggedIn();
     } catch (err) {
       setStatus("error");

@@ -5,6 +5,7 @@ import MainContent from "./components/MainContent";
 import Dashboard from "./components/Dashboard";
 import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
+import { DASHBOARD_SCOPES } from "./lib/scopes";
 import "./App.css";
 
 function App() {
@@ -39,30 +40,27 @@ function App() {
     return <LoginScreen onLoggedIn={refreshSession} />;
   }
 
-  const activeCharacter =
-    session.characters.find((c) => c.id === session.active_character_id) ?? session.characters[0];
+  async function handleSwitch(id: number) {
+    await setActiveCharacter(id);
+    refreshSession();
+  }
+
+  async function handleAdd() {
+    await startLogin(DASHBOARD_SCOPES);
+    refreshSession();
+  }
+
+  async function handleLogout(id: number) {
+    await logoutCharacter(id);
+    refreshSession();
+  }
 
   return (
     <div className="shell">
       <Sidebar activeId={activeId} onSelect={setActiveId} />
-      <TopBar
-        title={active.label}
-        session={session}
-        onSwitch={async (id) => {
-          await setActiveCharacter(id);
-          refreshSession();
-        }}
-        onAdd={async () => {
-          await startLogin([]);
-          refreshSession();
-        }}
-        onLogout={async (id) => {
-          await logoutCharacter(id);
-          refreshSession();
-        }}
-      />
+      <TopBar title={active.label} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
       {activeId === "dashboard" ? (
-        <Dashboard characterName={activeCharacter.name} />
+        <Dashboard session={session} onSwitch={handleSwitch} onAdd={handleAdd} />
       ) : (
         <MainContent icon={active.icon} label={active.label} description={active.description} />
       )}

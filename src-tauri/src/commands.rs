@@ -1,4 +1,4 @@
-use crate::{auth, characters, config};
+use crate::{auth, characters, config, esi};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -76,6 +76,15 @@ pub fn set_active_character(app: AppHandle, id: i64) -> Result<(), String> {
 pub fn logout_character(app: AppHandle, id: i64) -> Result<(), String> {
     auth::keychain::delete_tokens(id)?;
     characters::remove_character(&app, id)
+}
+
+#[tauri::command]
+pub async fn get_character_overview(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<esi::CharacterOverview, String> {
+    let config = config::load()?;
+    esi::fetch_character_overview(&state.http_client, &config, id).await
 }
 
 fn now_unix() -> i64 {
