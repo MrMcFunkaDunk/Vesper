@@ -13,6 +13,8 @@ import Wordmark from "./Wordmark";
 import ColorPickerMenu from "./ColorPickerMenu";
 import { SIDEBAR_PALETTE } from "../lib/palettes";
 import { useColorOverrides } from "../hooks/useColorOverrides";
+import { useNavOrder } from "../hooks/useNavOrder";
+import { useDragReorder } from "../hooks/useDragReorder";
 
 export interface NavItem {
   id: string;
@@ -85,6 +87,15 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
   const { colors, setColor, resetColor } = useColorOverrides("vesper.colors.sidebar");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
+  const defaultIds = NAV_ITEMS.map((item) => item.id);
+  const { order, setOrder } = useNavOrder(defaultIds);
+  const { draggingId, setItemRef, handlePointerDown, handlePointerMove, handlePointerUp, consumeJustDragged } =
+    useDragReorder(order, setOrder);
+
+  const orderedItems = order
+    .map((id) => NAV_ITEMS.find((item) => item.id === id))
+    .filter((item): item is NavItem => Boolean(item));
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -93,21 +104,29 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
       </div>
       <div className="brand-divider" />
       <nav className="nav">
-        {NAV_ITEMS.map((item) => {
+        {orderedItems.map((item) => {
           const Icon = item.icon;
           const isActive = item.id === activeId;
           const customColor = colors[item.id];
+          const isDragging = draggingId === item.id;
           return (
             <button
               key={item.id}
+              ref={setItemRef(item.id)}
               type="button"
-              className={`nav-item${isActive ? " nav-item-active" : ""}`}
+              className={`nav-item${isActive ? " nav-item-active" : ""}${isDragging ? " nav-item-dragging" : ""}`}
               style={customColor ? { color: customColor } : undefined}
-              onClick={() => onSelect(item.id)}
+              onClick={() => {
+                if (consumeJustDragged()) return;
+                onSelect(item.id);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setContextMenu({ navId: item.id, x: e.clientX, y: e.clientY });
               }}
+              onPointerDown={handlePointerDown(item.id)}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
             >
               <Icon size={18} strokeWidth={1.75} />
               <span>{item.label}</span>

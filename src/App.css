@@ -163,6 +163,8 @@ body {
   text-transform: uppercase;
   text-align: left;
   cursor: pointer;
+  user-select: none;
+  touch-action: none;
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
@@ -180,6 +182,13 @@ body {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav-item-dragging {
+  cursor: grabbing;
+  opacity: 0.6;
+  background: var(--bg-elevated-2);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
 }
 
 .sidebar-footer {
