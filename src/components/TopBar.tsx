@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Session } from "../lib/eve";
+import StatusChip from "./StatusChip";
 
 interface TopBarProps {
   title: string;
@@ -27,13 +28,10 @@ function TopBar({ title, session, onSwitch, onAdd, onLogout }: TopBarProps) {
           {active ? (
             <>
               <img className="account-portrait" src={active.portrait_url} alt="" />
-              <span>{active.name}</span>
+              <StatusChip label={active.name} value="Connected" tone="online" />
             </>
           ) : (
-            <>
-              <span className="status-dot" />
-              Not signed in
-            </>
+            <StatusChip label="Session" value="Offline" tone="neutral" />
           )}
         </button>
         {menuOpen && (

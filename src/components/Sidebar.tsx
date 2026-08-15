@@ -8,6 +8,7 @@ import {
   UserSearch,
   Settings,
 } from "lucide-react";
+import Wordmark from "./Wordmark";
 
 export interface NavItem {
   id: string;
@@ -74,9 +75,10 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className="brand-mark">EC</span>
-        <span className="brand-name">EVE Companion</span>
+        <Wordmark />
+        <span className="brand-subtitle">Capsuleer Operations System</span>
       </div>
+      <div className="brand-divider" />
       <nav className="nav">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;

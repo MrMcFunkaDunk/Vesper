@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { startLogin } from "../lib/eve";
+import Wordmark from "./Wordmark";
 
 interface LoginScreenProps {
   onLoggedIn: () => void;
@@ -24,12 +25,10 @@ function LoginScreen({ onLoggedIn }: LoginScreenProps) {
   return (
     <div className="login-screen">
       <div className="login-card">
-        <span className="brand-mark login-brand-mark">EC</span>
-        <h1>EVE Companion</h1>
-        <p>
-          Sign in with your EVE Online account to pull your characters' data
-          into one place.
-        </p>
+        <Wordmark className="login-word" />
+        <span className="brand-subtitle">Capsuleer Operations System</span>
+        <div className="login-divider" />
+        <p className="eyebrow">Secure Capsuleer Authentication</p>
         {/* TODO: swap for CCP's official "Log in with EVE Online" button asset */}
         <button
           type="button"

@@ -1,5 +1,5 @@
 {
-  "name": "tauri-app",
+  "name": "vesper",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,6 +10,9 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/oxanium": "^5.3.0",
+    "@fontsource/rajdhani": "^5.3.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "lucide-react": "^1.31.0",
