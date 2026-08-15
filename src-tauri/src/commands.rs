@@ -116,6 +116,24 @@ pub async fn get_kill_detail(state: State<'_, AppState>, killmail_id: i64) -> Re
     kills::fetch_kill_detail(&state.http_client, killmail_id).await
 }
 
+#[tauri::command]
+pub async fn get_recent_activity_kills(state: State<'_, AppState>) -> Result<Vec<kills::KillEntry>, String> {
+    kills::fetch_recent_activity(&state.http_client).await
+}
+
+#[tauri::command]
+pub async fn poll_recent_activity_kills(state: State<'_, AppState>) -> Result<Vec<kills::KillEntry>, String> {
+    kills::poll_recent_activity(&state.http_client).await
+}
+
+#[tauri::command]
+pub async fn poll_tracked_system_kills(
+    state: State<'_, AppState>,
+    system_ids: Vec<i64>,
+) -> Result<Vec<kills::KillEntry>, String> {
+    kills::poll_tracked_systems(&state.http_client, &system_ids).await
+}
+
 fn now_unix() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

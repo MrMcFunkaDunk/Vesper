@@ -97,6 +97,32 @@ export function getRecentKills(systemIds: number[]): Promise<KillEntry[]> {
   return invoke("get_recent_kills", { systemIds });
 }
 
+export function getRecentActivityKills(): Promise<KillEntry[]> {
+  return invoke("get_recent_activity_kills");
+}
+
 export function getKillDetail(killmailId: number): Promise<KillDetail> {
   return invoke("get_kill_detail", { killmailId });
+}
+
+/** One long-poll cycle (server-side wait up to ~60s) of the live, unfiltered New Eden kill stream. Call again immediately after each result to keep streaming. */
+export function pollRecentActivityKills(): Promise<KillEntry[]> {
+  return invoke("poll_recent_activity_kills");
+}
+
+/** Same live stream as pollRecentActivityKills, filtered to the given systems. */
+export function pollTrackedSystemKills(systemIds: number[]): Promise<KillEntry[]> {
+  return invoke("poll_tracked_system_kills", { systemIds });
+}
+
+export const MAX_LIVE_KILLS = 150;
+
+/** Merges newly-arrived kills into an existing feed, deduping by killmail_id and keeping newest-first, capped so a long session doesn't grow the list forever. */
+export function mergeKillFeeds(existing: KillEntry[], incoming: KillEntry[], cap: number = MAX_LIVE_KILLS): KillEntry[] {
+  const byId = new Map<number, KillEntry>();
+  for (const kill of existing) byId.set(kill.killmail_id, kill);
+  for (const kill of incoming) byId.set(kill.killmail_id, kill);
+  return Array.from(byId.values())
+    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+    .slice(0, cap);
 }

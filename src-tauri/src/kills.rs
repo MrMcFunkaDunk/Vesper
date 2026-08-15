@@ -1,8 +1,18 @@
 use crate::esi::{self, ESI_BASE};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 const ZKILLBOARD_BASE: &str = "https://zkillboard.com/api";
+
+/// zKillboard's own single-killmail lookup (`/killID/{id}/`) is a short-
+/// lived cache that frequently misses even very recent kills - confirmed
+/// live, including the single freshest kill in a busy system. But every
+/// list endpoint (systemID or category) already returns the complete
+/// killmail (attackers, victim, items, zkb metadata), so caching what a
+/// kill list just fetched means a click-through never needs that flaky
+/// lookup at all for anything the user could have actually clicked.
+static KILL_CACHE: LazyLock<Mutex<HashMap<i64, ZkbKillmail>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 struct SystemInfo {
     security_status: f64,
@@ -92,6 +102,7 @@ struct ZkbKillmail {
     #[serde(default)]
     attackers: Vec<ZkbAttacker>,
     victim: ZkbVictim,
+    #[serde(default)]
     zkb: ZkbMeta,
 }
 
@@ -102,7 +113,9 @@ struct ZkbAttacker {
     #[serde(default)]
     alliance_id: Option<i64>,
     ship_type_id: Option<i64>,
+    #[serde(default)]
     damage_done: i64,
+    #[serde(default)]
     final_blow: bool,
 }
 
@@ -121,6 +134,7 @@ struct ZkbVictim {
 #[derive(Deserialize, Clone)]
 struct ZkbItem {
     item_type_id: i64,
+    #[serde(default)]
     flag: i32,
     #[serde(default)]
     quantity_destroyed: i64,
@@ -128,15 +142,17 @@ struct ZkbItem {
     quantity_dropped: i64,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Default)]
 struct ZkbMeta {
-    #[serde(rename = "totalValue")]
+    #[serde(rename = "totalValue", default)]
     total_value: f64,
-    #[serde(rename = "destroyedValue")]
+    #[serde(rename = "destroyedValue", default)]
     destroyed_value: f64,
-    #[serde(rename = "droppedValue")]
+    #[serde(rename = "droppedValue", default)]
     dropped_value: f64,
+    #[serde(default)]
     npc: bool,
+    #[serde(default)]
     solo: bool,
     #[serde(default)]
     hash: String,
@@ -218,15 +234,125 @@ async fn fetch_system_kills(client: &reqwest::Client, system_id: i64) -> Result<
 }
 
 /// Fetches recent kills for every watched system (sequentially - zKillboard
-/// asks callers not to hammer their server), merges and sorts them newest
-/// first, then resolves every victim/ship/system/final-blow-attacker name
-/// in a single batched ESI call.
+/// asks callers not to hammer their server), then hands off to enrich_kills.
 pub async fn fetch_recent_kills(client: &reqwest::Client, system_ids: &[i64]) -> Result<Vec<KillEntry>, String> {
     let mut raw: Vec<ZkbKillmail> = Vec::new();
     for &system_id in system_ids {
         raw.extend(fetch_system_kills(client, system_id).await?);
     }
+    Ok(enrich_kills(client, raw).await)
+}
+
+const RECENT_ACTIVITY_CATEGORIES: [&str; 4] = ["highsec", "lowsec", "nullsec", "w-space"];
+const KILLS_PER_CATEGORY: usize = 20;
+const RECENT_ACTIVITY_LIMIT: usize = 60;
+
+async fn fetch_category_kills(client: &reqwest::Client, category: &str) -> Result<Vec<ZkbKillmail>, String> {
+    let url = format!("{ZKILLBOARD_BASE}/kills/{category}/");
+    let response = client.get(&url).send().await.map_err(|e| format!("zKillboard request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(format!("zKillboard returned {status} for category {category}"));
+    }
+
+    let mut kills: Vec<ZkbKillmail> = response
+        .json()
+        .await
+        .map_err(|e| format!("failed to parse zKillboard response: {e}"))?;
+    kills.truncate(KILLS_PER_CATEGORY);
+    Ok(kills)
+}
+
+/// A one-off snapshot of kills across all of New Eden, not scoped to a
+/// watchlist. Merges several of zKillboard's region-category endpoints,
+/// fetched concurrently. Good for an immediate first screenful, but these
+/// endpoints sit behind an up-to-1-hour Cloudflare cache (confirmed via
+/// response headers - Cache-Control: max-age=3600), so re-fetching this on
+/// a timer doesn't actually get fresher data no matter how often it's
+/// called. Real live updates come from poll_recent_activity below instead.
+/// A category that fails to load is just left out rather than failing the
+/// whole feed.
+pub async fn fetch_recent_activity(client: &reqwest::Client) -> Result<Vec<KillEntry>, String> {
+    let results =
+        futures::future::join_all(RECENT_ACTIVITY_CATEGORIES.iter().map(|&category| fetch_category_kills(client, category)))
+            .await;
+
+    let mut raw: Vec<ZkbKillmail> = Vec::new();
+    for result in results {
+        if let Ok(kills) = result {
+            raw.extend(kills);
+        }
+    }
     raw.sort_by(|a, b| b.killmail_time.cmp(&a.killmail_time));
+    raw.truncate(RECENT_ACTIVITY_LIMIT);
+
+    Ok(enrich_kills(client, raw).await)
+}
+
+const KILLMAIL_STREAM_BASE: &str = "https://killmail.stream";
+const RECENT_ACTIVITY_QUEUE_ID: &str = "vesper-capsuleer-ops-activity";
+const TRACKED_SYSTEMS_QUEUE_ID: &str = "vesper-capsuleer-ops-tracked";
+
+/// killmail.stream is a maintained, RedisQ-compatible live killmail feed.
+/// zKillboard's own RedisQ (zkillredisq.stream) resolves to a sinkhole IP
+/// through every DNS path tried, including a neutral public DoH resolver,
+/// which rules out a local/network block - it's evidently retired rather
+/// than something to route around. /poll/{queueID} long-polls up to 60s
+/// and returns every new killmail (same shape as zKillboard's own API)
+/// since the last call for that queue, so a client just needs to keep
+/// calling it in a loop to get genuinely live kills - no fixed interval
+/// needed, and no risk of hammering a cache that can't move faster anyway.
+async fn poll_live_kills(client: &reqwest::Client, queue_id: &str) -> Result<Vec<ZkbKillmail>, String> {
+    let url = format!("{KILLMAIL_STREAM_BASE}/poll/{queue_id}");
+    let response = client.get(&url).send().await.map_err(|e| format!("killmail.stream request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(format!("killmail.stream returned {status}"));
+    }
+
+    // Parsed one element at a time rather than as a single Vec<ZkbKillmail>:
+    // killmail.stream aggregates from multiple sources, so a very fresh
+    // kill can arrive with an incomplete zkb block before zKillboard has
+    // finished enriching it. Deserializing the whole batch atomically means
+    // one such entry fails every kill in that response; skipping just the
+    // entries that don't parse keeps the rest.
+    let raw_entries: Vec<serde_json::Value> = response
+        .json()
+        .await
+        .map_err(|e| format!("failed to parse killmail.stream response: {e}"))?;
+    Ok(raw_entries.into_iter().filter_map(|entry| serde_json::from_value::<ZkbKillmail>(entry).ok()).collect())
+}
+
+/// One long-poll cycle of the live, unfiltered New Eden kill stream.
+pub async fn poll_recent_activity(client: &reqwest::Client) -> Result<Vec<KillEntry>, String> {
+    let raw = poll_live_kills(client, RECENT_ACTIVITY_QUEUE_ID).await?;
+    Ok(enrich_kills(client, raw).await)
+}
+
+/// One long-poll cycle of the same live stream, filtered to the watched
+/// systems - a distinct queueID from poll_recent_activity so the two
+/// consumers each get their own independent position in the stream. Most
+/// calls will filter down to nothing to enrich at all, which is normal.
+pub async fn poll_tracked_systems(client: &reqwest::Client, system_ids: &[i64]) -> Result<Vec<KillEntry>, String> {
+    let raw = poll_live_kills(client, TRACKED_SYSTEMS_QUEUE_ID).await?;
+    let matching: Vec<ZkbKillmail> = raw.into_iter().filter(|k| system_ids.contains(&k.solar_system_id)).collect();
+    Ok(enrich_kills(client, matching).await)
+}
+
+/// Sorts newest-first, resolves system security/region for every unique
+/// system involved, then resolves every victim/ship/system/final-blow-
+/// attacker name in a single batched ESI call before building KillEntry.
+async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>) -> Vec<KillEntry> {
+    raw.sort_by(|a, b| b.killmail_time.cmp(&a.killmail_time));
+
+    {
+        let mut cache = KILL_CACHE.lock().unwrap();
+        for kill in &raw {
+            cache.insert(kill.killmail_id, kill.clone());
+        }
+    }
 
     let mut unique_systems: Vec<i64> = raw.iter().map(|k| k.solar_system_id).collect();
     unique_systems.sort_unstable();
@@ -265,8 +391,7 @@ pub async fn fetch_recent_kills(client: &reqwest::Client, system_ids: &[i64]) ->
     }
     let names = esi::resolve_names(client, lookup_ids).await;
 
-    Ok(raw
-        .into_iter()
+    raw.into_iter()
         .map(|kill| {
             let final_blow = kill.attackers.iter().find(|a| a.final_blow);
             let info = system_info.get(&kill.solar_system_id);
@@ -306,7 +431,7 @@ pub async fn fetch_recent_kills(client: &reqwest::Client, system_ids: &[i64]) ->
                     .and_then(|id| names.get(&id).cloned()),
             }
         })
-        .collect())
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -398,30 +523,38 @@ pub struct KillDetail {
 }
 
 /// Fetches one killmail's full detail - the attackers involved and every
-/// item destroyed/dropped - via zKillboard's single-killmail endpoint.
-/// Only reliable for kills still in zKillboard's short-term cache, which a
-/// kill just pulled from the recent-activity feed always is.
+/// item destroyed/dropped. Prefers whatever a list fetch already cached
+/// (see KILL_CACHE) since that's exactly the same data and doesn't depend
+/// on zKillboard's single-killmail endpoint, which is unreliable enough to
+/// miss even a kill that appeared in a list moments ago. Only falls back
+/// to that live lookup when the kill isn't cached (e.g. app just started).
 pub async fn fetch_kill_detail(client: &reqwest::Client, killmail_id: i64) -> Result<KillDetail, String> {
-    let url = format!("{ZKILLBOARD_BASE}/killID/{killmail_id}/");
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("zKillboard request failed: {e}"))?;
+    let cached = KILL_CACHE.lock().unwrap().get(&killmail_id).cloned();
+    let kill = match cached {
+        Some(kill) => kill,
+        None => {
+            let url = format!("{ZKILLBOARD_BASE}/killID/{killmail_id}/");
+            let response = client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| format!("zKillboard request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        return Err(format!("zKillboard returned {status} for killmail {killmail_id}"));
-    }
+            if !response.status().is_success() {
+                let status = response.status();
+                return Err(format!("zKillboard returned {status} for killmail {killmail_id}"));
+            }
 
-    let kills: Vec<ZkbKillmail> = response
-        .json()
-        .await
-        .map_err(|e| format!("failed to parse zKillboard response: {e}"))?;
-    let kill = kills
-        .into_iter()
-        .next()
-        .ok_or_else(|| "zKillboard has no record of this killmail".to_string())?;
+            let kills: Vec<ZkbKillmail> = response
+                .json()
+                .await
+                .map_err(|e| format!("failed to parse zKillboard response: {e}"))?;
+            kills
+                .into_iter()
+                .next()
+                .ok_or_else(|| "zKillboard has no record of this killmail".to_string())?
+        }
+    };
 
     let mut lookup_ids: Vec<i64> = vec![kill.solar_system_id, kill.victim.ship_type_id];
     if let Some(id) = kill.victim.character_id {

@@ -28,6 +28,9 @@ pub fn run() {
             commands::search_system,
             commands::get_recent_kills,
             commands::get_kill_detail,
+            commands::get_recent_activity_kills,
+            commands::poll_recent_activity_kills,
+            commands::poll_tracked_system_kills,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

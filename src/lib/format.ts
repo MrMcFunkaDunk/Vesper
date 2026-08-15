@@ -31,6 +31,21 @@ export function formatRelativeTime(iso: string): string {
   return `${totalDays}d ago`;
 }
 
+/** Formats an ISO timestamp as the exact local time the kill occurred, e.g. "14:36:12" - paired with the date-group headers, which already show which day. */
+export function formatExactTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/** Formats a past ISO timestamp with second-level precision for the first minute ("3s ago"), then falls back to formatRelativeTime - for live "last updated" indicators where "just now" for a whole 60s gives no visible feedback that anything happened. */
+export function formatSecondsAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (diffMs < 0) return "just now";
+  const totalSeconds = Math.floor(diffMs / 1000);
+  if (totalSeconds < 3) return "just now";
+  if (totalSeconds < 60) return `${totalSeconds}s ago`;
+  return formatRelativeTime(iso);
+}
+
 /** Local-calendar-day key for grouping a list of ISO timestamps by date. */
 export function dateKey(iso: string): string {
   const d = new Date(iso);
