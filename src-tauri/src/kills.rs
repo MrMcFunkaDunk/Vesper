@@ -38,6 +38,46 @@ async fn fetch_system_info(client: &reqwest::Client, system_id: i64) -> Option<S
     Some(SystemInfo { security_status: system.security_status, region_name: region.name })
 }
 
+#[derive(Deserialize)]
+struct EsiTypeInfo {
+    group_id: i64,
+}
+
+#[derive(Deserialize)]
+struct EsiGroupInfo {
+    category_id: i64,
+}
+
+/// EVE's "Charge" category (ammo, crystals, scripts, etc). Fixed, stable id.
+const CHARGE_CATEGORY_ID: i64 = 8;
+
+/// Whether an item type is a charge (ammo/crystal/script) rather than a
+/// fitted module. A killmail records a turret's loaded charge at the same
+/// flag as the turret itself, and quantity alone doesn't reliably tell them
+/// apart (frequency crystals sit at qty 1, same as the module), so this
+/// checks the type's real category via its group. Best-effort: a failed
+/// lookup falls back to treating it as a module.
+async fn fetch_is_charge(client: &reqwest::Client, type_id: i64) -> (i64, bool) {
+    let is_charge = async {
+        let type_info: EsiTypeInfo = esi::public_get(client, &format!("/universe/types/{type_id}/")).await.ok()?;
+        let group_info: EsiGroupInfo =
+            esi::public_get(client, &format!("/universe/groups/{}/", type_info.group_id)).await.ok()?;
+        Some(group_info.category_id == CHARGE_CATEGORY_ID)
+    }
+    .await
+    .unwrap_or(false);
+    (type_id, is_charge)
+}
+
+/// Classifies every unique item type on a killmail as charge or module,
+/// fetched concurrently since it's a 2-hop ESI lookup per type.
+async fn classify_charges(client: &reqwest::Client, type_ids: &[i64]) -> HashMap<i64, bool> {
+    let mut unique = type_ids.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    futures::future::join_all(unique.iter().map(|&id| fetch_is_charge(client, id))).await.into_iter().collect()
+}
+
 /// zKillboard mirrors the full ESI killmail shape (attackers/victim/items/
 /// etc.) alongside its own "zkb" metadata (value, labels), so a kill's
 /// details come entirely from this one call - no separate ESI killmail
@@ -73,12 +113,15 @@ struct ZkbVictim {
     alliance_id: Option<i64>,
     ship_type_id: i64,
     #[serde(default)]
+    damage_taken: i64,
+    #[serde(default)]
     items: Vec<ZkbItem>,
 }
 
 #[derive(Deserialize, Clone)]
 struct ZkbItem {
     item_type_id: i64,
+    flag: i32,
     #[serde(default)]
     quantity_destroyed: i64,
     #[serde(default)]
@@ -95,6 +138,29 @@ struct ZkbMeta {
     dropped_value: f64,
     npc: bool,
     solo: bool,
+    #[serde(default)]
+    hash: String,
+    #[serde(default)]
+    points: i64,
+}
+
+/// Maps a killmail item's inventory `flag` to the slot group the fit-wheel
+/// renders it in. These flag ranges are fixed EVE inventory-position ids
+/// (unrelated to the SDE), stable since forever: HiSlot0-7 = 27-34,
+/// MedSlot0-7 = 19-26, LoSlot0-7 = 11-18, RigSlot0-7 = 92-99,
+/// SubSystemSlot0-7 = 125-132 (folded into "rig" for wheel layout since
+/// T3 cruisers are rare enough not to warrant a sixth arc), DroneBay = 87,
+/// Cargo = 5. Everything else (fuel bay, ore hold, etc.) is just "other".
+fn slot_group(flag: i32) -> &'static str {
+    match flag {
+        27..=34 => "high",
+        19..=26 => "mid",
+        11..=18 => "low",
+        92..=99 | 125..=132 => "rig",
+        87 => "drone",
+        5 => "cargo",
+        _ => "other",
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -247,8 +313,47 @@ pub async fn fetch_recent_kills(client: &reqwest::Client, system_ids: &[i64]) ->
 pub struct KillItemEntry {
     pub item_type_id: i64,
     pub item_type_name: String,
+    pub flag: i32,
+    pub slot_group: String,
+    pub is_charge: bool,
     pub quantity_destroyed: i64,
     pub quantity_dropped: i64,
+}
+
+#[derive(Serialize)]
+pub struct InsuranceLevel {
+    pub name: String,
+    pub cost: f64,
+    pub payout: f64,
+}
+
+#[derive(Deserialize)]
+struct EsiInsuranceEntry {
+    type_id: i64,
+    levels: Vec<EsiInsuranceLevel>,
+}
+
+#[derive(Deserialize)]
+struct EsiInsuranceLevel {
+    name: String,
+    cost: f64,
+    payout: f64,
+}
+
+/// ESI's insurance-prices endpoint isn't filterable by type - it always
+/// returns every insurable hull in one list - so this fetches the whole
+/// thing and picks out the one ship. Best-effort: structures/deployables
+/// and anything ESI fails to return just leave the killmail without an
+/// insurance table rather than failing the whole detail fetch.
+async fn fetch_insurance_levels(client: &reqwest::Client, ship_type_id: i64) -> Vec<InsuranceLevel> {
+    let Ok(entries) = esi::public_get::<Vec<EsiInsuranceEntry>>(client, "/insurance/prices/").await else {
+        return Vec::new();
+    };
+    entries
+        .into_iter()
+        .find(|e| e.type_id == ship_type_id)
+        .map(|e| e.levels.into_iter().map(|l| InsuranceLevel { name: l.name, cost: l.cost, payout: l.payout }).collect())
+        .unwrap_or_default()
 }
 
 #[derive(Serialize)]
@@ -282,6 +387,12 @@ pub struct KillDetail {
     pub total_value: f64,
     pub destroyed_value: f64,
     pub dropped_value: f64,
+    pub npc: bool,
+    pub solo: bool,
+    pub points: i64,
+    pub damage_taken: i64,
+    pub hash: String,
+    pub insurance: Vec<InsuranceLevel>,
     pub items: Vec<KillItemEntry>,
     pub attackers: Vec<KillAttackerEntry>,
 }
@@ -341,6 +452,9 @@ pub async fn fetch_kill_detail(client: &reqwest::Client, killmail_id: i64) -> Re
     }
     let names = esi::resolve_names(client, lookup_ids).await;
     let system_info = fetch_system_info(client, kill.solar_system_id).await;
+    let insurance = fetch_insurance_levels(client, kill.victim.ship_type_id).await;
+    let item_type_ids: Vec<i64> = kill.victim.items.iter().map(|i| i.item_type_id).collect();
+    let is_charge_by_type = classify_charges(client, &item_type_ids).await;
 
     let mut attackers: Vec<KillAttackerEntry> = kill
         .attackers
@@ -369,6 +483,9 @@ pub async fn fetch_kill_detail(client: &reqwest::Client, killmail_id: i64) -> Re
                 .get(&item.item_type_id)
                 .cloned()
                 .unwrap_or_else(|| format!("Type #{}", item.item_type_id)),
+            flag: item.flag,
+            slot_group: slot_group(item.flag).to_string(),
+            is_charge: is_charge_by_type.get(&item.item_type_id).copied().unwrap_or(false),
             quantity_destroyed: item.quantity_destroyed,
             quantity_dropped: item.quantity_dropped,
         })
@@ -394,6 +511,12 @@ pub async fn fetch_kill_detail(client: &reqwest::Client, killmail_id: i64) -> Re
         total_value: kill.zkb.total_value,
         destroyed_value: kill.zkb.destroyed_value,
         dropped_value: kill.zkb.dropped_value,
+        npc: kill.zkb.npc,
+        solo: kill.zkb.solo,
+        points: kill.zkb.points,
+        damage_taken: kill.victim.damage_taken,
+        hash: kill.zkb.hash,
+        insurance,
         items,
         attackers,
     })

@@ -32,11 +32,22 @@ export interface KillEntry {
   final_blow_alliance_name: string | null;
 }
 
+export type SlotGroup = "high" | "mid" | "low" | "rig" | "drone" | "cargo" | "other";
+
 export interface KillItemEntry {
   item_type_id: number;
   item_type_name: string;
+  flag: number;
+  slot_group: SlotGroup;
+  is_charge: boolean;
   quantity_destroyed: number;
   quantity_dropped: number;
+}
+
+export interface InsuranceLevel {
+  name: string;
+  cost: number;
+  payout: number;
 }
 
 export interface KillAttackerEntry {
@@ -68,6 +79,12 @@ export interface KillDetail {
   total_value: number;
   destroyed_value: number;
   dropped_value: number;
+  npc: boolean;
+  solo: boolean;
+  points: number;
+  damage_taken: number;
+  hash: string;
+  insurance: InsuranceLevel[];
   items: KillItemEntry[];
   attackers: KillAttackerEntry[];
 }
