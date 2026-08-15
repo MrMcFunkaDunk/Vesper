@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-const ESI_BASE: &str = "https://esi.evetech.net/latest";
+pub(crate) const ESI_BASE: &str = "https://esi.evetech.net/latest";
 
 enum EsiError {
     /// The character's stored token doesn't have the scope this endpoint needs.
@@ -47,7 +47,7 @@ async fn authorized_get<T: DeserializeOwned>(
         .map_err(|e| EsiError::Failed(format!("failed to parse ESI response from {path}: {e}")))
 }
 
-async fn public_get<T: DeserializeOwned>(client: &reqwest::Client, path: &str) -> Result<T, String> {
+pub(crate) async fn public_get<T: DeserializeOwned>(client: &reqwest::Client, path: &str) -> Result<T, String> {
     let response = client
         .get(format!("{ESI_BASE}{path}"))
         .send()
@@ -131,10 +131,18 @@ pub struct CharacterOverview {
     pub needs_reauth: bool,
 }
 
-async fn resolve_names(client: &reqwest::Client, ids: Vec<i64>) -> HashMap<i64, String> {
+pub(crate) async fn resolve_names(client: &reqwest::Client, ids: Vec<i64>) -> HashMap<i64, String> {
+    // ESI rejects the whole batch with 400 if it contains any duplicate id
+    // ("'ids' items are not all unique"), which a caller building this list
+    // per-kill/per-entry across many rows will naturally produce (e.g. the
+    // same system id repeated once per kill in that system).
+    let mut ids = ids;
+    ids.sort_unstable();
+    ids.dedup();
     if ids.is_empty() {
         return HashMap::new();
     }
+
     let result = client
         .post(format!("{ESI_BASE}/universe/names/"))
         .json(&ids)

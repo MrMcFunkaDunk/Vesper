@@ -1,4 +1,4 @@
-use crate::{auth, characters, config, esi};
+use crate::{auth, characters, config, esi, kills};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -96,6 +96,19 @@ pub async fn get_character_overview(
 pub async fn get_character_skills(state: State<'_, AppState>, id: i64) -> Result<esi::CharacterSkills, String> {
     let config = config::load()?;
     esi::fetch_character_skills(&state.http_client, &config, id).await
+}
+
+#[tauri::command]
+pub async fn search_system(state: State<'_, AppState>, name: String) -> Result<Option<kills::SystemMatch>, String> {
+    kills::search_system(&state.http_client, &name).await
+}
+
+#[tauri::command]
+pub async fn get_recent_kills(
+    state: State<'_, AppState>,
+    system_ids: Vec<i64>,
+) -> Result<Vec<kills::KillEntry>, String> {
+    kills::fetch_recent_kills(&state.http_client, &system_ids).await
 }
 
 fn now_unix() -> i64 {

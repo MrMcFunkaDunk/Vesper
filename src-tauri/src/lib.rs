@@ -3,6 +3,7 @@ mod characters;
 mod commands;
 mod config;
 mod esi;
+mod kills;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +25,8 @@ pub fn run() {
             commands::logout_character,
             commands::get_character_overview,
             commands::get_character_skills,
+            commands::search_system,
+            commands::get_recent_kills,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -17,3 +17,16 @@ export function formatTimeRemaining(iso: string): string {
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
 }
+
+/** Formats a past ISO timestamp as "5m ago" / "3h ago" / "2d ago". */
+export function formatRelativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (diffMs < 0) return "just now";
+  const totalMinutes = Math.floor(diffMs / 60000);
+  if (totalMinutes < 1) return "just now";
+  if (totalMinutes < 60) return `${totalMinutes}m ago`;
+  const totalHours = Math.floor(totalMinutes / 60);
+  if (totalHours < 24) return `${totalHours}h ago`;
+  const totalDays = Math.floor(totalHours / 24);
+  return `${totalDays}d ago`;
+}

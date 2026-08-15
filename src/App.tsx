@@ -4,6 +4,7 @@ import TopBar from "./components/TopBar";
 import MainContent from "./components/MainContent";
 import Dashboard from "./components/Dashboard";
 import CharacterDetail from "./components/CharacterDetail";
+import KillsIntel from "./components/KillsIntel";
 import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
 import { DASHBOARD_SCOPES } from "./lib/scopes";
@@ -83,6 +84,8 @@ function App() {
         ) : (
           <Dashboard session={session} onOpenDetail={handleOpenDetail} onAdd={handleAdd} />
         )
+      ) : activeId === "kills" ? (
+        <KillsIntel />
       ) : (
         <MainContent icon={active.icon} label={active.label} description={active.description} />
       )}
