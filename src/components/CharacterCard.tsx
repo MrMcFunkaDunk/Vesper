@@ -1,4 +1,5 @@
 import type { CharacterOverview, SessionCharacter } from "../lib/eve";
+import { formatIsk, formatSp, formatTimeRemaining } from "../lib/format";
 
 interface CharacterCardProps {
   character: SessionCharacter;
@@ -7,26 +8,6 @@ interface CharacterCardProps {
   pending: boolean;
   onSelect: () => void;
   onReauth: () => void;
-}
-
-function formatIsk(value: number): string {
-  return `${new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)} ISK`;
-}
-
-function formatSp(value: number): string {
-  return `${new Intl.NumberFormat("en-US").format(value)} SP`;
-}
-
-function formatTimeRemaining(iso: string): string {
-  const diffMs = new Date(iso).getTime() - Date.now();
-  if (diffMs <= 0) return "finishing soon";
-  const totalMinutes = Math.floor(diffMs / 60000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
 }
 
 function CharacterCard({ character, overview, isActive, pending, onSelect, onReauth }: CharacterCardProps) {

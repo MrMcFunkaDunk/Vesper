@@ -48,3 +48,20 @@ export interface CharacterOverview {
 export function getCharacterOverview(id: number): Promise<CharacterOverview> {
   return invoke("get_character_overview", { id });
 }
+
+export interface SkillEntry {
+  skill_id: number;
+  name: string;
+  trained_level: number;
+  skillpoints: number;
+}
+
+export interface CharacterSkills {
+  total_sp: number | null;
+  skills: SkillEntry[];
+  needs_reauth: boolean;
+}
+
+export function getCharacterSkills(id: number): Promise<CharacterSkills> {
+  return invoke("get_character_skills", { id });
+}

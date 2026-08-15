@@ -23,6 +23,7 @@ pub fn run() {
             commands::set_active_character,
             commands::logout_character,
             commands::get_character_overview,
+            commands::get_character_skills,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

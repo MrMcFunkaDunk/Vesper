@@ -9,25 +9,26 @@ import {
   type Session,
   type SessionCharacter,
 } from "../lib/eve";
+import { useErrorReporter } from "../hooks/useErrorReporter";
 
 interface DashboardProps {
   session: Session;
-  onSwitch: (id: number) => void;
+  onOpenDetail: (id: number) => void;
   onAdd: () => Promise<void>;
 }
 
-function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
+function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
   const [overviews, setOverviews] = useState<Record<number, CharacterOverview | null>>({});
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
   const cancelledRef = useRef(false);
+  const reportError = useErrorReporter();
   const characterIds = session.characters.map((c) => c.id).join(",");
 
   function fetchOverview(character: SessionCharacter) {
     getCharacterOverview(character.id)
       .then((overview) => setOverviews((prev) => ({ ...prev, [character.id]: overview })))
       .catch((err) => {
-        console.error(`Failed to load overview for ${character.name}`, err);
+        reportError(`Failed to load overview for ${character.name}: ${String(err)}`);
         setOverviews((prev) => ({ ...prev, [character.id]: null }));
       });
   }
@@ -52,7 +53,6 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
   async function handleAccountAction() {
     if (pending) return;
     setPending(true);
-    setError("");
     try {
       await onAdd();
       session.characters.forEach(fetchOverview);
@@ -60,8 +60,7 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
       if (cancelledRef.current) {
         cancelledRef.current = false;
       } else {
-        console.error("Sign-in failed", err);
-        setError(String(err));
+        reportError(`Sign-in failed: ${String(err)}`);
       }
     } finally {
       setPending(false);
@@ -91,7 +90,6 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
               </button>
             </div>
           )}
-          {error && <p className="dashboard-error">{error}</p>}
         </div>
 
         <div className="character-grid">
@@ -102,7 +100,7 @@ function Dashboard({ session, onSwitch, onAdd }: DashboardProps) {
               overview={overviews[character.id]}
               isActive={character.id === session.active_character_id}
               pending={pending}
-              onSelect={() => onSwitch(character.id)}
+              onSelect={() => onOpenDetail(character.id)}
               onReauth={handleAccountAction}
             />
           ))}

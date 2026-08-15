@@ -92,6 +92,12 @@ pub async fn get_character_overview(
     esi::fetch_character_overview(&state.http_client, &config, id).await
 }
 
+#[tauri::command]
+pub async fn get_character_skills(state: State<'_, AppState>, id: i64) -> Result<esi::CharacterSkills, String> {
+    let config = config::load()?;
+    esi::fetch_character_skills(&state.http_client, &config, id).await
+}
+
 fn now_unix() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

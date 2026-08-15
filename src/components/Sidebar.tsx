@@ -15,11 +15,19 @@ import { SIDEBAR_PALETTE } from "../lib/palettes";
 import { useColorOverrides } from "../hooks/useColorOverrides";
 import { useNavOrder } from "../hooks/useNavOrder";
 import { useDragReorder } from "../hooks/useDragReorder";
+import dashboardIcon from "../assets/sidebar-icons/dashboard.png";
+import killsIntelIcon from "../assets/sidebar-icons/kills-intel.png";
+import walletMarketIcon from "../assets/sidebar-icons/wallet-market.png";
+import mailIcon from "../assets/sidebar-icons/mail.png";
+import intelCheckIcon from "../assets/sidebar-icons/intel-check.png";
+import settingsIcon from "../assets/sidebar-icons/settings.png";
 
 export interface NavItem {
   id: string;
   label: string;
   icon: LucideIcon;
+  /** Custom sidebar artwork, overrides `icon` in the nav list when set. */
+  image?: string;
   description: string;
 }
 
@@ -28,6 +36,7 @@ export const NAV_ITEMS: NavItem[] = [
     id: "dashboard",
     label: "Dashboard",
     icon: LayoutDashboard,
+    image: dashboardIcon,
     description:
       "A quick overview once you're logged in, with summary widgets from the modules below.",
   },
@@ -35,6 +44,7 @@ export const NAV_ITEMS: NavItem[] = [
     id: "kills",
     label: "Kills & Intel",
     icon: Radar,
+    image: killsIntelIcon,
     description:
       "Recent killmail activity from zKillboard for the systems and regions you care about.",
   },
@@ -42,6 +52,7 @@ export const NAV_ITEMS: NavItem[] = [
     id: "wallet",
     label: "Wallet & Market",
     icon: Wallet,
+    image: walletMarketIcon,
     description:
       "Character wallet balance and recent transactions, pulled live from ESI.",
   },
@@ -56,18 +67,21 @@ export const NAV_ITEMS: NavItem[] = [
     id: "mail",
     label: "Mail",
     icon: Mail,
+    image: mailIcon,
     description: "A read-only view of your EVE mail inbox.",
   },
   {
     id: "intel-check",
     label: "Intel Check",
     icon: UserSearch,
+    image: intelCheckIcon,
     description: "Paste a chat list and look up affiliations for everyone in it.",
   },
   {
     id: "settings",
     label: "Settings",
     icon: Settings,
+    image: settingsIcon,
     description: "Manage logged-in characters, granted scopes, and app preferences.",
   },
 ];
@@ -128,7 +142,11 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
             >
-              <Icon size={18} strokeWidth={1.75} />
+              {item.image ? (
+                <img src={item.image} alt="" className="nav-item-icon-img" />
+              ) : (
+                <Icon size={18} strokeWidth={1.75} />
+              )}
               <span>{item.label}</span>
             </button>
           );

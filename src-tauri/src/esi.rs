@@ -64,9 +64,28 @@ async fn public_get<T: DeserializeOwned>(client: &reqwest::Client, path: &str) -
         .map_err(|e| format!("failed to parse ESI response from {path}: {e}"))
 }
 
+/// Any failure to get a usable token (no stored entry, a failed refresh) is
+/// treated the same as a missing scope by callers: the fix is the same
+/// "sign in again" action, so it should produce the same needs_reauth
+/// result rather than a hard error with no actionable button.
+async fn get_access_token(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Option<String> {
+    match auth::ensure_fresh_token(client, config, character_id).await {
+        Ok(()) => auth::keychain::load_tokens(character_id).ok().flatten().map(|t| t.access_token),
+        Err(_) => None,
+    }
+}
+
 #[derive(Deserialize)]
 struct SkillsResponse {
     total_sp: i64,
+    skills: Vec<SkillItem>,
+}
+
+#[derive(Deserialize)]
+struct SkillItem {
+    skill_id: i64,
+    trained_skill_level: i32,
+    skillpoints_in_skill: i64,
 }
 
 #[derive(Deserialize)]
@@ -142,16 +161,7 @@ pub async fn fetch_character_overview(
     // same character concurrently (e.g. across a Promise.all of multiple
     // characters, each doing several endpoint calls) races and corrupts the
     // stored token.
-    //
-    // Any failure to get a usable token here (no stored entry, a failed
-    // refresh) is treated the same as a missing scope: the fix is the same
-    // "sign in again" action, so it should produce the same needs_reauth
-    // card rather than a hard error with no actionable button.
-    let access_token = match auth::ensure_fresh_token(client, config, character_id).await {
-        Ok(()) => auth::keychain::load_tokens(character_id).ok().flatten().map(|t| t.access_token),
-        Err(_) => None,
-    };
-    let Some(access_token) = access_token else {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
         return Ok(CharacterOverview { character_id, needs_reauth: true, ..Default::default() });
     };
     let access_token = access_token.as_str();
@@ -225,4 +235,58 @@ pub async fn fetch_character_overview(
     overview.alliance_name = public_info.alliance_id.and_then(|id| names.get(&id).cloned());
 
     Ok(overview)
+}
+
+#[derive(Serialize)]
+pub struct SkillEntry {
+    pub skill_id: i64,
+    pub name: String,
+    pub trained_level: i32,
+    pub skillpoints: i64,
+}
+
+#[derive(Serialize, Default)]
+pub struct CharacterSkills {
+    pub total_sp: Option<i64>,
+    pub skills: Vec<SkillEntry>,
+    pub needs_reauth: bool,
+}
+
+pub async fn fetch_character_skills(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+) -> Result<CharacterSkills, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterSkills { needs_reauth: true, ..Default::default() });
+    };
+
+    let raw = match authorized_get::<SkillsResponse>(
+        client,
+        &access_token,
+        &format!("/characters/{character_id}/skills/"),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterSkills { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+
+    let ids: Vec<i64> = raw.skills.iter().map(|s| s.skill_id).collect();
+    let names = resolve_names(client, ids).await;
+
+    let mut skills: Vec<SkillEntry> = raw
+        .skills
+        .into_iter()
+        .map(|s| SkillEntry {
+            skill_id: s.skill_id,
+            name: names.get(&s.skill_id).cloned().unwrap_or_else(|| format!("Type #{}", s.skill_id)),
+            trained_level: s.trained_skill_level,
+            skillpoints: s.skillpoints_in_skill,
+        })
+        .collect();
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(CharacterSkills { total_sp: Some(raw.total_sp), skills, needs_reauth: false })
 }
