@@ -57,6 +57,19 @@ export function dateKey(iso: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/** Formats an ISO timestamp as "HH:MM UTC", matching zKillboard's convention of always showing kill times in UTC regardless of viewer timezone. */
+export function formatUtcTime(iso: string): string {
+  return `${new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+}
+
+/** Formats an ISK value with b/m/k suffixes, e.g. 1234567890 -> "1.23b ISK", matching the compact style used across EVE community killboards. */
+export function formatIskCompact(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}b ISK`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m ISK`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k ISK`;
+  return `${Math.round(value)} ISK`;
+}
+
 /** Rounds a raw ESI security_status value to EVE's usual one-decimal display, e.g. 0.549 -> "0.5". */
 export function formatSecurity(value: number): string {
   return (Math.round(value * 10) / 10).toFixed(1);

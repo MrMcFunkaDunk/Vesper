@@ -17,6 +17,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailCharacterId, setDetailCharacterId] = useState<number | null>(null);
+  const [pendingKillmailId, setPendingKillmailId] = useState<number | null>(null);
   const reportError = useErrorReporter();
 
   useEffect(() => {
@@ -63,6 +64,11 @@ function App() {
     setDetailCharacterId(id);
   }
 
+  function handleOpenKillmail(killmailId: number) {
+    setPendingKillmailId(killmailId);
+    setActiveId("kills");
+  }
+
   async function handleAdd() {
     await startLogin(DASHBOARD_SCOPES);
     refreshSession();
@@ -86,9 +92,12 @@ function App() {
           <Dashboard session={session} onOpenDetail={handleOpenDetail} onAdd={handleAdd} />
         )
       ) : activeId === "kills" ? (
-        <KillsIntel />
+        <KillsIntel
+          initialKillmailId={pendingKillmailId}
+          onConsumeInitialKillmail={() => setPendingKillmailId(null)}
+        />
       ) : activeId === "map" ? (
-        <MapView />
+        <MapView onSelectKill={handleOpenKillmail} />
       ) : (
         <MainContent icon={active.icon} label={active.label} description={active.description} />
       )}

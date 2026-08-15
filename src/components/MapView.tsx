@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { getMapData, type MapData, type MapSystem } from "../lib/map";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { securityBand, formatSecurity } from "../lib/format";
+import { securityBand, formatSecurity, formatUtcTime, formatIskCompact } from "../lib/format";
+import { useRecentActivity } from "../hooks/useRecentActivity";
+import type { KillEntry } from "../lib/kills";
+
+const TICKER_LIMIT = 60;
+const TOP_ACTIVITY_LIMIT = 5;
 
 const SECURITY_COLORS: Record<"high" | "low" | "null", string> = {
   high: "#5fbf8a",
@@ -15,6 +20,59 @@ const MIN_ZOOM_RATIO = 0.5;
 const MAX_ZOOM_RATIO = 400;
 const LABEL_ZOOM_RATIO = 12;
 const LABEL_MAX_VISIBLE = 200;
+
+/** Kills older than this no longer count toward "recent activity" anywhere on the map (hover tooltip, top-active panel, heat ring). */
+const HEAT_WINDOW_MS = 60 * 60 * 1000;
+const HEAT_REFRESH_MS = 30_000;
+/** Per-kill step and cap for a system's heat level - matches zKillboard's own live map exactly (+2 per kill in the window, capped at 12). */
+const HEAT_STEP = 2;
+const HEAT_CAP = 12;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+/** Per-system heat level: a system that's been busy stays visibly hotter (bigger glow, bigger rings, bigger dot) even between individual kills, so it reads as "what to avoid" rather than just "what just happened". */
+function computeSystemHeat(kills: KillEntry[], now: number): Map<number, number> {
+  const heat = new Map<number, number>();
+  for (const kill of kills) {
+    const age = now - new Date(kill.time).getTime();
+    if (age < 0 || age >= HEAT_WINDOW_MS) continue;
+    heat.set(kill.system_id, Math.min((heat.get(kill.system_id) ?? 0) + HEAT_STEP, HEAT_CAP));
+  }
+  return heat;
+}
+
+/** A single sonar-style ping animation, spawned at a system the moment a new kill streams in there - matches zKillboard's live map. */
+interface Ping {
+  systemId: number;
+  startedAt: number;
+}
+
+const PING_DURATION_MS = 1600;
+const PING_MAX_RADIUS_PX = 34;
+
+interface TopActivityEntry {
+  name: string;
+  count: number;
+}
+
+/** Ranks systems and regions by kill count within the last hour, for the "Top Active" overlay panel. */
+function computeTopActivity(kills: KillEntry[], now: number): { systems: TopActivityEntry[]; regions: TopActivityEntry[] } {
+  const systemCounts = new Map<string, number>();
+  const regionCounts = new Map<string, number>();
+  for (const kill of kills) {
+    const age = now - new Date(kill.time).getTime();
+    if (age < 0 || age >= HEAT_WINDOW_MS) continue;
+    systemCounts.set(kill.system_name, (systemCounts.get(kill.system_name) ?? 0) + 1);
+    if (kill.region_name) {
+      regionCounts.set(kill.region_name, (regionCounts.get(kill.region_name) ?? 0) + 1);
+    }
+  }
+  const topN = (counts: Map<string, number>): TopActivityEntry[] =>
+    [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, TOP_ACTIVITY_LIMIT).map(([name, count]) => ({ name, count }));
+  return { systems: topN(systemCounts), regions: topN(regionCounts) };
+}
 
 interface Transform {
   scale: number;
@@ -39,7 +97,18 @@ function computeRegionCenters(systems: MapSystem[]): Map<number, { x: number; y:
   return centers;
 }
 
-function MapView() {
+interface MapViewProps {
+  /** Called with a killmail id when a ticker row is clicked, so the app can jump to its detail view in Kills & Intel. */
+  onSelectKill: (killmailId: number) => void;
+}
+
+interface HoverInfo {
+  system: MapSystem;
+  clientX: number;
+  clientY: number;
+}
+
+function MapView({ onSelectKill }: MapViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataRef = useRef<MapData | null>(null);
   const regionCentersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -47,13 +116,25 @@ function MapView() {
   const fitScaleRef = useRef(1);
   const draggingRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const selectedIdRef = useRef<number | null>(null);
+  const hoveredIdRef = useRef<number | null>(null);
+  const pingsRef = useRef<Ping[]>([]);
+  const heatMapRef = useRef<Map<number, number>>(new Map());
+  const seenKillIdsRef = useRef<Set<number> | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const drawScheduledRef = useRef(false);
 
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MapSystem[]>([]);
   const [selectedSystem, setSelectedSystem] = useState<MapSystem | null>(null);
+  const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
+  const [topActivity, setTopActivity] = useState<{ systems: TopActivityEntry[]; regions: TopActivityEntry[] }>({
+    systems: [],
+    regions: [],
+  });
   const reportError = useErrorReporter();
+  const { kills } = useRecentActivity();
 
   const regionsById = mapData ? new Map(mapData.regions.map((r) => [r.id, r.name])) : new Map<number, string>();
 
@@ -102,7 +183,7 @@ function MapView() {
       translateX: padding - minX * scale + (width - padding * 2 - dataWidth * scale) / 2,
       translateY: padding - minY * scale + (height - padding * 2 - dataHeight * scale) / 2,
     };
-    draw();
+    requestDraw();
   }
 
   function draw() {
@@ -150,6 +231,63 @@ function MapView() {
     ctx.stroke();
 
     const dotRadius = Math.min(6, Math.max(1.4, 1.4 * Math.sqrt(zoomRatio)));
+    const now = Date.now();
+
+    // Persistent heat: a soft glow plus two concentric rings whose radius
+    // and opacity grow with the system's heat level, so a system that's
+    // been busy over the last hour still visibly stands out even between
+    // pings - "what to avoid", not just "what just happened". Formulas
+    // match zKillboard's own live map (heat 0-12, +2 per kill, capped).
+    for (const [systemId, heatLevel] of heatMapRef.current) {
+      if (heatLevel <= 0) continue;
+      const system = systemById.get(systemId);
+      if (!system || !inView(system.x, system.y)) continue;
+      const sx = toScreenX(system.x);
+      const sy = toScreenY(system.y);
+
+      const glowRadius = dotRadius * (5.2 + heatLevel * 0.22);
+      const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowRadius);
+      glow.addColorStop(0, `rgba(255, 94, 94, ${clamp(0.36 + heatLevel * 0.04, 0.36, 0.8)})`);
+      glow.addColorStop(0.45, `rgba(255, 168, 76, ${clamp(0.22 + heatLevel * 0.03, 0.22, 0.5)})`);
+      glow.addColorStop(1, "rgba(255, 94, 94, 0)");
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(sx, sy, glowRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.strokeStyle = `rgba(255, 108, 108, ${clamp(0.45 + heatLevel * 0.04, 0.45, 0.9)})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(sx, sy, dotRadius * 2.8 + heatLevel * 0.7, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(255, 196, 116, ${clamp(0.2 + heatLevel * 0.03, 0.2, 0.55)})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(sx, sy, dotRadius * 4 + heatLevel * 0.95, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Sonar-style pings: one ring spawned per new kill, expanding and
+    // fading out over PING_DURATION_MS - a "something just happened" flash
+    // layered on top of the steadier heat rings above.
+    for (const ping of pingsRef.current) {
+      const system = systemById.get(ping.systemId);
+      if (!system || !inView(system.x, system.y)) continue;
+      const t = Math.min((now - ping.startedAt) / PING_DURATION_MS, 1);
+      const sx = toScreenX(system.x);
+      const sy = toScreenY(system.y);
+      const radius = dotRadius + t * PING_MAX_RADIUS_PX;
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255, 120, 40, ${(1 - t) * 0.85})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
     const visible: MapSystem[] = [];
     for (const system of data.systems) {
       if (!inView(system.x, system.y)) continue;
@@ -157,13 +295,19 @@ function MapView() {
       const sx = toScreenX(system.x);
       const sy = toScreenY(system.y);
       const isSelected = system.id === selectedIdRef.current;
+      const isHovered = !isSelected && system.id === hoveredIdRef.current;
+      const heatBump = Math.min((heatMapRef.current.get(system.id) ?? 0) * 0.28, 2.4);
       ctx.fillStyle = SECURITY_COLORS[securityBand(system.security)];
       ctx.beginPath();
-      ctx.arc(sx, sy, isSelected ? dotRadius * 2.2 : dotRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, (isSelected ? dotRadius * 2.2 : isHovered ? dotRadius * 1.7 : dotRadius) + heatBump, 0, Math.PI * 2);
       ctx.fill();
       if (isSelected) {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1.5;
+        ctx.stroke();
+      } else if (isHovered) {
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
+        ctx.lineWidth = 1;
         ctx.stroke();
       }
     }
@@ -201,6 +345,65 @@ function MapView() {
       ctx.textAlign = "left";
     }
   }
+
+  /** Coalesces any number of draw() requests within the same frame into a single call, matching zKillboard's own requestDraw pattern. Without this, high-frequency events like mousemove over the map's dense system clusters can each trigger their own full (expensive) redraw, backing up the main thread badly enough that frames visibly drop content like the heat rings. */
+  function requestDraw() {
+    if (drawScheduledRef.current) return;
+    drawScheduledRef.current = true;
+    requestAnimationFrame(() => {
+      drawScheduledRef.current = false;
+      draw();
+    });
+  }
+
+  function ensureAnimating() {
+    if (animFrameRef.current !== null) return;
+    function tick() {
+      const now = Date.now();
+      pingsRef.current = pingsRef.current.filter((p) => now - p.startedAt < PING_DURATION_MS);
+      draw();
+      animFrameRef.current = pingsRef.current.length > 0 ? requestAnimationFrame(tick) : null;
+    }
+    animFrameRef.current = requestAnimationFrame(tick);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const now = Date.now();
+    if (seenKillIdsRef.current === null) {
+      // First snapshot on load - just remember what's already there so the
+      // whole existing history doesn't burst into pings all at once.
+      seenKillIdsRef.current = new Set(kills.map((k) => k.killmail_id));
+    } else {
+      let spawned = false;
+      for (const kill of kills) {
+        if (!seenKillIdsRef.current.has(kill.killmail_id)) {
+          seenKillIdsRef.current.add(kill.killmail_id);
+          pingsRef.current.push({ systemId: kill.system_id, startedAt: now });
+          spawned = true;
+        }
+      }
+      if (spawned) ensureAnimating();
+    }
+    heatMapRef.current = computeSystemHeat(kills, now);
+    setTopActivity(computeTopActivity(kills, now));
+    requestDraw();
+    // Also refreshed on a timer so the heat rings and top-active panel keep
+    // decaying smoothly even when the feed goes quiet for a while.
+    const interval = setInterval(() => {
+      const refreshedNow = Date.now();
+      heatMapRef.current = computeSystemHeat(kills, refreshedNow);
+      setTopActivity(computeTopActivity(kills, refreshedNow));
+      requestDraw();
+    }, HEAT_REFRESH_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kills]);
 
   useEffect(() => {
     if (!mapData) return;
@@ -247,26 +450,51 @@ function MapView() {
         translateX: mouseX - dataX * newScale,
         translateY: mouseY - dataY * newScale,
       };
-      draw();
+      requestDraw();
     }
 
     function handleMouseDown(e: MouseEvent) {
       draggingRef.current = { x: e.clientX, y: e.clientY, moved: false };
     }
 
+    function clearHover() {
+      if (hoveredIdRef.current !== null) {
+        hoveredIdRef.current = null;
+        setHoverInfo(null);
+        requestDraw();
+      }
+    }
+
     function handleMouseMove(e: MouseEvent) {
-      if (!draggingRef.current) return;
-      const dx = e.clientX - draggingRef.current.x;
-      const dy = e.clientY - draggingRef.current.y;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) draggingRef.current.moved = true;
-      draggingRef.current.x = e.clientX;
-      draggingRef.current.y = e.clientY;
-      transformRef.current = {
-        ...transformRef.current,
-        translateX: transformRef.current.translateX + dx,
-        translateY: transformRef.current.translateY + dy,
-      };
-      draw();
+      if (draggingRef.current) {
+        const dx = e.clientX - draggingRef.current.x;
+        const dy = e.clientY - draggingRef.current.y;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) draggingRef.current.moved = true;
+        draggingRef.current.x = e.clientX;
+        draggingRef.current.y = e.clientY;
+        transformRef.current = {
+          ...transformRef.current,
+          translateX: transformRef.current.translateX + dx,
+          translateY: transformRef.current.translateY + dy,
+        };
+        requestDraw();
+        return;
+      }
+
+      const rect = canvas!.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+        clearHover();
+        return;
+      }
+      const picked = pickSystem(e.clientX, e.clientY);
+      const pickedId = picked?.id ?? null;
+      if (pickedId !== hoveredIdRef.current) {
+        hoveredIdRef.current = pickedId;
+        setHoverInfo(picked ? { system: picked, clientX: e.clientX, clientY: e.clientY } : null);
+        requestDraw();
+      } else if (picked) {
+        setHoverInfo((prev) => (prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev));
+      }
     }
 
     function handleMouseUp(e: MouseEvent) {
@@ -276,22 +504,24 @@ function MapView() {
         const picked = pickSystem(e.clientX, e.clientY);
         selectedIdRef.current = picked?.id ?? null;
         setSelectedSystem(picked);
-        draw();
+        requestDraw();
       }
     }
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     canvas.addEventListener("mousedown", handleMouseDown);
+    canvas.addEventListener("mouseleave", clearHover);
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
-    window.addEventListener("resize", draw);
+    window.addEventListener("resize", requestDraw);
 
     return () => {
       canvas.removeEventListener("wheel", handleWheel);
       canvas.removeEventListener("mousedown", handleMouseDown);
+      canvas.removeEventListener("mouseleave", clearHover);
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
-      window.removeEventListener("resize", draw);
+      window.removeEventListener("resize", requestDraw);
     };
   }, [mapData]);
 
@@ -320,68 +550,144 @@ function MapView() {
     setSelectedSystem(system);
     setQuery(system.name);
     setResults([]);
-    draw();
+    requestDraw();
   }
+
+  const hoveredKillCount = hoverInfo
+    ? kills.filter((k) => k.system_id === hoverInfo.system.id && Date.now() - new Date(k.time).getTime() < HEAT_WINDOW_MS).length
+    : 0;
+
+  const tickerKills = [...kills].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, TICKER_LIMIT);
 
   return (
     <main className="main main-map">
       <div className="map-page">
-        <div className="map-search-bar">
-          <div className="map-search">
-            <Search size={14} strokeWidth={2} />
-            <input
-              type="text"
-              placeholder="Search for a system..."
-              value={query}
-              onChange={(e) => handleSearchChange(e.target.value)}
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  setResults([]);
-                }}
-                aria-label="Clear search"
-              >
-                <X size={13} strokeWidth={2} />
-              </button>
+        <aside className="map-ticker">
+          <div className="map-ticker-list">
+            {tickerKills.length === 0 ? (
+              <p className="map-ticker-empty">No recent activity.</p>
+            ) : (
+              tickerKills.map((kill) => (
+                <button
+                  key={kill.killmail_id}
+                  type="button"
+                  className="map-ticker-row"
+                  onClick={() => onSelectKill(kill.killmail_id)}
+                >
+                  <span className="map-ticker-time">{formatUtcTime(kill.time)}</span>
+                  <div className="map-ticker-row-body">
+                    <img src={`https://images.evetech.net/types/${kill.ship_type_id}/icon?size=64`} alt="" />
+                    <div className="map-ticker-row-text">
+                      <span className="map-ticker-title">{kill.ship_type_name}</span>
+                      <span className="map-ticker-subtitle">
+                        {kill.system_name} | {formatIskCompact(kill.total_value)} | {kill.attacker_count}{" "}
+                        attacker{kill.attacker_count === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              ))
             )}
-            {results.length > 0 && (
-              <div className="map-search-results">
-                {results.map((system) => (
-                  <button key={system.id} type="button" onClick={() => goToSystem(system)}>
-                    <span
-                      className={`kills-security kills-security-${securityBand(system.security)}`}
-                    >
-                      {formatSecurity(system.security)}
-                    </span>
-                    {system.name}
-                  </button>
-                ))}
+          </div>
+        </aside>
+
+        <div className="map-main">
+          <div className="map-search-bar">
+            <div className="map-search">
+              <Search size={14} strokeWidth={2} />
+              <input
+                type="text"
+                placeholder="Search for a system..."
+                value={query}
+                onChange={(e) => handleSearchChange(e.target.value)}
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery("");
+                    setResults([]);
+                  }}
+                  aria-label="Clear search"
+                >
+                  <X size={13} strokeWidth={2} />
+                </button>
+              )}
+              {results.length > 0 && (
+                <div className="map-search-results">
+                  {results.map((system) => (
+                    <button key={system.id} type="button" onClick={() => goToSystem(system)}>
+                      <span
+                        className={`kills-security kills-security-${securityBand(system.security)}`}
+                      >
+                        {formatSecurity(system.security)}
+                      </span>
+                      {system.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {selectedSystem && (
+              <div className="map-selected-info">
+                <span className={`kills-security kills-security-${securityBand(selectedSystem.security)}`}>
+                  {formatSecurity(selectedSystem.security)}
+                </span>
+                <span className="map-selected-name">{selectedSystem.name}</span>
+                <span className="map-selected-region">{regionsById.get(selectedSystem.region_id) ?? ""}</span>
               </div>
             )}
           </div>
 
-          {selectedSystem && (
-            <div className="map-selected-info">
-              <span className={`kills-security kills-security-${securityBand(selectedSystem.security)}`}>
-                {formatSecurity(selectedSystem.security)}
-              </span>
-              <span className="map-selected-name">{selectedSystem.name}</span>
-              <span className="map-selected-region">{regionsById.get(selectedSystem.region_id) ?? ""}</span>
-            </div>
-          )}
-        </div>
+          <div className="map-canvas-wrap">
+            {loading ? (
+              <p className="detail-empty">Loading universe map...</p>
+            ) : (
+              <canvas ref={canvasRef} className="map-canvas" />
+            )}
 
-        <div className="map-canvas-wrap">
-          {loading ? (
-            <p className="detail-empty">Loading universe map...</p>
-          ) : (
-            <canvas ref={canvasRef} className="map-canvas" />
-          )}
+            {(topActivity.systems.length > 0 || topActivity.regions.length > 0) && (
+              <div className="map-top-activity">
+                <div className="map-top-activity-col">
+                  <p>Top Active Systems</p>
+                  {topActivity.systems.map((entry) => (
+                    <div key={entry.name} className="map-top-activity-row">
+                      <span>{entry.name}</span>
+                      <span>{entry.count}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="map-top-activity-col">
+                  <p>Top Active Regions</p>
+                  {topActivity.regions.map((entry) => (
+                    <div key={entry.name} className="map-top-activity-row">
+                      <span>{entry.name}</span>
+                      <span>{entry.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {hoverInfo && (
+        <div className="map-hover-tooltip" style={{ left: hoverInfo.clientX + 16, top: hoverInfo.clientY + 16 }}>
+          <div className="map-hover-tooltip-title">
+            <span className={`kills-security kills-security-${securityBand(hoverInfo.system.security)}`}>
+              {formatSecurity(hoverInfo.system.security)}
+            </span>
+            <span className="map-hover-name">{hoverInfo.system.name}</span>
+          </div>
+          <span className="map-hover-kills">
+            {hoveredKillCount > 0
+              ? `${hoveredKillCount} kill${hoveredKillCount === 1 ? "" : "s"} in the last hour`
+              : "No recent activity"}
+          </span>
+        </div>
+      )}
     </main>
   );
 }
