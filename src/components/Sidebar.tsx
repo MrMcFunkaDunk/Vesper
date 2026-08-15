@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard,
@@ -9,6 +10,9 @@ import {
   Settings,
 } from "lucide-react";
 import Wordmark from "./Wordmark";
+import ColorPickerMenu from "./ColorPickerMenu";
+import { SIDEBAR_PALETTE } from "../lib/palettes";
+import { useColorOverrides } from "../hooks/useColorOverrides";
 
 export interface NavItem {
   id: string;
@@ -71,7 +75,16 @@ interface SidebarProps {
   onSelect: (id: string) => void;
 }
 
+interface ContextMenuState {
+  navId: string;
+  x: number;
+  y: number;
+}
+
 function Sidebar({ activeId, onSelect }: SidebarProps) {
+  const { colors, setColor, resetColor } = useColorOverrides("vesper.colors.sidebar");
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -83,12 +96,18 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const isActive = item.id === activeId;
+          const customColor = colors[item.id];
           return (
             <button
               key={item.id}
               type="button"
               className={`nav-item${isActive ? " nav-item-active" : ""}`}
+              style={customColor ? { color: customColor } : undefined}
               onClick={() => onSelect(item.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({ navId: item.id, x: e.clientX, y: e.clientY });
+              }}
             >
               <Icon size={18} strokeWidth={1.75} />
               <span>{item.label}</span>
@@ -97,6 +116,17 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
         })}
       </nav>
       <div className="sidebar-footer">v0.1.0 · dev build</div>
+      {contextMenu && (
+        <ColorPickerMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          palette={SIDEBAR_PALETTE}
+          value={colors[contextMenu.navId]}
+          onSelect={(hex) => setColor(contextMenu.navId, hex)}
+          onReset={() => resetColor(contextMenu.navId)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </aside>
   );
 }
