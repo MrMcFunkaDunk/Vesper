@@ -5,7 +5,8 @@ import MainContent from "./components/MainContent";
 import Dashboard from "./components/Dashboard";
 import CharacterDetail from "./components/CharacterDetail";
 import KillsIntel from "./components/KillsIntel";
-import MapView from "./components/MapView";
+import MapPage from "./components/MapPage";
+import type { SystemSummary } from "./components/SystemKillboard";
 import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
 import { DASHBOARD_SCOPES } from "./lib/scopes";
@@ -18,6 +19,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [detailCharacterId, setDetailCharacterId] = useState<number | null>(null);
   const [pendingKillmailId, setPendingKillmailId] = useState<number | null>(null);
+  const [pendingSystem, setPendingSystem] = useState<SystemSummary | null>(null);
+  const [pendingCharacterId, setPendingCharacterId] = useState<number | null>(null);
   const reportError = useErrorReporter();
 
   useEffect(() => {
@@ -69,6 +72,20 @@ function App() {
     setActiveId("kills");
   }
 
+  function handleOpenSystemKills(system: SystemSummary) {
+    setPendingSystem(system);
+    setActiveId("kills");
+  }
+
+  function handleOpenCharacterKillboard(characterId: number) {
+    setPendingCharacterId(characterId);
+    setActiveId("kills");
+  }
+
+  function handleGoToMap() {
+    setActiveId("map");
+  }
+
   async function handleAdd() {
     await startLogin(DASHBOARD_SCOPES);
     refreshSession();
@@ -87,7 +104,16 @@ function App() {
       <TopBar title={active.label} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
       {activeId === "dashboard" ? (
         detailCharacter ? (
-          <CharacterDetail character={detailCharacter} onBack={() => setDetailCharacterId(null)} />
+          <CharacterDetail
+            character={detailCharacter}
+            characters={session.characters}
+            onSwitchCharacter={handleOpenDetail}
+            onBack={() => setDetailCharacterId(null)}
+            onSelectKill={handleOpenKillmail}
+            onSelectCharacter={handleOpenCharacterKillboard}
+            onSelectSystem={handleOpenSystemKills}
+            onReconnect={handleAdd}
+          />
         ) : (
           <Dashboard session={session} onOpenDetail={handleOpenDetail} onAdd={handleAdd} />
         )
@@ -95,9 +121,14 @@ function App() {
         <KillsIntel
           initialKillmailId={pendingKillmailId}
           onConsumeInitialKillmail={() => setPendingKillmailId(null)}
+          initialSystem={pendingSystem}
+          onConsumeInitialSystem={() => setPendingSystem(null)}
+          initialCharacterId={pendingCharacterId}
+          onConsumeInitialCharacter={() => setPendingCharacterId(null)}
+          onGoToMap={handleGoToMap}
         />
       ) : activeId === "map" ? (
-        <MapView onSelectKill={handleOpenKillmail} />
+        <MapPage onSelectKill={handleOpenKillmail} onSelectSystem={handleOpenSystemKills} />
       ) : (
         <MainContent icon={active.icon} label={active.label} description={active.description} />
       )}

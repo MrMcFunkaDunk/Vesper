@@ -12,6 +12,8 @@ import {
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { formatIsk, formatPercent } from "../lib/format";
 import KillFeedTable from "./KillFeedTable";
+import type { SystemSummary } from "./SystemKillboard";
+import BackToMapButton from "./BackToMapButton";
 
 type KillboardTab = "kills" | "losses";
 
@@ -20,8 +22,10 @@ interface CharacterKillboardProps {
   onBack: () => void;
   onSelectKill: (killmailId: number) => void;
   onSelectCharacter: (characterId: number) => void;
+  onSelectSystem: (system: SystemSummary) => void;
   rootLabel: string;
   onGoHome: () => void;
+  onGoToMap: () => void;
 }
 
 function corpLogoUrl(id: number): string {
@@ -37,8 +41,10 @@ function CharacterKillboard({
   onBack,
   onSelectKill,
   onSelectCharacter,
+  onSelectSystem,
   rootLabel,
   onGoHome,
+  onGoToMap,
 }: CharacterKillboardProps) {
   const [profile, setProfile] = useState<CharacterProfile | null>(null);
   const [stats, setStats] = useState<CharacterStats | null>(null);
@@ -105,10 +111,13 @@ function CharacterKillboard({
           </h2>
         </div>
 
-        <button type="button" className="detail-back" onClick={onBack}>
-          <ArrowLeft size={14} strokeWidth={2} />
-          Back
-        </button>
+        <div className="kills-nav-buttons">
+          <button type="button" className="detail-back" onClick={onBack}>
+            <ArrowLeft size={14} strokeWidth={2} />
+            Back
+          </button>
+          <BackToMapButton onClick={onGoToMap} />
+        </div>
 
         {!profile ? (
           <p className="detail-empty">Loading character...</p>
@@ -228,7 +237,12 @@ function CharacterKillboard({
               ) : !activeList || activeList.length === 0 ? (
                 <p className="detail-empty">No {tab} recorded.</p>
               ) : (
-                <KillFeedTable kills={activeList} onSelectKill={onSelectKill} onSelectCharacter={onSelectCharacter} />
+                <KillFeedTable
+                  kills={activeList}
+                  onSelectKill={onSelectKill}
+                  onSelectCharacter={onSelectCharacter}
+                  onSelectSystem={onSelectSystem}
+                />
               )}
             </div>
           </>

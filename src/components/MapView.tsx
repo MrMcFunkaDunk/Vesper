@@ -5,6 +5,7 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { securityBand, formatSecurity, formatUtcTime, formatIskCompact } from "../lib/format";
 import { useRecentActivity } from "../hooks/useRecentActivity";
 import type { KillEntry } from "../lib/kills";
+import type { SystemSummary } from "./SystemKillboard";
 
 const TICKER_LIMIT = 60;
 const TOP_ACTIVITY_LIMIT = 5;
@@ -100,6 +101,8 @@ function computeRegionCenters(systems: MapSystem[]): Map<number, { x: number; y:
 interface MapViewProps {
   /** Called with a killmail id when a ticker row is clicked, so the app can jump to its detail view in Kills & Intel. */
   onSelectKill: (killmailId: number) => void;
+  /** Called with the selected system when its name is clicked, so the app can jump to its killboard in Kills & Intel. */
+  onSelectSystem: (system: SystemSummary) => void;
 }
 
 interface HoverInfo {
@@ -108,7 +111,7 @@ interface HoverInfo {
   clientY: number;
 }
 
-function MapView({ onSelectKill }: MapViewProps) {
+function MapView({ onSelectKill, onSelectSystem }: MapViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataRef = useRef<MapData | null>(null);
   const regionCentersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -433,6 +436,50 @@ function MapView({ onSelectKill }: MapViewProps) {
       return closest;
     }
 
+    /**
+     * Click-only, more expensive version of pickSystem: also checks each
+     * system's rendered LABEL text, not just its dot. In a dense hub (Jita's
+     * neighborhood is the worst case), a neighboring system's dot can sit
+     * physically closer to a click than the labeled system's own dot does,
+     * even though the click landed squarely on that system's name - so a
+     * pure nearest-dot search picks the wrong system. Only used on mouseup
+     * (a single click), not on every mousemove, since it's O(systems) with
+     * canvas text measurement and would reintroduce the redraw-storm bug
+     * fixed earlier if run on hover.
+     */
+    function pickSystemForClick(clientX: number, clientY: number): MapSystem | null {
+      const data = dataRef.current;
+      if (!canvas || !data) return null;
+      const rect = canvas.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      const { scale, translateX, translateY } = transformRef.current;
+      const zoomRatio = scale / (fitScaleRef.current || scale);
+
+      if (zoomRatio >= LABEL_ZOOM_RATIO) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const dotRadius = Math.min(6, Math.max(1.4, 1.4 * Math.sqrt(zoomRatio)));
+          for (const system of data.systems) {
+            const sx = system.x * scale + translateX;
+            const sy = system.y * scale + translateY;
+            ctx.font = "600 11px Inter, sans-serif";
+            const secWidth = ctx.measureText(formatSecurity(system.security)).width;
+            ctx.font = "11px Inter, sans-serif";
+            const nameWidth = ctx.measureText(system.name).width;
+            const labelX = sx + dotRadius + 4;
+            const labelY = sy;
+            const labelWidth = secWidth + 4 + nameWidth;
+            if (px >= labelX - 2 && px <= labelX + labelWidth + 2 && py >= labelY - 7 && py <= labelY + 7) {
+              return system;
+            }
+          }
+        }
+      }
+
+      return pickSystem(clientX, clientY);
+    }
+
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
       const rect = canvas!.getBoundingClientRect();
@@ -501,10 +548,20 @@ function MapView({ onSelectKill }: MapViewProps) {
       const wasDrag = draggingRef.current?.moved;
       draggingRef.current = null;
       if (!wasDrag) {
-        const picked = pickSystem(e.clientX, e.clientY);
-        selectedIdRef.current = picked?.id ?? null;
-        setSelectedSystem(picked);
-        requestDraw();
+        // handleMouseUp is registered on window (a drag can legitimately end
+        // outside the canvas), but a plain click should only be treated as a
+        // map pick if it actually landed on the canvas - otherwise clicking
+        // UI elements like the selected-system name, search box, or ticker
+        // wrongly clears/reselects a system out from under whatever else was
+        // about to handle that same click (e.g. its own onClick).
+        const rect = canvas!.getBoundingClientRect();
+        const onCanvas = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+        if (onCanvas) {
+          const picked = pickSystemForClick(e.clientX, e.clientY);
+          selectedIdRef.current = picked?.id ?? null;
+          setSelectedSystem(picked);
+          requestDraw();
+        }
       }
     }
 
@@ -560,7 +617,7 @@ function MapView({ onSelectKill }: MapViewProps) {
   const tickerKills = [...kills].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, TICKER_LIMIT);
 
   return (
-    <main className="main main-map">
+    <>
       <div className="map-page">
         <aside className="map-ticker">
           <div className="map-ticker-list">
@@ -634,7 +691,32 @@ function MapView({ onSelectKill }: MapViewProps) {
                 <span className={`kills-security kills-security-${securityBand(selectedSystem.security)}`}>
                   {formatSecurity(selectedSystem.security)}
                 </span>
-                <span className="map-selected-name">{selectedSystem.name}</span>
+                <span
+                  className="map-selected-name kills-system-clickable"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() =>
+                    onSelectSystem({
+                      id: selectedSystem.id,
+                      name: selectedSystem.name,
+                      security: selectedSystem.security,
+                      regionName: regionsById.get(selectedSystem.region_id) ?? null,
+                    })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectSystem({
+                        id: selectedSystem.id,
+                        name: selectedSystem.name,
+                        security: selectedSystem.security,
+                        regionName: regionsById.get(selectedSystem.region_id) ?? null,
+                      });
+                    }
+                  }}
+                >
+                  {selectedSystem.name}
+                </span>
                 <span className="map-selected-region">{regionsById.get(selectedSystem.region_id) ?? ""}</span>
               </div>
             )}
@@ -688,7 +770,7 @@ function MapView({ onSelectKill }: MapViewProps) {
           </span>
         </div>
       )}
-    </main>
+    </>
   );
 }
 

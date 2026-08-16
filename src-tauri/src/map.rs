@@ -205,13 +205,12 @@ fn read_map_data(conn: &rusqlite::Connection) -> Result<MapData, String> {
     Ok(MapData { systems, jumps, regions })
 }
 
-/// Loads the universe map (systems/jumps/regions) from the local SQLite
-/// cache, syncing it from Fuzzwork's SDE CSV exports first if the cache is
-/// empty (first run, or the app data directory was cleared). SQLite access
-/// is blocking, so it's kept off the async runtime via spawn_blocking;
-/// the CSV downloads themselves run concurrently and async.
-pub async fn get_map_data(app: tauri::AppHandle, client: &reqwest::Client) -> Result<MapData, String> {
-    let path = db_path(&app)?;
+/// Ensures the local SQLite cache is populated, syncing it from Fuzzwork's
+/// SDE CSV exports first if empty (first run, or the app data directory was
+/// cleared). Returns the DB path once ready. Shared by get_map_data and
+/// search_systems so both benefit from the same one-time sync.
+async fn ensure_synced(app: &tauri::AppHandle, client: &reqwest::Client) -> Result<PathBuf, String> {
+    let path = db_path(app)?;
 
     let needs_sync = {
         let path = path.clone();
@@ -242,10 +241,53 @@ pub async fn get_map_data(app: tauri::AppHandle, client: &reqwest::Client) -> Re
         .map_err(|e| format!("map import task failed: {e}"))??;
     }
 
+    Ok(path)
+}
+
+/// Loads the universe map (systems/jumps/regions) from the local SQLite
+/// cache. SQLite access is blocking, so it's kept off the async runtime via
+/// spawn_blocking.
+pub async fn get_map_data(app: tauri::AppHandle, client: &reqwest::Client) -> Result<MapData, String> {
+    let path = ensure_synced(&app, client).await?;
     tauri::async_runtime::spawn_blocking(move || -> Result<MapData, String> {
         let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open map database: {e}"))?;
         read_map_data(&conn)
     })
     .await
     .map_err(|e| format!("map read task failed: {e}"))?
+}
+
+#[derive(Serialize, Clone)]
+pub struct SystemSearchMatch {
+    pub id: i64,
+    pub name: String,
+    pub security: f64,
+}
+
+/// Live typeahead search for adding a Tracked System - a fast local prefix
+/// match against the same SDE-derived systems table the map uses, unlike
+/// ESI's /universe/ids/ which only matches exact names (see kills::search_system).
+pub async fn search_systems(app: tauri::AppHandle, client: &reqwest::Client, query: String) -> Result<Vec<SystemSearchMatch>, String> {
+    let trimmed = query.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SystemSearchMatch>, String> {
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open map database: {e}"))?;
+        let pattern = format!("{trimmed}%");
+        let mut stmt = conn
+            .prepare("SELECT id, name, security FROM systems WHERE name LIKE ?1 ORDER BY name LIMIT 15")
+            .map_err(|e| format!("failed to query systems: {e}"))?;
+        let rows = stmt
+            .query_map([&pattern], |row| Ok(SystemSearchMatch { id: row.get(0)?, name: row.get(1)?, security: row.get(2)? }))
+            .map_err(|e| format!("failed to query systems: {e}"))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read system row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("system search task failed: {e}"))?
 }

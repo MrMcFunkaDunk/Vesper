@@ -14,9 +14,9 @@ const ZKILLBOARD_BASE: &str = "https://zkillboard.com/api";
 /// lookup at all for anything the user could have actually clicked.
 static KILL_CACHE: LazyLock<Mutex<HashMap<i64, ZkbKillmail>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-struct SystemInfo {
-    security_status: f64,
-    region_name: String,
+pub(crate) struct SystemInfo {
+    pub(crate) security_status: f64,
+    pub(crate) region_name: String,
 }
 
 #[derive(Deserialize)]
@@ -39,7 +39,7 @@ struct EsiRegion {
 /// so a system's info takes its own three-hop chain (system -> constellation
 /// -> region). Best-effort: any failed hop just leaves the kill without this
 /// extra context rather than failing the whole feed.
-async fn fetch_system_info(client: &reqwest::Client, system_id: i64) -> Option<SystemInfo> {
+pub(crate) async fn fetch_system_info(client: &reqwest::Client, system_id: i64) -> Option<SystemInfo> {
     let system: EsiSystem = esi::public_get(client, &format!("/universe/systems/{system_id}/")).await.ok()?;
     let constellation: EsiConstellation =
         esi::public_get(client, &format!("/universe/constellations/{}/", system.constellation_id)).await.ok()?;
@@ -114,9 +114,18 @@ struct ZkbAttacker {
     alliance_id: Option<i64>,
     ship_type_id: Option<i64>,
     #[serde(default)]
+    weapon_type_id: Option<i64>,
+    #[serde(default)]
     damage_done: i64,
     #[serde(default)]
     final_blow: bool,
+}
+
+#[derive(Deserialize, Clone)]
+struct ZkbPosition {
+    x: f64,
+    y: f64,
+    z: f64,
 }
 
 #[derive(Deserialize, Clone)]
@@ -129,6 +138,8 @@ struct ZkbVictim {
     damage_taken: i64,
     #[serde(default)]
     items: Vec<ZkbItem>,
+    #[serde(default)]
+    position: Option<ZkbPosition>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -241,6 +252,36 @@ pub async fn fetch_recent_kills(client: &reqwest::Client, system_ids: &[i64]) ->
         raw.extend(fetch_system_kills(client, system_id).await?);
     }
     Ok(enrich_kills(client, raw).await)
+}
+
+/// A trimmed-down view of a killmail with exactly what gate-camp analysis
+/// needs (position to match against a stargate, ship/weapon type ids to
+/// classify as smartbomb/interdictor/capital/citadel/bubble) - deliberately
+/// not the full KillEntry shape, since this is only ever consumed by the
+/// route module's classification logic, never rendered directly.
+pub(crate) struct RawGateKill {
+    pub(crate) time: String,
+    pub(crate) position: Option<(f64, f64, f64)>,
+    pub(crate) attacker_ship_type_ids: Vec<i64>,
+    pub(crate) attacker_weapon_type_ids: Vec<i64>,
+    pub(crate) victim_ship_type_id: i64,
+}
+
+/// Same source as fetch_recent_kills (one system's recent kills from
+/// zKillboard) but without the name-resolution/enrichment pass, since gate
+/// analysis only needs positions and type ids, not display strings.
+pub(crate) async fn fetch_raw_gate_kills(client: &reqwest::Client, system_id: i64) -> Result<Vec<RawGateKill>, String> {
+    let kills = fetch_system_kills(client, system_id).await?;
+    Ok(kills
+        .into_iter()
+        .map(|k| RawGateKill {
+            time: k.killmail_time,
+            position: k.victim.position.map(|p| (p.x, p.y, p.z)),
+            attacker_ship_type_ids: k.attackers.iter().filter_map(|a| a.ship_type_id).collect(),
+            attacker_weapon_type_ids: k.attackers.iter().filter_map(|a| a.weapon_type_id).collect(),
+            victim_ship_type_id: k.victim.ship_type_id,
+        })
+        .collect())
 }
 
 const CHARACTER_KILLS_LIMIT: usize = 50;
@@ -667,6 +708,7 @@ pub struct KillAttackerEntry {
 pub struct KillDetail {
     pub killmail_id: i64,
     pub time: String,
+    pub system_id: i64,
     pub system_name: String,
     pub system_security: Option<f64>,
     pub region_name: Option<String>,
@@ -796,6 +838,7 @@ pub async fn fetch_kill_detail(client: &reqwest::Client, killmail_id: i64) -> Re
     Ok(KillDetail {
         killmail_id: kill.killmail_id,
         time: kill.killmail_time,
+        system_id: kill.solar_system_id,
         system_name: names.get(&kill.solar_system_id).cloned().unwrap_or_default(),
         system_security: system_info.as_ref().map(|i| i.security_status),
         region_name: system_info.map(|i| i.region_name),

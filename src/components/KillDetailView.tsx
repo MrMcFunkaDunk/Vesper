@@ -4,13 +4,17 @@ import { getKillDetail, type KillDetail, type SlotGroup } from "../lib/kills";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { formatIsk, formatSecurity, securityBand, formatPercent } from "../lib/format";
 import FitWheel from "./FitWheel";
+import type { SystemSummary } from "./SystemKillboard";
+import BackToMapButton from "./BackToMapButton";
 
 interface KillDetailViewProps {
   killmailId: number;
   onBack: () => void;
   onSelectCharacter: (characterId: number) => void;
+  onSelectSystem: (system: SystemSummary) => void;
   rootLabel: string;
   onGoHome: () => void;
+  onGoToMap: () => void;
 }
 
 function corpLogoUrl(id: number): string {
@@ -54,7 +58,15 @@ function aggregateItems(items: { item_type_id: number; item_type_name: string; q
   return Array.from(byType.values());
 }
 
-function KillDetailView({ killmailId, onBack, onSelectCharacter, rootLabel, onGoHome }: KillDetailViewProps) {
+function KillDetailView({
+  killmailId,
+  onBack,
+  onSelectCharacter,
+  onSelectSystem,
+  rootLabel,
+  onGoHome,
+  onGoToMap,
+}: KillDetailViewProps) {
   const [detail, setDetail] = useState<KillDetail | null>(null);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const reportError = useErrorReporter();
@@ -107,10 +119,13 @@ function KillDetailView({ killmailId, onBack, onSelectCharacter, rootLabel, onGo
           </h2>
         </div>
 
-        <button type="button" className="detail-back" onClick={onBack}>
-          <ArrowLeft size={14} strokeWidth={2} />
-          Back
-        </button>
+        <div className="kills-nav-buttons">
+          <button type="button" className="detail-back" onClick={onBack}>
+            <ArrowLeft size={14} strokeWidth={2} />
+            Back
+          </button>
+          <BackToMapButton onClick={onGoToMap} />
+        </div>
 
         {!detail ? (
           <p className="detail-empty">Loading killmail...</p>
@@ -183,7 +198,32 @@ function KillDetailView({ killmailId, onBack, onSelectCharacter, rootLabel, onGo
                         {formatSecurity(detail.system_security)}{" "}
                       </span>
                     )}
-                    {detail.system_name}
+                    <span
+                      className="kills-system-clickable"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() =>
+                        onSelectSystem({
+                          id: detail.system_id,
+                          name: detail.system_name,
+                          security: detail.system_security ?? 0,
+                          regionName: detail.region_name,
+                        })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectSystem({
+                            id: detail.system_id,
+                            name: detail.system_name,
+                            security: detail.system_security ?? 0,
+                            regionName: detail.region_name,
+                          });
+                        }
+                      }}
+                    >
+                      {detail.system_name}
+                    </span>
                     {detail.region_name ? ` (${detail.region_name})` : ""}
                   </span>
                   <span className="detail-stats-sep">//</span>

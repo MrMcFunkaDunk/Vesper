@@ -29,3 +29,15 @@ export interface MapData {
 export function getMapData(): Promise<MapData> {
   return invoke("get_map_data");
 }
+
+export interface SystemSearchMatch {
+  id: number;
+  name: string;
+  security: number;
+}
+
+/** Live prefix search against the local systems cache (same data as the map) - unlike
+ * the exact-match-only ESI lookup, this returns every system starting with the query. */
+export function searchSystemsLive(query: string): Promise<SystemSearchMatch[]> {
+  return invoke("search_systems_live", { query });
+}

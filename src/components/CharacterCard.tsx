@@ -1,5 +1,6 @@
 import type { CharacterOverview, SessionCharacter } from "../lib/eve";
-import { formatIsk, formatSp, formatTimeRemaining } from "../lib/format";
+import { formatIsk, formatSp, formatPlex, formatTimeRemaining, formatQueueSummary } from "../lib/format";
+import CloneStateBadge from "./CloneStateBadge";
 
 interface CharacterCardProps {
   character: SessionCharacter;
@@ -27,7 +28,10 @@ function CharacterCard({ character, overview, isActive, pending, onSelect, onRea
       }}
     >
       <div className="character-card-header">
-        <img className="character-card-portrait" src={character.portrait_url} alt="" />
+        <div className="character-card-portrait-wrap">
+          <img className="character-card-portrait" src={character.portrait_url} alt="" />
+          {!loading && <CloneStateBadge characterId={character.id} autoDetected={overview?.clone_state ?? null} />}
+        </div>
         <div className="character-card-identity">
           <span className="character-card-name">{character.name}</span>
           <span className="character-card-corp">
@@ -57,6 +61,9 @@ function CharacterCard({ character, overview, isActive, pending, onSelect, onRea
           <div className="character-card-isk">
             {loading ? "—" : overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}
           </div>
+          {!loading && overview?.plex_balance != null && overview.plex_balance > 0 && (
+            <div className="character-card-plex">{formatPlex(overview.plex_balance)}</div>
+          )}
           <div className="character-card-sp">
             {loading ? "—" : overview?.total_sp != null ? formatSp(overview.total_sp) : "—"}
           </div>
@@ -69,6 +76,9 @@ function CharacterCard({ character, overview, isActive, pending, onSelect, onRea
                   }`
                 : "Not training"}
           </div>
+          {!loading && overview && formatQueueSummary(overview.queue_length, overview.queue_ends_at) && (
+            <div className="character-card-queue">{formatQueueSummary(overview.queue_length, overview.queue_ends_at)}</div>
+          )}
           <div className="character-card-location">
             {loading ? "" : [overview?.system_name, overview?.ship_type_name].filter(Boolean).join(" • ")}
           </div>

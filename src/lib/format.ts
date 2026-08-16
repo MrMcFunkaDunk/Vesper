@@ -6,6 +6,10 @@ export function formatSp(value: number): string {
   return `${new Intl.NumberFormat("en-US").format(value)} SP`;
 }
 
+export function formatPlex(value: number): string {
+  return `${new Intl.NumberFormat("en-US").format(value)} PLEX`;
+}
+
 /** Formats a part/total ratio as a percentage, e.g. for kill-value or efficiency breakdowns. */
 export function formatPercent(part: number, total: number): string {
   return total > 0 ? `${((part / total) * 100).toFixed(1)}%` : "0.0%";
@@ -21,6 +25,42 @@ export function formatTimeRemaining(iso: string): string {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+}
+
+/** Same as formatTimeRemaining but always includes minutes, matching EveMon's queue-footer style ("106d 9h 58m"). */
+export function formatTimeRemainingFull(iso: string): string {
+  const diffMs = new Date(iso).getTime() - Date.now();
+  if (diffMs <= 0) return "0m";
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (days > 0 || hours > 0) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
+/** "Mon 30 Nov 18:43 EVE" - EVE time is always UTC, matching EveMon's queue-footer style. */
+export function formatEveDateTime(iso: string): string {
+  const d = new Date(iso);
+  const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const day = d.toLocaleDateString("en-US", { day: "numeric", timeZone: "UTC" });
+  const month = d.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
+  const time = d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" });
+  return `${weekday} ${day} ${month} ${time} EVE`;
+}
+
+/** "36 in queue · ends in 106d 9h 58m · ends Mon 30 Nov 18:43 EVE" - the queue-tab footer summary, reused wherever the character's training status is shown (character cards, the detail header). */
+export function formatQueueSummary(queueLength: number | null, queueEndsAt: string | null): string | null {
+  if (queueLength == null || queueLength === 0) return null;
+  const parts = [`${queueLength} in queue`];
+  if (queueEndsAt) {
+    parts.push(`ends in ${formatTimeRemainingFull(queueEndsAt)}`);
+    parts.push(`ends ${formatEveDateTime(queueEndsAt)}`);
+  }
+  return parts.join(" · ");
 }
 
 /** Formats a past ISO timestamp as "5m ago" / "3h ago" / "2d ago". */

@@ -1,11 +1,13 @@
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { KillEntry } from "../lib/kills";
 import { formatIsk, formatExactTime, dateKey, formatDateHeading, formatSecurity, securityBand } from "../lib/format";
+import type { SystemSummary } from "./SystemKillboard";
 
 interface KillFeedTableProps {
   kills: KillEntry[];
   onSelectKill: (killmailId: number) => void;
   onSelectCharacter: (characterId: number) => void;
+  onSelectSystem: (system: SystemSummary) => void;
 }
 
 interface KillGroup {
@@ -36,7 +38,7 @@ function groupKillsByDate(kills: KillEntry[]): KillGroup[] {
   return groups;
 }
 
-function KillFeedTable({ kills, onSelectKill, onSelectCharacter }: KillFeedTableProps) {
+function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem }: KillFeedTableProps) {
   function characterLinkProps(characterId: number | null) {
     if (!characterId) return {};
     return {
@@ -54,6 +56,16 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter }: KillFeedTable
         }
       },
     };
+  }
+
+  function handleSelectSystem(e: { stopPropagation: () => void }, kill: KillEntry) {
+    e.stopPropagation();
+    onSelectSystem({
+      id: kill.system_id,
+      name: kill.system_name,
+      security: kill.system_security ?? 0,
+      regionName: kill.region_name,
+    });
   }
 
 
@@ -104,7 +116,20 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter }: KillFeedTable
                       {formatSecurity(kill.system_security)}
                     </span>
                   )}
-                  <span className="kills-system">{kill.system_name}</span>
+                  <span
+                    className="kills-system kills-system-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => handleSelectSystem(e, kill)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleSelectSystem(e, kill);
+                      }
+                    }}
+                  >
+                    {kill.system_name}
+                  </span>
                 </div>
                 {kill.region_name && <span className="kills-region">{kill.region_name}</span>}
               </div>

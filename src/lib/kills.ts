@@ -65,6 +65,7 @@ export interface KillAttackerEntry {
 export interface KillDetail {
   killmail_id: number;
   time: string;
+  system_id: number;
   system_name: string;
   system_security: number | null;
   region_name: string | null;

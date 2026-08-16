@@ -3,13 +3,15 @@ import { RefreshCw } from "lucide-react";
 import { useRecentActivity } from "../hooks/useRecentActivity";
 import { formatSecondsAgo } from "../lib/format";
 import KillFeedTable from "./KillFeedTable";
+import type { SystemSummary } from "./SystemKillboard";
 
 interface RecentKillsFeedProps {
   onSelectKill: (killmailId: number) => void;
   onSelectCharacter: (characterId: number) => void;
+  onSelectSystem: (system: SystemSummary) => void;
 }
 
-function RecentKillsFeed({ onSelectKill, onSelectCharacter }: RecentKillsFeedProps) {
+function RecentKillsFeed({ onSelectKill, onSelectCharacter, onSelectSystem }: RecentKillsFeedProps) {
   const { kills, loading, lastUpdated, refreshCount, refresh } = useRecentActivity();
   const [, forceTick] = useState(0);
 
@@ -44,7 +46,7 @@ function RecentKillsFeed({ onSelectKill, onSelectCharacter }: RecentKillsFeedPro
         ) : kills.length === 0 ? (
           <p className="detail-empty">No recent kills found.</p>
         ) : (
-          <KillFeedTable kills={kills} onSelectKill={onSelectKill} onSelectCharacter={onSelectCharacter} />
+          <KillFeedTable kills={kills} onSelectKill={onSelectKill} onSelectCharacter={onSelectCharacter} onSelectSystem={onSelectSystem} />
         )}
       </div>
     </>

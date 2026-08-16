@@ -10,6 +10,7 @@ import {
   type SessionCharacter,
 } from "../lib/eve";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { getAllCachedOverviews, setCachedOverview, isTransientServerError } from "../lib/overviewCache";
 
 interface DashboardProps {
   session: Session;
@@ -18,7 +19,10 @@ interface DashboardProps {
 }
 
 function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
-  const [overviews, setOverviews] = useState<Record<number, CharacterOverview | null>>({});
+  // Hydrated from the last successful fetch (persisted to localStorage) so a
+  // launch during Tranquility's daily downtime shows stale-but-real numbers
+  // instead of every card stuck on "Loading..." with nothing to show.
+  const [overviews, setOverviews] = useState<Record<number, CharacterOverview | null>>(() => getAllCachedOverviews());
   const [pending, setPending] = useState(false);
   const cancelledRef = useRef(false);
   const reportError = useErrorReporter();
@@ -26,10 +30,21 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
 
   function fetchOverview(character: SessionCharacter) {
     getCharacterOverview(character.id)
-      .then((overview) => setOverviews((prev) => ({ ...prev, [character.id]: overview })))
+      .then((overview) => {
+        setOverviews((prev) => ({ ...prev, [character.id]: overview }));
+        setCachedOverview(character.id, overview);
+      })
       .catch((err) => {
-        reportError(`Failed to load overview for ${character.name}: ${String(err)}`);
-        setOverviews((prev) => ({ ...prev, [character.id]: null }));
+        // A gateway timeout / "tranquility unreachable" during downtime is
+        // expected and self-resolving (auto-refresh will pick it up the
+        // moment the server's back) - not worth an error modal. Whatever's
+        // already on screen (cached or previously fetched) stays put rather
+        // than being blanked out; only a character with genuinely nothing
+        // yet falls back to the empty-state "—" placeholders.
+        if (!isTransientServerError(String(err))) {
+          reportError(`Failed to load overview for ${character.name}: ${String(err)}`);
+        }
+        setOverviews((prev) => (prev[character.id] !== undefined ? prev : { ...prev, [character.id]: null }));
       });
   }
 
@@ -37,6 +52,25 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
     session.characters.forEach(fetchOverview);
     // Re-fetch when the connected character list changes; handleAccountAction
     // covers the case where an existing character's tokens change instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characterIds]);
+
+  // Keeps ISK/SP/training/queue on every card fresh without a manual reload,
+  // matching the same auto-refresh cadence as the character detail page.
+  // Failures are swallowed silently - a background poll hiccup shouldn't pop
+  // an error toast while the user is just looking at the grid.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      session.characters.forEach((character) => {
+        getCharacterOverview(character.id)
+          .then((overview) => {
+            setOverviews((prev) => ({ ...prev, [character.id]: overview }));
+            setCachedOverview(character.id, overview);
+          })
+          .catch(() => {});
+      });
+    }, 120000);
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characterIds]);
 
