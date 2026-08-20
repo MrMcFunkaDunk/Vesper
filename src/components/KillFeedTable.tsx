@@ -1,13 +1,23 @@
 import type { KeyboardEvent, MouseEvent } from "react";
+import { Check, X } from "lucide-react";
 import type { KillEntry } from "../lib/kills";
-import { formatIsk, formatExactTime, dateKey, formatDateHeading, formatSecurity, securityBand } from "../lib/format";
+import { formatIsk, formatExactTime, dateKey, formatDateHeading, formatSecurity, securityColor } from "../lib/format";
 import type { SystemSummary } from "./SystemKillboard";
+import type { CorporationSummary } from "./CorporationKillboard";
+import type { AllianceSummary } from "./AllianceKillboard";
 
 interface KillFeedTableProps {
   kills: KillEntry[];
   onSelectKill: (killmailId: number) => void;
   onSelectCharacter: (characterId: number) => void;
   onSelectSystem: (system: SystemSummary) => void;
+  onSelectCorporation: (corporation: CorporationSummary) => void;
+  onSelectAlliance: (alliance: AllianceSummary) => void;
+  /** When provided, tags each row as a "kill" (green, check icon) or "loss"
+   * (red, cross icon) - used by the Character Overview tab's merged
+   * kills+losses feed. Omitted everywhere else, where every row in the
+   * list means the same thing and no coloring is needed. */
+  outcomeFor?: (kill: KillEntry) => "kill" | "loss" | undefined;
 }
 
 interface KillGroup {
@@ -38,7 +48,15 @@ function groupKillsByDate(kills: KillEntry[]): KillGroup[] {
   return groups;
 }
 
-function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem }: KillFeedTableProps) {
+function KillFeedTable({
+  kills,
+  onSelectKill,
+  onSelectCharacter,
+  onSelectSystem,
+  onSelectCorporation,
+  onSelectAlliance,
+  outcomeFor,
+}: KillFeedTableProps) {
   function characterLinkProps(characterId: number | null) {
     if (!characterId) return {};
     return {
@@ -53,6 +71,44 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem 
           e.preventDefault();
           e.stopPropagation();
           onSelectCharacter(characterId);
+        }
+      },
+    };
+  }
+
+  function corporationLinkProps(corporationId: number | null, corporationName: string | null) {
+    if (!corporationId || !corporationName) return {};
+    return {
+      role: "button" as const,
+      tabIndex: 0,
+      onClick: (e: MouseEvent) => {
+        e.stopPropagation();
+        onSelectCorporation({ id: corporationId, name: corporationName });
+      },
+      onKeyDown: (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          onSelectCorporation({ id: corporationId, name: corporationName });
+        }
+      },
+    };
+  }
+
+  function allianceLinkProps(allianceId: number | null, allianceName: string | null) {
+    if (!allianceId || !allianceName) return {};
+    return {
+      role: "button" as const,
+      tabIndex: 0,
+      onClick: (e: MouseEvent) => {
+        e.stopPropagation();
+        onSelectAlliance({ id: allianceId, name: allianceName });
+      },
+      onKeyDown: (e: KeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          onSelectAlliance({ id: allianceId, name: allianceName });
         }
       },
     };
@@ -84,10 +140,12 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem 
           <div className="kills-date-divider">
             <span>{group.heading}</span>
           </div>
-          {group.entries.map((kill) => (
+          {group.entries.map((kill) => {
+            const outcome = outcomeFor?.(kill);
+            return (
             <div
               key={kill.killmail_id}
-              className="kills-row kills-row-clickable"
+              className={`kills-row kills-row-clickable${outcome ? ` kills-row-outcome-${outcome}` : ""}`}
               role="button"
               tabIndex={0}
               onClick={() => onSelectKill(kill.killmail_id)}
@@ -98,7 +156,11 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem 
                 }
               }}
             >
-              <span className="kills-time">{formatExactTime(kill.time)}</span>
+              <span className="kills-time">
+                {outcome === "kill" && <Check size={13} strokeWidth={2.5} className="kills-outcome-icon kills-outcome-icon-kill" />}
+                {outcome === "loss" && <X size={13} strokeWidth={2.5} className="kills-outcome-icon kills-outcome-icon-loss" />}
+                {formatExactTime(kill.time)}
+              </span>
 
               <div className="kills-ship-cell">
                 <img
@@ -112,7 +174,7 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem 
               <div className="kills-location-cell">
                 <div className="kills-location-line">
                   {kill.system_security != null && (
-                    <span className={`kills-security kills-security-${securityBand(kill.system_security)}`}>
+                    <span className="kills-security" style={{ color: securityColor(kill.system_security) }}>
                       {formatSecurity(kill.system_security)}
                     </span>
                   )}
@@ -166,10 +228,20 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem 
                 <div className="kills-identity">
                   <span className="kills-identity-name">{kill.victim_character_name ?? "Unknown"}</span>
                   {kill.victim_corporation_name && (
-                    <span className="kills-identity-corp">{kill.victim_corporation_name}</span>
+                    <span
+                      className="kills-identity-corp kills-system-clickable"
+                      {...corporationLinkProps(kill.victim_corporation_id, kill.victim_corporation_name)}
+                    >
+                      {kill.victim_corporation_name}
+                    </span>
                   )}
                   {kill.victim_alliance_name && (
-                    <span className="kills-identity-alliance">{kill.victim_alliance_name}</span>
+                    <span
+                      className="kills-identity-alliance kills-system-clickable"
+                      {...allianceLinkProps(kill.victim_alliance_id, kill.victim_alliance_name)}
+                    >
+                      {kill.victim_alliance_name}
+                    </span>
                   )}
                 </div>
               </div>
@@ -210,17 +282,33 @@ function KillFeedTable({ kills, onSelectKill, onSelectCharacter, onSelectSystem 
                     <span className="kills-identity-name">{kill.final_blow_character_name ?? "—"}</span>
                     {kill.solo && <span className="kills-tag kills-tag-solo">Solo</span>}
                     {kill.npc && <span className="kills-tag kills-tag-npc">NPC</span>}
+                    {!kill.solo && kill.attacker_count > 1 && (
+                      <span className="kills-tag kills-tag-attackers" title={`${kill.attacker_count} attackers`}>
+                        {kill.attacker_count}x
+                      </span>
+                    )}
                   </div>
                   {kill.final_blow_corporation_name && (
-                    <span className="kills-identity-corp">{kill.final_blow_corporation_name}</span>
+                    <span
+                      className="kills-identity-corp kills-system-clickable"
+                      {...corporationLinkProps(kill.final_blow_corporation_id, kill.final_blow_corporation_name)}
+                    >
+                      {kill.final_blow_corporation_name}
+                    </span>
                   )}
                   {kill.final_blow_alliance_name && (
-                    <span className="kills-identity-alliance">{kill.final_blow_alliance_name}</span>
+                    <span
+                      className="kills-identity-alliance kills-system-clickable"
+                      {...allianceLinkProps(kill.final_blow_alliance_id, kill.final_blow_alliance_name)}
+                    >
+                      {kill.final_blow_alliance_name}
+                    </span>
                   )}
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       ))}
     </div>

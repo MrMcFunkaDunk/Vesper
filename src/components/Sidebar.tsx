@@ -9,6 +9,11 @@ import {
   UserSearch,
   Settings,
   Map as MapIcon,
+  Factory,
+  Wrench,
+  Swords,
+  Calendar as CalendarIcon,
+  Waypoints,
 } from "lucide-react";
 import Wordmark from "./Wordmark";
 import ColorPickerMenu from "./ColorPickerMenu";
@@ -24,6 +29,11 @@ import intelCheckIcon from "../assets/sidebar-icons/intel-check.png";
 import settingsIcon from "../assets/sidebar-icons/settings.png";
 import planetaryIndustryIcon from "../assets/sidebar-icons/planetary-industry.png";
 import mapIcon from "../assets/sidebar-icons/map.png";
+import industryIcon from "../assets/sidebar-icons/industry.png";
+import fittingsFleetsIcon from "../assets/sidebar-icons/fittings-fleets.png";
+import warsIcon from "../assets/sidebar-icons/wars.png";
+import calendarIcon from "../assets/sidebar-icons/calendar.png";
+import pathWormholeFinderIcon from "../assets/sidebar-icons/path-wormhole-finder.png";
 
 export interface NavItem {
   id: string;
@@ -60,6 +70,13 @@ export const NAV_ITEMS: NavItem[] = [
       "A searchable map of New Eden with live kill activity, so you can see where the action is and plan routes around it.",
   },
   {
+    id: "path-wormhole-finder",
+    label: "Path & Wormhole Finder",
+    icon: Waypoints,
+    image: pathWormholeFinderIcon,
+    description: "Plot routes across New Eden including wormhole connections, not just stargates.",
+  },
+  {
     id: "wallet",
     label: "Wallet & Market",
     icon: Wallet,
@@ -73,7 +90,7 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Orbit,
     image: planetaryIndustryIcon,
     description:
-      "Your colonies at a glance, with warnings when an extractor or factory needs attention.",
+      "Which planet types yield which raw materials, and the full P0-P4 production chain for any commodity - a planning reference, not a live colony view.",
   },
   {
     id: "mail",
@@ -88,6 +105,35 @@ export const NAV_ITEMS: NavItem[] = [
     icon: UserSearch,
     image: intelCheckIcon,
     description: "Paste a chat list and look up affiliations for everyone in it.",
+  },
+  {
+    id: "industry",
+    label: "Industry",
+    icon: Factory,
+    image: industryIcon,
+    description:
+      "Blueprint ME/TE tracking, build-cost calculation, and job planning - our own take on what Fuzzwork, Adam4EVE, and RavWorks each do.",
+  },
+  {
+    id: "fittings-fleets",
+    label: "Fittings & Fleets",
+    icon: Wrench,
+    image: fittingsFleetsIcon,
+    description: "An in-app fit builder with saved fits and fleet composition tooling.",
+  },
+  {
+    id: "wars",
+    label: "Wars",
+    icon: Swords,
+    image: warsIcon,
+    description: "Active wars for the corporations and alliances you care about.",
+  },
+  {
+    id: "calendar",
+    label: "Calendar",
+    icon: CalendarIcon,
+    image: calendarIcon,
+    description: "Upcoming in-game events and fleet ops.",
   },
   {
     id: "settings",
@@ -164,7 +210,7 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
           );
         })}
       </nav>
-      <div className="sidebar-footer">v0.1.0 · dev build</div>
+      <div className="sidebar-footer">v1.0.0</div>
       {contextMenu && (
         <ColorPickerMenu
           x={contextMenu.x}

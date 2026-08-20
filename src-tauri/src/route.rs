@@ -145,7 +145,8 @@ async fn resolve_type_groups(client: &reqwest::Client, type_ids: &[i64]) -> Hash
         .collect()
 }
 
-struct GateInfo {
+pub(crate) struct GateInfo {
+    id: i64,
     name: String,
     x: f64,
     y: f64,
@@ -178,7 +179,7 @@ fn gate_display_name(raw: &str) -> String {
     raw.strip_prefix("Stargate (").and_then(|s| s.strip_suffix(')')).unwrap_or(raw).to_string()
 }
 
-async fn fetch_system_gates(client: &reqwest::Client, system_id: i64) -> Vec<GateInfo> {
+pub(crate) async fn fetch_system_gates(client: &reqwest::Client, system_id: i64) -> Vec<GateInfo> {
     let Ok(system) = esi::public_get::<EsiSystemGates>(client, &format!("/universe/systems/{system_id}/")).await else {
         return Vec::new();
     };
@@ -187,10 +188,30 @@ async fn fetch_system_gates(client: &reqwest::Client, system_id: i64) -> Vec<Gat
         esi::public_get::<EsiStargate>(client, &url).await
     }))
     .await;
-    gates
+    system
+        .stargates
+        .iter()
+        .zip(gates)
+        .filter_map(|(&id, g)| g.ok().map(|g| (id, g)))
+        .map(|(id, g)| GateInfo { id, name: gate_display_name(&g.name), x: g.position.x, y: g.position.y, z: g.position.z })
+        .collect()
+}
+
+#[derive(Serialize)]
+pub struct GateSummary {
+    pub id: i64,
+    pub name: String,
+}
+
+/// Every stargate in a system, for the "track a gate" search flow: the user
+/// picks a system first, then picks which of its gates to track from this
+/// list - full "Stargate (X)" naming to match zKillboard's own wording and
+/// what KillDetail.location_name already produces.
+pub async fn fetch_system_gate_summaries(client: &reqwest::Client, system_id: i64) -> Vec<GateSummary> {
+    fetch_system_gates(client, system_id)
+        .await
         .into_iter()
-        .filter_map(Result::ok)
-        .map(|g| GateInfo { name: gate_display_name(&g.name), x: g.position.x, y: g.position.y, z: g.position.z })
+        .map(|g| GateSummary { id: g.id, name: format!("Stargate ({})", g.name) })
         .collect()
 }
 
@@ -205,6 +226,28 @@ fn nearest_gate_name(position: (f64, f64, f64), gates: &[GateInfo]) -> Option<St
         .filter(|(_, dist)| *dist <= GATE_PROXIMITY_METERS)
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(g, _)| g.name.clone())
+}
+
+/// Same nearest-stargate search as nearest_gate_name, but for the Kill
+/// Detail location line rather than gate-camp attribution: always returns
+/// the closest gate regardless of distance (zKillboard shows *something*
+/// even for a kill deep in a belt, not just true gate camps) and returns
+/// the distance and the gate's own ESI stargate_id alongside it (the same
+/// id zKillboard's own zkb.locationID uses for genuine gate-camp kills,
+/// verified against live data - this is what "track this gate" tracks).
+/// Reconstructs the full "Stargate (X)" ESI name rather than GateInfo's
+/// camp-display-friendly stripped name, to match zKillboard's own
+/// "Stargate (New Caldari)" wording.
+pub(crate) fn nearest_gate(position: (f64, f64, f64), gates: &[GateInfo]) -> Option<(String, f64, i64)> {
+    let (px, py, pz) = position;
+    gates
+        .iter()
+        .map(|g| {
+            let dist = ((g.x - px).powi(2) + (g.y - py).powi(2) + (g.z - pz).powi(2)).sqrt();
+            (g, dist)
+        })
+        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(g, dist)| (format!("Stargate ({})", g.name), dist, g.id))
 }
 
 #[derive(Serialize)]

@@ -5,17 +5,19 @@ const DRAG_THRESHOLD_PX = 6;
 
 interface DragState {
   id: string;
+  startX: number;
   startY: number;
   dragging: boolean;
 }
 
 /**
- * Left-click-and-hold reordering for a vertical list: drag past a small
- * threshold to start moving an item, live-reorders as the pointer crosses
- * sibling midpoints, and suppresses the click that would otherwise fire on
- * release after a real drag (so plain clicks still work for selection).
+ * Left-click-and-hold reordering for a vertical list (or a wrapping row of
+ * chips, via axis "wrap"): drag past a small threshold to start moving an
+ * item, live-reorders as the pointer crosses sibling midpoints, and
+ * suppresses the click that would otherwise fire on release after a real
+ * drag (so plain clicks still work for selection).
  */
-export function useDragReorder(order: string[], onReorder: (next: string[]) => void) {
+export function useDragReorder(order: string[], onReorder: (next: string[]) => void, axis: "vertical" | "wrap" = "vertical") {
   const itemRefs = useRef(new Map<string, HTMLElement>());
   const dragState = useRef<DragState | null>(null);
   const justDraggedRef = useRef(false);
@@ -32,7 +34,7 @@ export function useDragReorder(order: string[], onReorder: (next: string[]) => v
   const handlePointerDown = useCallback(
     (id: string) => (event: ReactPointerEvent<HTMLElement>) => {
       if (event.button !== 0) return;
-      dragState.current = { id, startY: event.clientY, dragging: false };
+      dragState.current = { id, startX: event.clientX, startY: event.clientY, dragging: false };
       event.currentTarget.setPointerCapture(event.pointerId);
     },
     [],
@@ -44,7 +46,11 @@ export function useDragReorder(order: string[], onReorder: (next: string[]) => v
       if (!state) return;
 
       if (!state.dragging) {
-        if (Math.abs(event.clientY - state.startY) < DRAG_THRESHOLD_PX) return;
+        const moved =
+          axis === "wrap"
+            ? Math.hypot(event.clientX - state.startX, event.clientY - state.startY)
+            : Math.abs(event.clientY - state.startY);
+        if (moved < DRAG_THRESHOLD_PX) return;
         state.dragging = true;
         setDraggingId(state.id);
       }
@@ -55,7 +61,17 @@ export function useDragReorder(order: string[], onReorder: (next: string[]) => v
         const el = itemRefs.current.get(others[i]);
         if (!el) continue;
         const rect = el.getBoundingClientRect();
-        if (event.clientY < rect.top + rect.height / 2) {
+        if (axis === "wrap") {
+          // Reading order: a point counts as "before" a chip if it's above
+          // the chip's row entirely, or in the same row but left of its
+          // horizontal midpoint - so drags reorder left-to-right, top-to-
+          // bottom the way the chips actually wrap, not by Y alone.
+          const inRow = event.clientY >= rect.top && event.clientY < rect.bottom;
+          if (event.clientY < rect.top || (inRow && event.clientX < rect.left + rect.width / 2)) {
+            insertIndex = i;
+            break;
+          }
+        } else if (event.clientY < rect.top + rect.height / 2) {
           insertIndex = i;
           break;
         }
@@ -67,7 +83,7 @@ export function useDragReorder(order: string[], onReorder: (next: string[]) => v
         onReorder(next);
       }
     },
-    [order, onReorder],
+    [order, onReorder, axis],
   );
 
   const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLElement>) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "vesper.sidebar.order";
 
@@ -23,7 +23,15 @@ function readOrder(defaultIds: string[]): string[] {
 export function useNavOrder(defaultIds: string[]) {
   const [order, setOrder] = useState<string[]>(() => readOrder(defaultIds));
 
+  // Skip the write-back on mount - see useTrackedEntries for why a cold
+  // WebView2 start can read stale/empty and shouldn't immediately re-persist
+  // that as ground truth.
+  const hydrated = useRef(false);
   useEffect(() => {
+    if (!hydrated.current) {
+      hydrated.current = true;
+      return;
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
   }, [order]);
 

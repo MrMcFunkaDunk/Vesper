@@ -69,6 +69,20 @@ export function getCharacterOverview(id: number): Promise<CharacterOverview> {
   return invoke("get_character_overview", { id });
 }
 
+export interface CharacterLocation {
+  character_id: number;
+  solar_system_id: number | null;
+  solar_system_name: string | null;
+  ship_type_id: number | null;
+  ship_type_name: string | null;
+  needs_reauth: boolean;
+}
+
+/** A character's current system + ship hull, for live location polling. */
+export function getCharacterLocation(id: number): Promise<CharacterLocation> {
+  return invoke("get_character_location", { id });
+}
+
 export interface SkillEntry {
   skill_id: number;
   name: string;
@@ -88,11 +102,20 @@ export function getCharacterSkills(id: number): Promise<CharacterSkills> {
   return invoke("get_character_skills", { id });
 }
 
+export interface SkillPrerequisite {
+  skill_id: number;
+  skill_name: string;
+  level: number;
+}
+
 export interface AllSkillEntry {
   skill_id: number;
   name: string;
   group_name: string;
   rank: number;
+  primary_attribute: string | null;
+  secondary_attribute: string | null;
+  prerequisites: SkillPrerequisite[];
 }
 
 /** Every published skill in the game, grouped and ranked - cached on the Rust
@@ -139,6 +162,8 @@ export interface ImplantEntry {
   name: string;
   slot: number;
   bonus_text: string | null;
+  attribute: string | null;
+  bonus: number | null;
 }
 
 export interface JumpCloneEntry {
@@ -159,6 +184,68 @@ export function getCharacterClones(id: number): Promise<CharacterClones> {
   return invoke("get_character_clones", { id });
 }
 
+/** ESI's base attribute values - already post-remap (17 base + whatever
+ * remap points were spent), not the raw unmodified 17. Implant bonuses are
+ * separate, see ImplantEntry.attribute/bonus on the active clone's implants. */
+export interface CharacterAttributes {
+  charisma: number;
+  intelligence: number;
+  memory: number;
+  perception: number;
+  willpower: number;
+  bonus_remaps: number;
+  last_remap_date: string | null;
+  accrued_remap_cooldown_date: string | null;
+  needs_reauth: boolean;
+}
+
+export function getCharacterAttributes(id: number): Promise<CharacterAttributes> {
+  return invoke("get_character_attributes", { id });
+}
+
+export interface ResearchAgentEntry {
+  agent_id: number;
+  agent_name: string;
+  skill_type_id: number;
+  skill_name: string;
+  points_per_day: number;
+  current_points: number;
+  started_at: string;
+}
+
+export interface CharacterResearch {
+  entries: ResearchAgentEntry[];
+  needs_reauth: boolean;
+}
+
+export function getCharacterResearch(id: number): Promise<CharacterResearch> {
+  return invoke("get_character_research", { id });
+}
+
+export interface FwTally {
+  yesterday: number;
+  last_week: number;
+  total: number;
+}
+
+export interface CharacterFwStats {
+  enlisted: boolean;
+  faction_name: string | null;
+  enlisted_on: string | null;
+  // Absent (not zero) whenever the character has never enlisted in FW -
+  // confirmed against a real ESI response, not just the (inaccurate here)
+  // OpenAPI spec, which marks these "required".
+  current_rank: number | null;
+  highest_rank: number | null;
+  kills: FwTally;
+  victory_points: FwTally;
+  needs_reauth: boolean;
+}
+
+export function getCharacterFwStats(id: number): Promise<CharacterFwStats> {
+  return invoke("get_character_fw_stats", { id });
+}
+
 export interface StandingEntry {
   from_name: string;
   from_type: string;
@@ -175,6 +262,7 @@ export function getCharacterStandings(id: number): Promise<CharacterStandings> {
 }
 
 export interface ContactEntry {
+  contact_id: number;
   contact_name: string;
   contact_type: string;
   standing: number;
@@ -245,6 +333,7 @@ export function getCharacterAssets(id: number): Promise<CharacterAssets> {
 
 export interface MarketOrderEntry {
   order_id: number;
+  type_id: number;
   type_name: string;
   location_name: string;
   is_buy_order: boolean;
@@ -290,6 +379,54 @@ export function getCharacterContracts(id: number): Promise<CharacterContracts> {
   return invoke("get_character_contracts", { id });
 }
 
+export interface ContractItemEntry {
+  type_id: number;
+  type_name: string;
+  quantity: number;
+  is_included: boolean;
+  runs: number | null;
+}
+
+/** Item list for one item_exchange/auction contract - empty for courier contracts (nothing to list). */
+export function getContractItems(id: number, contractId: number): Promise<ContractItemEntry[]> {
+  return invoke("get_contract_items", { id, contractId });
+}
+
+export interface CalendarEventSummary {
+  event_id: number;
+  event_date: string;
+  title: string;
+  importance: number;
+  event_response: string;
+}
+
+export interface CharacterCalendar {
+  entries: CalendarEventSummary[];
+  needs_reauth: boolean;
+}
+
+/** Up to the next 50 upcoming events, chronological - ESI doesn't expose more than that in one call. */
+export function getCharacterCalendar(id: number): Promise<CharacterCalendar> {
+  return invoke("get_character_calendar", { id });
+}
+
+export interface CalendarEventDetail {
+  event_id: number;
+  date: string;
+  title: string;
+  text: string;
+  duration: number;
+  importance: number;
+  response: string;
+  owner_id: number;
+  owner_name: string;
+  owner_type: string;
+}
+
+export function getCalendarEventDetail(id: number, eventId: number): Promise<CalendarEventDetail> {
+  return invoke("get_calendar_event_detail", { id, eventId });
+}
+
 export interface IndustryJobEntry {
   job_id: number;
   activity_name: string;
@@ -314,6 +451,7 @@ export function getCharacterIndustryJobs(id: number): Promise<CharacterIndustryJ
 export interface TransactionEntry {
   transaction_id: number;
   date: string;
+  type_id: number;
   type_name: string;
   location_name: string;
   quantity: number;

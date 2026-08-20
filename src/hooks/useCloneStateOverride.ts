@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type CloneStateMap = Record<number, "Alpha" | "Omega">;
 
@@ -22,7 +22,15 @@ function readStorage(): CloneStateMap {
 export function useCloneStateOverride() {
   const [overrides, setOverrides] = useState<CloneStateMap>(() => readStorage());
 
+  // Skip the write-back on mount - see useTrackedEntries for why a cold
+  // WebView2 start can read stale/empty and shouldn't immediately re-persist
+  // that as ground truth.
+  const hydrated = useRef(false);
   useEffect(() => {
+    if (!hydrated.current) {
+      hydrated.current = true;
+      return;
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
   }, [overrides]);
 

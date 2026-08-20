@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { MapPin, X } from "lucide-react";
 import { getServerStatus, type Session } from "../lib/eve";
+import { searchSystemsLive, type SystemSearchMatch } from "../lib/map";
+import { useLocationTracking, type ProximityRadius } from "../hooks/useLocationTracking";
 import StatusChip from "./StatusChip";
 
 interface TopBarProps {
@@ -50,6 +53,15 @@ function timeUntilDowntime(now: Date): string {
   return `${pad(minutes)}:${pad(seconds)}`;
 }
 
+/** Once Tranquility's own login server is back up, ESI (the API this badge
+ * actually checks) can lag several minutes behind before it stops 503ing
+ * with "maintenance mode" - a real, separate CCP-side delay, not something
+ * we can shortcut. This just makes sure recovery is *noticed* fast once ESI
+ * genuinely does come back, by checking far more often while offline than
+ * once things are healthy. */
+const SERVER_STATUS_POLL_ONLINE_MS = 60000;
+const SERVER_STATUS_POLL_OFFLINE_MS = 15000;
+
 function ServerStatusBadge() {
   const [status, setStatus] = useState<{ online: boolean; players: number | null } | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -61,20 +73,30 @@ function ServerStatusBadge() {
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    function scheduleNext(online: boolean) {
+      timeoutId = setTimeout(poll, online ? SERVER_STATUS_POLL_ONLINE_MS : SERVER_STATUS_POLL_OFFLINE_MS);
+    }
+
     function poll() {
       getServerStatus()
         .then((s) => {
-          if (!cancelled) setStatus(s);
+          if (cancelled) return;
+          setStatus(s);
+          scheduleNext(s.online);
         })
         .catch(() => {
-          if (!cancelled) setStatus({ online: false, players: null });
+          if (cancelled) return;
+          setStatus({ online: false, players: null });
+          scheduleNext(false);
         });
     }
+
     poll();
-    const id = setInterval(poll, 60000);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      clearTimeout(timeoutId);
     };
   }, []);
 
@@ -107,6 +129,115 @@ function ServerStatusBadge() {
   );
 }
 
+export const RADIUS_OPTIONS: { value: ProximityRadius; label: string }[] = [
+  { value: 1, label: "1" },
+  { value: 2, label: "2" },
+  { value: 3, label: "3" },
+  { value: 5, label: "5" },
+  { value: 7, label: "7" },
+  { value: 9, label: "9" },
+  { value: "region", label: "Region" },
+];
+
+/** Lets the pilot say "I'm here" - a manually-set current system that drives
+ * the proximity kill scan (Map ticker highlight + app-wide flash). Sits next
+ * to the server status badge so it's always visible/settable regardless of
+ * which page is open. */
+function LocationTracker() {
+  const { currentSystem, setCurrentSystem, radius, setRadius } = useLocationTracking();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SystemSearchMatch[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setResults([]);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setResults([]);
+      return;
+    }
+    let cancelled = false;
+    searchSystemsLive(trimmed)
+      .then((matches) => {
+        if (!cancelled) setResults(matches);
+      })
+      .catch(() => {
+        if (!cancelled) setResults([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [query]);
+
+  function pickSystem(system: SystemSearchMatch) {
+    setCurrentSystem({ id: system.id, name: system.name });
+    setQuery("");
+    setResults([]);
+  }
+
+  return (
+    <div className="location-tracker" ref={containerRef}>
+      {currentSystem ? (
+        <div className="location-tracker-current">
+          <MapPin size={13} strokeWidth={2} />
+          <span>{currentSystem.name}</span>
+          <button
+            type="button"
+            className="location-tracker-clear"
+            onClick={() => setCurrentSystem(null)}
+            aria-label="Clear tracked location"
+            title="Clear tracked location"
+          >
+            <X size={12} strokeWidth={2} />
+          </button>
+          <div className="location-tracker-radius">
+            {RADIUS_OPTIONS.map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                className={`location-tracker-radius-btn${radius === option.value ? " location-tracker-radius-active" : ""}`}
+                onClick={() => setRadius(option.value)}
+                title={option.value === "region" ? "Track the whole region" : `Track ${option.value} jumps out`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="location-tracker-search">
+          <MapPin size={13} strokeWidth={2} />
+          <input
+            type="text"
+            name="location-search"
+            placeholder="Set my location..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {results.length > 0 && (
+            <div className="location-tracker-results">
+              {results.map((system) => (
+                <button key={system.id} type="button" onClick={() => pickSystem(system)}>
+                  {system.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TopBar({ title, session, onSwitch, onAdd, onLogout }: TopBarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const active =
@@ -117,6 +248,7 @@ function TopBar({ title, session, onSwitch, onAdd, onLogout }: TopBarProps) {
     <header className="topbar">
       <h1 className="topbar-title">{title}</h1>
       <div className="topbar-right">
+        <LocationTracker />
         <ServerStatusBadge />
         <EveTimeClock />
         <div className="account-menu">

@@ -16,7 +16,15 @@ export default defineConfig(async () => ({
   server: {
     port: 1520,
     strictPort: true,
-    host: host || false,
+    // Explicit IPv4 loopback rather than Vite's default "localhost" binding -
+    // WebView2 resolving "localhost" was taking ~79s before falling back from
+    // IPv6 to IPv4 on this machine (confirmed via boot-timing instrumentation:
+    // the entire delay sat between page-parse-start and the first script
+    // executing, identical whether Vite's dependency cache was warm or cold -
+    // a fixed-duration stall like that points at network resolution, not app
+    // code). Binding here and pointing tauri.conf.json's devUrl straight at
+    // 127.0.0.1 skips hostname resolution for the dev server entirely.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

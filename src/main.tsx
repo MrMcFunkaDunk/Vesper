@@ -13,13 +13,16 @@ import App from "./App";
 import { ErrorReporterProvider } from "./hooks/useErrorReporter";
 import { RecentActivityProvider } from "./hooks/useRecentActivity";
 import { TrackedSystemsProvider } from "./hooks/useTrackedSystemsActivity";
+import { LocationTrackingProvider } from "./hooks/useLocationTracking";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorReporterProvider>
       <RecentActivityProvider>
         <TrackedSystemsProvider>
-          <App />
+          <LocationTrackingProvider>
+            <App />
+          </LocationTrackingProvider>
         </TrackedSystemsProvider>
       </RecentActivityProvider>
     </ErrorReporterProvider>

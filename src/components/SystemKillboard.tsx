@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { getRecentKills, type KillEntry } from "../lib/kills";
-import { useErrorReporter } from "../hooks/useErrorReporter";
-import { securityBand, formatSecurity } from "../lib/format";
+import { getSystemKillsHistory } from "../lib/kills";
+import { getMapData, type MapData } from "../lib/map";
+import { usePaginatedKillFeed } from "../hooks/usePaginatedKillFeed";
+import { securityColor, formatSecurity } from "../lib/format";
 import KillFeedTable from "./KillFeedTable";
+import { Pager, PAGE_SIZE } from "./killboardShared";
 import BackToMapButton from "./BackToMapButton";
+import TrackToggleButton from "./TrackToggleButton";
+import type { ConstellationSummary } from "./ConstellationKillboard";
+import type { RegionSummary } from "./RegionKillboard";
+import type { CorporationSummary } from "./CorporationKillboard";
+import type { AllianceSummary } from "./AllianceKillboard";
 
 export interface SystemSummary {
   id: number;
@@ -19,6 +26,10 @@ interface SystemKillboardProps {
   onSelectKill: (killmailId: number) => void;
   onSelectCharacter: (characterId: number) => void;
   onSelectSystem: (system: SystemSummary) => void;
+  onSelectConstellation: (constellation: ConstellationSummary) => void;
+  onSelectRegion: (region: RegionSummary) => void;
+  onSelectCorporation: (corporation: CorporationSummary) => void;
+  onSelectAlliance: (alliance: AllianceSummary) => void;
   rootLabel: string;
   onGoHome: () => void;
   onGoToMap: () => void;
@@ -30,20 +41,41 @@ function SystemKillboard({
   onSelectKill,
   onSelectCharacter,
   onSelectSystem,
+  onSelectConstellation,
+  onSelectRegion,
+  onSelectCorporation,
+  onSelectAlliance,
   rootLabel,
   onGoHome,
   onGoToMap,
 }: SystemKillboardProps) {
-  const [kills, setKills] = useState<KillEntry[] | null>(null);
-  const reportError = useErrorReporter();
+  const [mapData, setMapData] = useState<MapData | null>(null);
+  const [page, setPage] = useState(1);
+
+  const { items: kills, exhausted, ensureLoadedThrough } = usePaginatedKillFeed(
+    (p) => getSystemKillsHistory(system.id, p),
+    system.id,
+  );
 
   useEffect(() => {
-    setKills(null);
-    getRecentKills([system.id])
-      .then(setKills)
-      .catch((err) => reportError(`Failed to load kills for ${system.name}: ${String(err)}`));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setPage(1);
   }, [system.id]);
+
+  useEffect(() => {
+    getMapData().then(setMapData).catch(() => {});
+  }, []);
+
+  const pagedKills = (kills ?? []).slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageCount = Math.max(1, Math.ceil((kills ?? []).length / PAGE_SIZE) + (exhausted ? 0 : 1));
+
+  async function changePage(p: number) {
+    await ensureLoadedThrough(p * PAGE_SIZE);
+    setPage(p);
+  }
+
+  const mapSystem = mapData?.systems.find((s) => s.id === system.id);
+  const constellation = mapSystem ? mapData?.constellations.find((c) => c.id === mapSystem.constellation_id) : undefined;
+  const region = constellation ? mapData?.regions.find((r) => r.id === constellation.region_id) : undefined;
 
   return (
     <main className="main main-kills">
@@ -76,13 +108,43 @@ function SystemKillboard({
 
         <div className="kills-header">
           <p className="eyebrow">System</p>
-          <h2>
-            <span className={`kills-security kills-security-${securityBand(system.security)}`}>
-              {formatSecurity(system.security)}
-            </span>{" "}
-            {system.name}
-          </h2>
-          {system.regionName && <span className="kills-region">{system.regionName}</span>}
+          <div className="kills-header-title-row">
+            <h2>
+              <span className="kills-security" style={{ color: securityColor(system.security) }}>
+                {formatSecurity(system.security)}
+              </span>{" "}
+              {system.name}
+            </h2>
+            <TrackToggleButton entry={{ type: "system", id: system.id, name: system.name, security: system.security, systemIds: [system.id] }} />
+          </div>
+          <div className="kills-header-links">
+            {constellation && (
+              <button
+                type="button"
+                className="kills-header-link"
+                onClick={() =>
+                  onSelectConstellation({
+                    id: constellation.id,
+                    name: constellation.name,
+                    regionId: constellation.region_id,
+                    regionName: region?.name ?? system.regionName,
+                  })
+                }
+              >
+                Constellation: {constellation.name}
+              </button>
+            )}
+            {(region || system.regionName) && (
+              <button
+                type="button"
+                className="kills-header-link"
+                onClick={() => region && onSelectRegion({ id: region.id, name: region.name })}
+                disabled={!region}
+              >
+                Region: {region?.name ?? system.regionName}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="kills-feed">
@@ -91,7 +153,17 @@ function SystemKillboard({
           ) : kills.length === 0 ? (
             <p className="detail-empty">No recent kills recorded for this system.</p>
           ) : (
-            <KillFeedTable kills={kills} onSelectKill={onSelectKill} onSelectCharacter={onSelectCharacter} onSelectSystem={onSelectSystem} />
+            <>
+              <KillFeedTable
+                kills={pagedKills}
+                onSelectKill={onSelectKill}
+                onSelectCharacter={onSelectCharacter}
+                onSelectSystem={onSelectSystem}
+                onSelectCorporation={onSelectCorporation}
+                onSelectAlliance={onSelectAlliance}
+              />
+              <Pager page={page} pageCount={pageCount} onChange={changePage} />
+            </>
           )}
         </div>
       </div>

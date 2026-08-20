@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type ColorMap = Record<string, string>;
 
@@ -19,7 +19,15 @@ function readStorage(key: string): ColorMap {
 export function useColorOverrides(storageKey: string) {
   const [colors, setColors] = useState<ColorMap>(() => readStorage(storageKey));
 
+  // Skip the write-back on mount - see useTrackedEntries for why a cold
+  // WebView2 start can read stale/empty and shouldn't immediately re-persist
+  // that as ground truth.
+  const hydrated = useRef(false);
   useEffect(() => {
+    if (!hydrated.current) {
+      hydrated.current = true;
+      return;
+    }
     localStorage.setItem(storageKey, JSON.stringify(colors));
   }, [storageKey, colors]);
 
@@ -36,5 +44,9 @@ export function useColorOverrides(storageKey: string) {
     });
   }, []);
 
-  return { colors, setColor, resetColor };
+  const resetAll = useCallback(() => {
+    setColors({});
+  }, []);
+
+  return { colors, setColor, resetColor, resetAll };
 }

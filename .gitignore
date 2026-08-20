@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Local-only reference clones of other projects' repos (eve-nexum, Pathfinder,
+# evemon, wanderer, zKillboard, EveLens, LazyBlacksmith, eve-tools-suite) used
+# for source-verification research - not part of VESPER itself.
+Git sources/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

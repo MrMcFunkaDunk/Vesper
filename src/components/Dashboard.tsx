@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Scale } from "lucide-react";
 import StatusChip from "./StatusChip";
 import CharacterCard from "./CharacterCard";
+import NewsTicker from "./NewsTicker";
+import LiveActivityTicker from "./LiveActivityTicker";
+import CharacterComparisonView from "./CharacterComparisonView";
 import {
   cancelLogin,
   getCharacterOverview,
@@ -24,6 +27,7 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
   // instead of every card stuck on "Loading..." with nothing to show.
   const [overviews, setOverviews] = useState<Record<number, CharacterOverview | null>>(() => getAllCachedOverviews());
   const [pending, setPending] = useState(false);
+  const [comparing, setComparing] = useState(false);
   const cancelledRef = useRef(false);
   const reportError = useErrorReporter();
   const characterIds = session.characters.map((c) => c.id).join(",");
@@ -109,6 +113,10 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
   const activeCharacter =
     session.characters.find((c) => c.id === session.active_character_id) ?? session.characters[0];
 
+  if (comparing) {
+    return <CharacterComparisonView characters={session.characters} onClose={() => setComparing(false)} />;
+  }
+
   return (
     <main className="main main-dashboard">
       <div className="dashboard">
@@ -116,6 +124,11 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
           <p className="eyebrow">Operations Overview</p>
           <h2>Welcome back, {activeCharacter.name}</h2>
           <StatusChip label={activeCharacter.name} value="Connected" tone="online" />
+          {session.characters.length > 1 && (
+            <button type="button" className="skill-action-btn dashboard-compare-btn" onClick={() => setComparing(true)}>
+              <Scale size={13} strokeWidth={2} /> Compare Skills
+            </button>
+          )}
           {pending && (
             <div className="dashboard-pending">
               <span>Waiting for you to finish signing in...</span>
@@ -149,6 +162,9 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
             <span className="character-card-add-hint">Sign in with EVE to get started</span>
           </button>
         </div>
+
+        <NewsTicker />
+        <LiveActivityTicker />
       </div>
     </main>
   );

@@ -28,4 +28,9 @@ export const DASHBOARD_SCOPES = [
   "esi-mail.read_mail.v1",
   "esi-characters.read_notifications.v1",
   "esi-planets.manage_planets.v1",
+  "esi-calendar.read_calendar_events.v1",
+  "esi-fittings.read_fittings.v1",
+  "esi-fittings.write_fittings.v1",
+  "esi-characters.read_agents_research.v1",
+  "esi-characters.read_fw_stats.v1",
 ];

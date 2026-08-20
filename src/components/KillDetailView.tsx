@@ -1,20 +1,28 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { ArrowLeft, Copy, Check } from "lucide-react";
-import { getKillDetail, type KillDetail, type SlotGroup } from "../lib/kills";
+import { getKillDetail, type KillDetail, type SlotGroup, type TrackedEntry } from "../lib/kills";
+import { getMarketPrices } from "../lib/market";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { formatIsk, formatSecurity, securityBand, formatPercent } from "../lib/format";
+import { formatIsk, formatSecurity, securityColor, formatPercent, formatEveDateTime } from "../lib/format";
 import FitWheel from "./FitWheel";
 import type { SystemSummary } from "./SystemKillboard";
+import type { CorporationSummary } from "./CorporationKillboard";
+import type { AllianceSummary } from "./AllianceKillboard";
+import type { MarketItemRef } from "./MarketBrowser";
 import BackToMapButton from "./BackToMapButton";
+import TrackToggleButton from "./TrackToggleButton";
 
 interface KillDetailViewProps {
   killmailId: number;
   onBack: () => void;
   onSelectCharacter: (characterId: number) => void;
   onSelectSystem: (system: SystemSummary) => void;
+  onSelectCorporation: (corporation: CorporationSummary) => void;
+  onSelectAlliance: (alliance: AllianceSummary) => void;
   rootLabel: string;
   onGoHome: () => void;
   onGoToMap: () => void;
+  onSelectItem: (item: MarketItemRef) => void;
 }
 
 function corpLogoUrl(id: number): string {
@@ -63,12 +71,16 @@ function KillDetailView({
   onBack,
   onSelectCharacter,
   onSelectSystem,
+  onSelectCorporation,
+  onSelectAlliance,
   rootLabel,
   onGoHome,
   onGoToMap,
+  onSelectItem,
 }: KillDetailViewProps) {
   const [detail, setDetail] = useState<KillDetail | null>(null);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
+  const [prices, setPrices] = useState<Map<number, number>>(new Map());
   const reportError = useErrorReporter();
 
   useEffect(() => {
@@ -77,6 +89,23 @@ function KillDetailView({
       .then(setDetail)
       .catch((err) => reportError(`Failed to load killmail detail: ${String(err)}`));
   }, [killmailId]);
+
+  // Rough per-item valuation for the slot subtotals below, the same way
+  // zKillboard itself does it - the killmail data has no per-item ISK
+  // value at all, only the whole kill's total/destroyed/dropped value.
+  // One bulk EVE-wide price list covers every kill viewed for the life of
+  // this component, so it only needs fetching once, not per killmail.
+  useEffect(() => {
+    getMarketPrices()
+      .then((list) => {
+        const map = new Map<number, number>();
+        for (const p of list) {
+          if (p.average_price != null) map.set(p.type_id, p.average_price);
+        }
+        setPrices(map);
+      })
+      .catch(() => {});
+  }, []);
 
   const totalDamage = detail?.attackers.reduce((sum, a) => sum + a.damage_done, 0) ?? 0;
   const finalBlowAttacker = detail?.attackers.find((a) => a.final_blow);
@@ -87,6 +116,17 @@ function KillDetailView({
         items: aggregateItems(detail.items.filter((i) => i.slot_group === group)),
       })).filter((g) => g.items.length > 0)
     : [];
+
+  function groupSubtotal(items: AggregatedItem[]): { destroyed: number; dropped: number } {
+    let destroyed = 0;
+    let dropped = 0;
+    for (const item of items) {
+      const price = prices.get(item.item_type_id) ?? 0;
+      destroyed += item.quantity_destroyed * price;
+      dropped += item.quantity_dropped * price;
+    }
+    return { destroyed, dropped };
+  }
 
   function copyToClipboard(label: string, text: string) {
     navigator.clipboard
@@ -186,15 +226,65 @@ function KillDetailView({
                   {detail.npc && <span className="kills-tag kills-tag-npc">NPC</span>}
                 </h2>
                 <span className="detail-corp">
-                  {detail.victim_corporation_name ?? "—"}
-                  {detail.victim_alliance_name ? ` • ${detail.victim_alliance_name}` : ""}
+                  {detail.victim_corporation_name && detail.victim_corporation_id ? (
+                    <span
+                      className="kills-system-clickable"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onSelectCorporation({ id: detail.victim_corporation_id!, name: detail.victim_corporation_name! })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectCorporation({ id: detail.victim_corporation_id!, name: detail.victim_corporation_name! });
+                        }
+                      }}
+                    >
+                      {detail.victim_corporation_name}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                  {detail.victim_alliance_name && detail.victim_alliance_id ? (
+                    <>
+                      {" • "}
+                      <span
+                        className="kills-system-clickable"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onSelectAlliance({ id: detail.victim_alliance_id!, name: detail.victim_alliance_name! })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onSelectAlliance({ id: detail.victim_alliance_id!, name: detail.victim_alliance_name! });
+                          }
+                        }}
+                      >
+                        {detail.victim_alliance_name}
+                      </span>
+                    </>
+                  ) : (
+                    ""
+                  )}
                 </span>
                 <div className="detail-stats-row">
-                  <span>{detail.ship_type_name}</span>
+                  <span
+                    className="kills-system-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelectItem({ id: detail.ship_type_id, name: detail.ship_type_name })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelectItem({ id: detail.ship_type_id, name: detail.ship_type_name });
+                      }
+                    }}
+                  >
+                    {detail.ship_type_name}
+                  </span>
                   <span className="detail-stats-sep">//</span>
                   <span>
                     {detail.system_security != null && (
-                      <span className={`kills-security kills-security-${securityBand(detail.system_security)}`}>
+                      <span className="kills-security" style={{ color: securityColor(detail.system_security) }}>
                         {formatSecurity(detail.system_security)}{" "}
                       </span>
                     )}
@@ -229,6 +319,31 @@ function KillDetailView({
                   <span className="detail-stats-sep">//</span>
                   <span>{formatIsk(detail.total_value)}</span>
                 </div>
+                {detail.location_name && (
+                  <div className="detail-location-row">
+                    <span>
+                      {detail.location_name}
+                      {detail.location_distance_m != null && (
+                        <span className="detail-location-distance">
+                          {" "}
+                          {(detail.location_distance_m / 1000).toFixed(2)}km
+                        </span>
+                      )}
+                    </span>
+                    {detail.location_id != null && (
+                      <TrackToggleButton
+                        entry={
+                          {
+                            type: "gate",
+                            id: detail.location_id,
+                            name: detail.location_name,
+                            systemIds: [detail.system_id],
+                          } satisfies TrackedEntry
+                        }
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -236,7 +351,7 @@ function KillDetailView({
               <p className="eyebrow">Kill Stats</p>
               <div className="kill-stats-grid">
                 <span className="kill-stats-label">Time</span>
-                <span className="kill-stats-value">{new Date(detail.time).toLocaleString()}</span>
+                <span className="kill-stats-value">{formatEveDateTime(detail.time)}</span>
                 <span className="kill-stats-label">Points</span>
                 <span className="kill-stats-value">{detail.points}</span>
                 <span className="kill-stats-label">Damage Taken</span>
@@ -327,8 +442,25 @@ function KillDetailView({
                     </div>
                     <div className="kills-identity">
                       <span className="kills-identity-name">{finalBlowAttacker.character_name ?? "—"}</span>
-                      {finalBlowAttacker.corporation_name && (
-                        <span className="kills-identity-corp">{finalBlowAttacker.corporation_name}</span>
+                      {finalBlowAttacker.corporation_name && finalBlowAttacker.corporation_id && (
+                        <span
+                          className="kills-identity-corp kills-system-clickable"
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectCorporation({ id: finalBlowAttacker.corporation_id!, name: finalBlowAttacker.corporation_name! });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onSelectCorporation({ id: finalBlowAttacker.corporation_id!, name: finalBlowAttacker.corporation_name! });
+                            }
+                          }}
+                        >
+                          {finalBlowAttacker.corporation_name}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -382,8 +514,25 @@ function KillDetailView({
                     </div>
                     <div className="kills-identity">
                       <span className="kills-identity-name">{topDamageAttacker.character_name ?? "—"}</span>
-                      {topDamageAttacker.corporation_name && (
-                        <span className="kills-identity-corp">{topDamageAttacker.corporation_name}</span>
+                      {topDamageAttacker.corporation_name && topDamageAttacker.corporation_id && (
+                        <span
+                          className="kills-identity-corp kills-system-clickable"
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectCorporation({ id: topDamageAttacker.corporation_id!, name: topDamageAttacker.corporation_name! });
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onSelectCorporation({ id: topDamageAttacker.corporation_id!, name: topDamageAttacker.corporation_name! });
+                            }
+                          }}
+                        >
+                          {topDamageAttacker.corporation_name}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -400,7 +549,9 @@ function KillDetailView({
               <div className="detail-panel">
                 <p className="eyebrow">Item(s)</p>
                 <div className="kill-item-groups">
-                  {itemsByGroup.map(({ group, items }) => (
+                  {itemsByGroup.map(({ group, items }) => {
+                    const subtotal = groupSubtotal(items);
+                    return (
                     <div key={group} className="kill-item-group">
                       <p className="kill-item-group-label">{SLOT_GROUP_LABELS[group]}</p>
                       <div className="kill-item-list">
@@ -411,7 +562,20 @@ function KillDetailView({
                               src={`https://images.evetech.net/types/${item.item_type_id}/icon?size=32`}
                               alt=""
                             />
-                            <span className="kill-item-name">{item.item_type_name}</span>
+                            <span
+                              className="kill-item-name kills-system-clickable"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => onSelectItem({ id: item.item_type_id, name: item.item_type_name })}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  onSelectItem({ id: item.item_type_id, name: item.item_type_name });
+                                }
+                              }}
+                            >
+                              {item.item_type_name}
+                            </span>
                             <span className="kill-item-qty">
                               {item.quantity_destroyed > 0 && (
                                 <span className="kill-item-qty-destroyed">×{item.quantity_destroyed}</span>
@@ -423,8 +587,13 @@ function KillDetailView({
                           </div>
                         ))}
                       </div>
+                      <div className="kill-item-group-subtotal">
+                        <span className="kill-stats-destroyed">{formatIsk(subtotal.destroyed)}</span>
+                        <span className="kill-stats-dropped">{formatIsk(subtotal.dropped)}</span>
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -463,24 +632,41 @@ function KillDetailView({
                           />
                         )}
                       </div>
-                      <span
-                        className={`kill-attacker-name ${attacker.character_id ? "detail-name-link" : ""}`}
-                        {...(attacker.character_id
-                          ? {
-                              role: "button" as const,
-                              tabIndex: 0,
-                              onClick: () => onSelectCharacter(attacker.character_id!),
-                              onKeyDown: (e: KeyboardEvent) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  onSelectCharacter(attacker.character_id!);
-                                }
-                              },
-                            }
-                          : {})}
-                      >
-                        {attacker.character_name ?? "Unknown"}
-                        {attacker.corporation_name ? ` (${attacker.corporation_name})` : ""}
+                      <span className="kill-attacker-name-cell">
+                        <span
+                          className={`kill-attacker-name ${attacker.character_id ? "detail-name-link" : ""}`}
+                          {...(attacker.character_id
+                            ? {
+                                role: "button" as const,
+                                tabIndex: 0,
+                                onClick: () => onSelectCharacter(attacker.character_id!),
+                                onKeyDown: (e: KeyboardEvent) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    onSelectCharacter(attacker.character_id!);
+                                  }
+                                },
+                              }
+                            : {})}
+                        >
+                          {attacker.character_name ?? "Unknown"}
+                        </span>
+                        {attacker.corporation_name && attacker.corporation_id && (
+                          <span
+                            className="kill-attacker-corp kills-system-clickable"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => onSelectCorporation({ id: attacker.corporation_id!, name: attacker.corporation_name! })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                onSelectCorporation({ id: attacker.corporation_id!, name: attacker.corporation_name! });
+                              }
+                            }}
+                          >
+                            ({attacker.corporation_name})
+                          </span>
+                        )}
                       </span>
                       <span className="kill-attacker-ship">{attacker.ship_type_name ?? ""}</span>
                       <span className="kill-attacker-badges">

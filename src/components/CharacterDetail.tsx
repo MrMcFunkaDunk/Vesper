@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Search, RefreshCw } from "lucide-react";
 import {
   getCharacterOverview,
@@ -14,6 +14,7 @@ import {
   getCharacterAssets,
   getCharacterMarketOrders,
   getCharacterContracts,
+  getContractItems,
   getCharacterIndustryJobs,
   getCharacterTransactions,
   getCharacterWalletJournal,
@@ -21,6 +22,12 @@ import {
   getMailDetail,
   getCharacterNotifications,
   getCharacterPlanets,
+  getCharacterAttributes,
+  getCharacterResearch,
+  getCharacterFwStats,
+  type CharacterAttributes,
+  type CharacterResearch,
+  type CharacterFwStats,
   type CharacterOverview,
   type CharacterSkills,
   type AllSkillEntry,
@@ -34,6 +41,7 @@ import {
   type CharacterAssets,
   type CharacterMarketOrders,
   type CharacterContracts,
+  type ContractItemEntry,
   type CharacterIndustryJobs,
   type CharacterTransactions,
   type CharacterWalletJournal,
@@ -44,6 +52,8 @@ import {
   type SessionCharacter,
 } from "../lib/eve";
 import { getCharacterKills, getCharacterLosses, type KillEntry } from "../lib/kills";
+import InsuranceCalculator from "./InsuranceCalculator";
+import SkillPlanTab from "./SkillPlanTab";
 import {
   formatIsk,
   formatSp,
@@ -52,12 +62,17 @@ import {
   formatEveDateTime,
   formatQueueSummary,
   formatPlex,
+  typeIconUrl,
+  standingClass,
 } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { BASE_ATTRIBUTE_VALUE } from "../lib/skillTraining";
 import { getCachedOverview, setCachedOverview, isTransientServerError } from "../lib/overviewCache";
 import KillFeedTable from "./KillFeedTable";
 import CloneStateBadge from "./CloneStateBadge";
 import type { SystemSummary } from "./SystemKillboard";
+import type { CorporationSummary } from "./CorporationKillboard";
+import type { AllianceSummary } from "./AllianceKillboard";
 
 interface CharacterDetailProps {
   character: SessionCharacter;
@@ -67,6 +82,8 @@ interface CharacterDetailProps {
   onSelectKill: (killmailId: number) => void;
   onSelectCharacter: (characterId: number) => void;
   onSelectSystem: (system: SystemSummary) => void;
+  onSelectCorporation: (corporation: CorporationSummary) => void;
+  onSelectAlliance: (alliance: AllianceSummary) => void;
   /** Re-runs EVE SSO login so this character can grant any scopes it's missing (e.g. a tab added after it last logged in). */
   onReconnect: () => Promise<void>;
 }
@@ -74,6 +91,7 @@ interface CharacterDetailProps {
 type SkillFilter = "all" | "trained" | "untrained" | "injected" | "1" | "2" | "3" | "4" | "5";
 
 type CharacterTab =
+  | "plan"
   | "skills"
   | "queue"
   | "clones"
@@ -85,16 +103,20 @@ type CharacterTab =
   | "assets"
   | "marketOrders"
   | "contracts"
+  | "insurance"
   | "industryJobs"
   | "wallet"
   | "transactions"
   | "mail"
   | "notifications"
   | "killLog"
-  | "planetary";
+  | "planetary"
+  | "research"
+  | "factionWarfare";
 
 const TABS: { id: CharacterTab; label: string }[] = [
   { id: "queue", label: "Queue" },
+  { id: "plan", label: "Plan" },
   { id: "skills", label: "Skills" },
   { id: "clones", label: "Clones" },
   { id: "employment", label: "Employment" },
@@ -105,6 +127,7 @@ const TABS: { id: CharacterTab; label: string }[] = [
   { id: "assets", label: "Assets" },
   { id: "marketOrders", label: "Market Orders" },
   { id: "contracts", label: "Contracts" },
+  { id: "insurance", label: "Insurance" },
   { id: "industryJobs", label: "Industry Jobs" },
   { id: "wallet", label: "Wallet" },
   { id: "transactions", label: "Transactions" },
@@ -112,6 +135,8 @@ const TABS: { id: CharacterTab; label: string }[] = [
   { id: "notifications", label: "Notifications" },
   { id: "killLog", label: "Kill Log" },
   { id: "planetary", label: "Planetary" },
+  { id: "research", label: "Research" },
+  { id: "factionWarfare", label: "Faction Warfare" },
 ];
 
 function SkillLevelPips({ level }: { level: number }) {
@@ -122,12 +147,6 @@ function SkillLevelPips({ level }: { level: number }) {
       ))}
     </span>
   );
-}
-
-function standingClass(value: number): string {
-  if (value > 0) return "standing-text-positive";
-  if (value < 0) return "standing-text-negative";
-  return "standing-text-neutral";
 }
 
 /** EveLens' 5-bucket standing classification (Terrible/Bad/Neutral/Good/Excellent). */
@@ -153,7 +172,7 @@ function StandingBar({ value }: { value: number }) {
 }
 
 function fmtDate(value: string | null): string {
-  return value ? new Date(value).toLocaleString() : "—";
+  return value ? new Date(value).toLocaleString([], { timeZone: "UTC" }) : "—";
 }
 
 function contractStatusClass(status: string): string {
@@ -164,7 +183,13 @@ function contractStatusClass(status: string): string {
 
 /** Compact "16 Aug 14:32" style used for skill queue end/start times, matching EveLens' queue display. */
 function fmtShortDateTime(value: string): string {
-  return new Date(value).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(value).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
 }
 
 /** How long this specific queue step (this level, not the whole skill) actually takes to train. */
@@ -184,6 +209,17 @@ function fmtCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+/** Bonus remaps (new-player grants) bypass the normal once-a-year cooldown entirely - checked first regardless of accrued_remap_cooldown_date. */
+function remapAvailabilityText(attributes: CharacterAttributes): string {
+  if (attributes.bonus_remaps > 0) {
+    return `${attributes.bonus_remaps} bonus remap${attributes.bonus_remaps === 1 ? "" : "s"} available`;
+  }
+  if (!attributes.accrued_remap_cooldown_date) return "Remap available";
+  const cooldownEnds = new Date(attributes.accrued_remap_cooldown_date).getTime();
+  if (cooldownEnds <= Date.now()) return "Remap available";
+  return `Next remap: ${formatTimeRemaining(attributes.accrued_remap_cooldown_date)}`;
+}
+
 function CharacterDetail({
   character,
   characters,
@@ -192,9 +228,12 @@ function CharacterDetail({
   onSelectKill,
   onSelectCharacter,
   onSelectSystem,
+  onSelectCorporation,
+  onSelectAlliance,
   onReconnect,
 }: CharacterDetailProps) {
   const [overview, setOverview] = useState<CharacterOverview | null>(null);
+  const [attributes, setAttributes] = useState<CharacterAttributes | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [tab, setTab] = useState<CharacterTab>("queue");
   const [skills, setSkills] = useState<CharacterSkills | null>(null);
@@ -215,6 +254,8 @@ function CharacterDetail({
   const [expandedAssetGroups, setExpandedAssetGroups] = useState<Set<string>>(new Set());
   const [marketOrders, setMarketOrders] = useState<CharacterMarketOrders | null>(null);
   const [contracts, setContracts] = useState<CharacterContracts | null>(null);
+  const [expandedContractId, setExpandedContractId] = useState<number | null>(null);
+  const [contractItems, setContractItems] = useState<Record<number, ContractItemEntry[]>>({});
   const [industryJobs, setIndustryJobs] = useState<CharacterIndustryJobs | null>(null);
   const [transactions, setTransactions] = useState<CharacterTransactions | null>(null);
   const [walletJournal, setWalletJournal] = useState<CharacterWalletJournal | null>(null);
@@ -224,6 +265,8 @@ function CharacterDetail({
   const [mailDetailLoading, setMailDetailLoading] = useState(false);
   const [notifications, setNotifications] = useState<CharacterNotifications | null>(null);
   const [planets, setPlanets] = useState<CharacterPlanets | null>(null);
+  const [research, setResearch] = useState<CharacterResearch | null>(null);
+  const [fwStats, setFwStats] = useState<CharacterFwStats | null>(null);
   const [killLogTab, setKillLogTab] = useState<"kills" | "losses">("kills");
   const [kills, setKills] = useState<KillEntry[] | null>(null);
   const [losses, setLosses] = useState<KillEntry[] | null>(null);
@@ -234,6 +277,7 @@ function CharacterDetail({
     // if Tranquility is down right now, this is the only data there is to
     // show until it comes back.
     setOverview(getCachedOverview(character.id));
+    setAttributes(null);
     setSkills(null);
     setSkillQuery("");
     setSkillQueue(null);
@@ -247,6 +291,8 @@ function CharacterDetail({
     setAssetQuery("");
     setMarketOrders(null);
     setContracts(null);
+    setExpandedContractId(null);
+    setContractItems({});
     setIndustryJobs(null);
     setTransactions(null);
     setWalletJournal(null);
@@ -255,6 +301,8 @@ function CharacterDetail({
     setMailDetail(null);
     setNotifications(null);
     setPlanets(null);
+    setResearch(null);
+    setFwStats(null);
     setKillLogTab("kills");
     setKills(null);
     setLosses(null);
@@ -273,6 +321,15 @@ function CharacterDetail({
           reportError(`Failed to load overview for ${character.name}: ${String(err)}`);
         }
       });
+    // Loaded eagerly (not lazy-per-tab like the rest below) since it renders
+    // in the always-visible header, not a tab body.
+    getCharacterAttributes(character.id)
+      .then(setAttributes)
+      .catch((err) => {
+        if (!isTransientServerError(String(err))) {
+          reportError(`Failed to load attributes for ${character.name}: ${String(err)}`);
+        }
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [character.id]);
 
@@ -285,6 +342,17 @@ function CharacterDetail({
       getCharacterSkillQueue(id).then(setSkillQueue).catch((err) => reportError(`Failed to load skill queue: ${String(err)}`));
     } else if (tab === "skills" && !skills) {
       getCharacterSkills(id).then(setSkills).catch((err) => reportError(`Failed to load skills: ${String(err)}`));
+      if (!allSkills) {
+        getAllSkills()
+          .then(setAllSkills)
+          .catch((err) => reportError(`Failed to load full skill list: ${String(err)}`));
+      }
+    } else if (tab === "plan") {
+      // The planner needs both the full catalog (with prerequisites/attributes,
+      // for anything not yet trained) and the character's own trained levels
+      // (to know what's already satisfied) - same two fetches the Skills tab
+      // above triggers, just reached from a different tab.
+      if (!skills) getCharacterSkills(id).then(setSkills).catch((err) => reportError(`Failed to load skills: ${String(err)}`));
       if (!allSkills) {
         getAllSkills()
           .then(setAllSkills)
@@ -334,6 +402,10 @@ function CharacterDetail({
       getCharacterPlanets(id).then(setPlanets).catch((err) => reportError(`Failed to load planets: ${String(err)}`));
     } else if (tab === "killLog" && !kills) {
       getCharacterKills(id).then(setKills).catch((err) => reportError(`Failed to load kills: ${String(err)}`));
+    } else if (tab === "research" && !research) {
+      getCharacterResearch(id).then(setResearch).catch((err) => reportError(`Failed to load research points: ${String(err)}`));
+    } else if (tab === "factionWarfare" && !fwStats) {
+      getCharacterFwStats(id).then(setFwStats).catch((err) => reportError(`Failed to load faction warfare stats: ${String(err)}`));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, character.id]);
@@ -410,6 +482,12 @@ function CharacterDetail({
           if (killLogTab === "losses") getCharacterLosses(id).then(setLosses).catch(() => {});
           else getCharacterKills(id).then(setKills).catch(() => {});
           break;
+        case "research":
+          getCharacterResearch(id).then(setResearch).catch(() => {});
+          break;
+        case "factionWarfare":
+          getCharacterFwStats(id).then(setFwStats).catch(() => {});
+          break;
       }
     }, 120000);
     return () => clearInterval(interval);
@@ -444,6 +522,12 @@ function CharacterDetail({
       setReconnecting(false);
     }
   }
+
+  const trainedLevelBySkillId = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const s of skills?.skills ?? []) map.set(s.skill_id, s.trained_level);
+    return map;
+  }, [skills]);
 
   const mergedSkills = useMemo(() => {
     if (!allSkills) return null;
@@ -548,6 +632,17 @@ function CharacterDetail({
 
   function renderTabContent() {
     switch (tab) {
+      case "plan":
+        return (
+          <SkillPlanTab
+            characterId={character.id}
+            allSkills={allSkills}
+            trainedLevelBySkillId={trainedLevelBySkillId}
+            attributes={attributes}
+            currentTotalSp={overview?.total_sp ?? null}
+          />
+        );
+
       case "queue":
         return !skillQueue ? (
           <p className="detail-empty">Loading skill queue...</p>
@@ -746,7 +841,9 @@ function CharacterDetail({
               <div className="employment-timeline-line" />
               {timeline.map((entry, index) => {
                 const isCurrent = index === timeline.length - 1;
-                const endLabel = isCurrent ? "Present" : new Date(timeline[index + 1].start_date).toLocaleDateString();
+                const endLabel = isCurrent
+                  ? "Present"
+                  : new Date(timeline[index + 1].start_date).toLocaleDateString([], { timeZone: "UTC" });
                 return (
                   <div key={`${entry.corporation_id}-${entry.start_date}`} className="employment-node">
                     <img
@@ -757,7 +854,7 @@ function CharacterDetail({
                     <span className={`employment-node-dot${isCurrent ? " employment-node-dot-current" : ""}`} />
                     <span className="employment-node-corp">{entry.corporation_name}</span>
                     <span className="employment-node-dates">
-                      {new Date(entry.start_date).toLocaleDateString()} – {endLabel}
+                      {new Date(entry.start_date).toLocaleDateString([], { timeZone: "UTC" })} – {endLabel}
                     </span>
                   </div>
                 );
@@ -914,7 +1011,7 @@ function CharacterDetail({
                 <div className="medal-info">
                   <span className="medal-title">{m.title}</span>
                   <span className="medal-meta">
-                    {m.corporation_name} · {new Date(m.date).toLocaleDateString()}
+                    {m.corporation_name} · {new Date(m.date).toLocaleDateString([], { timeZone: "UTC" })}
                   </span>
                   <span className="medal-reason">{m.reason || m.description}</span>
                 </div>
@@ -1036,13 +1133,11 @@ function CharacterDetail({
                               <tbody>
                                 {groupAssets.map((a) => (
                                   <tr key={a.item_id}>
-                                    <td className="asset-item-cell">
-                                      <img
-                                        className="asset-item-icon"
-                                        src={`https://images.evetech.net/types/${a.type_id}/icon?size=32`}
-                                        alt=""
-                                      />
-                                      {a.type_name}
+                                    <td>
+                                      <span className="asset-item-cell">
+                                        <img className="asset-item-icon" src={typeIconUrl(a.type_id, 32, a.type_name)} alt="" />
+                                        {a.type_name}
+                                      </span>
                                     </td>
                                     <td className="data-table-numeric">{fmtCount(a.quantity)}</td>
                                     <td>{a.location_name}</td>
@@ -1092,7 +1187,12 @@ function CharacterDetail({
               <tbody>
                 {marketOrders.entries.map((o) => (
                   <tr key={o.order_id}>
-                    <td>{o.type_name}</td>
+                    <td>
+                      <span className="asset-item-cell">
+                        <img className="asset-item-icon" src={typeIconUrl(o.type_id, 32, o.type_name)} alt="" />
+                        {o.type_name}
+                      </span>
+                    </td>
                     <td>
                       <span className={`data-table-tag ${o.is_buy_order ? "" : "data-table-tag-danger"}`}>
                         {o.is_buy_order ? "Buy" : "Sell"}
@@ -1114,7 +1214,21 @@ function CharacterDetail({
           </div>
         );
 
-      case "contracts":
+      case "contracts": {
+        const canExpand = (type: string) => type === "item_exchange" || type === "auction";
+        const toggleContract = (contractId: number, type: string) => {
+          if (!canExpand(type)) return;
+          if (expandedContractId === contractId) {
+            setExpandedContractId(null);
+            return;
+          }
+          setExpandedContractId(contractId);
+          if (!contractItems[contractId]) {
+            getContractItems(character.id, contractId)
+              .then((items) => setContractItems((prev) => ({ ...prev, [contractId]: items })))
+              .catch((err) => reportError(`Failed to load contract items: ${String(err)}`));
+          }
+        };
         return !contracts ? (
           <p className="detail-empty">Loading contracts...</p>
         ) : contracts.needs_reauth ? (
@@ -1138,23 +1252,54 @@ function CharacterDetail({
               </thead>
               <tbody>
                 {contracts.entries.map((c) => (
-                  <tr key={c.contract_id}>
-                    <td>{c.title || "—"}</td>
-                    <td>{c.contract_type}</td>
-                    <td>
-                      <span className={contractStatusClass(c.status)}>{c.status.replace(/_/g, " ")}</span>
-                    </td>
-                    <td>{c.issuer_name}</td>
-                    <td>{c.assignee_name ?? "—"}</td>
-                    <td className="data-table-numeric">{formatIsk(c.price ?? c.reward ?? 0)}</td>
-                    <td>{fmtDate(c.date_issued)}</td>
-                    <td>{fmtDate(c.date_expired)}</td>
-                  </tr>
+                  <Fragment key={c.contract_id}>
+                    <tr
+                      className={canExpand(c.contract_type) ? "contract-row-expandable" : undefined}
+                      onClick={() => toggleContract(c.contract_id, c.contract_type)}
+                    >
+                      <td>{c.title || "—"}</td>
+                      <td>{c.contract_type}</td>
+                      <td>
+                        <span className={contractStatusClass(c.status)}>{c.status.replace(/_/g, " ")}</span>
+                      </td>
+                      <td>{c.issuer_name}</td>
+                      <td>{c.assignee_name ?? "—"}</td>
+                      <td className="data-table-numeric">{formatIsk(c.price ?? c.reward ?? 0)}</td>
+                      <td>{fmtDate(c.date_issued)}</td>
+                      <td>{fmtDate(c.date_expired)}</td>
+                    </tr>
+                    {expandedContractId === c.contract_id && (
+                      <tr className="contract-items-row">
+                        <td colSpan={8}>
+                          {!contractItems[c.contract_id] ? (
+                            <p className="detail-empty">Loading items...</p>
+                          ) : contractItems[c.contract_id].length === 0 ? (
+                            <p className="detail-empty">No items listed for this contract.</p>
+                          ) : (
+                            <ul className="contract-items-list">
+                              {contractItems[c.contract_id].map((item, i) => (
+                                <li key={i}>
+                                  <img className="asset-item-icon" src={typeIconUrl(item.type_id, 32, item.type_name)} alt="" />
+                                  {item.type_name}
+                                  {item.quantity > 1 ? ` x${item.quantity.toLocaleString()}` : ""}
+                                  {!item.is_included ? " (requested)" : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         );
+      }
+
+      case "insurance":
+        return <InsuranceCalculator />;
 
       case "industryJobs":
         return !industryJobs ? (
@@ -1286,7 +1431,12 @@ function CharacterDetail({
                         {t.is_buy ? "Buy" : "Sell"}
                       </span>
                     </td>
-                    <td>{t.type_name}</td>
+                    <td>
+                      <span className="asset-item-cell">
+                        <img className="asset-item-icon" src={typeIconUrl(t.type_id, 32, t.type_name)} alt="" />
+                        {t.type_name}
+                      </span>
+                    </td>
                     <td className="data-table-numeric">{fmtCount(t.quantity)}</td>
                     <td className="data-table-numeric">{formatIsk(t.unit_price)}</td>
                     <td className={`data-table-numeric ${t.is_buy ? "wallet-amount-negative" : "wallet-amount-positive"}`}>
@@ -1409,6 +1559,8 @@ function CharacterDetail({
                 onSelectKill={onSelectKill}
                 onSelectCharacter={onSelectCharacter}
                 onSelectSystem={onSelectSystem}
+                onSelectCorporation={onSelectCorporation}
+                onSelectAlliance={onSelectAlliance}
               />
             )}
           </>
@@ -1448,6 +1600,93 @@ function CharacterDetail({
               </tbody>
             </table>
           </div>
+        );
+
+      case "research":
+        return !research ? (
+          <p className="detail-empty">Loading research points...</p>
+        ) : research.needs_reauth ? (
+          reauthNotice("research points")
+        ) : research.entries.length === 0 ? (
+          <p className="detail-empty">No R&D agents assigned.</p>
+        ) : (
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Field</th>
+                  <th className="data-table-numeric">Points/Day</th>
+                  <th className="data-table-numeric">Current Points</th>
+                  <th>Started</th>
+                </tr>
+              </thead>
+              <tbody>
+                {research.entries.map((r) => (
+                  <tr key={r.agent_id}>
+                    <td>{r.agent_name}</td>
+                    <td>{r.skill_name}</td>
+                    <td className="data-table-numeric">{r.points_per_day.toFixed(1)}</td>
+                    <td className="data-table-numeric">{r.current_points.toFixed(1)}</td>
+                    <td>{fmtDate(r.started_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case "factionWarfare":
+        return !fwStats ? (
+          <p className="detail-empty">Loading faction warfare stats...</p>
+        ) : fwStats.needs_reauth ? (
+          reauthNotice("faction warfare stats")
+        ) : !fwStats.enlisted ? (
+          <p className="detail-empty">Not enlisted in Faction Warfare.</p>
+        ) : (
+          <>
+            <div className="detail-panel-header">
+              <p className="eyebrow">
+                Fighting for {fwStats.faction_name ?? "Unknown Faction"} · Enlisted {fmtDate(fwStats.enlisted_on)}
+              </p>
+            </div>
+            <div className="wallet-balance-row">
+              <div className="wallet-balance-card">
+                <p className="eyebrow">Current Rank</p>
+                <h2>{fwStats.current_rank ?? "—"}</h2>
+              </div>
+              <div className="wallet-balance-card">
+                <p className="eyebrow">Highest Rank</p>
+                <h2>{fwStats.highest_rank ?? "—"}</h2>
+              </div>
+            </div>
+            <div className="data-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th className="data-table-numeric">Yesterday</th>
+                    <th className="data-table-numeric">Last Week</th>
+                    <th className="data-table-numeric">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Kills</td>
+                    <td className="data-table-numeric">{fmtCount(fwStats.kills.yesterday)}</td>
+                    <td className="data-table-numeric">{fmtCount(fwStats.kills.last_week)}</td>
+                    <td className="data-table-numeric">{fmtCount(fwStats.kills.total)}</td>
+                  </tr>
+                  <tr>
+                    <td>Victory Points</td>
+                    <td className="data-table-numeric">{fmtCount(fwStats.victory_points.yesterday)}</td>
+                    <td className="data-table-numeric">{fmtCount(fwStats.victory_points.last_week)}</td>
+                    <td className="data-table-numeric">{fmtCount(fwStats.victory_points.total)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
         );
 
       default:
@@ -1530,6 +1769,28 @@ function CharacterDetail({
                     <span className="detail-training-queue"> · {formatQueueSummary(overview.queue_length, overview.queue_ends_at)}</span>
                   )}
                 </span>
+              )}
+              {attributes && !attributes.needs_reauth && (
+                <div className="attribute-row">
+                  {(
+                    [
+                      ["Int", attributes.intelligence],
+                      ["Per", attributes.perception],
+                      ["Cha", attributes.charisma],
+                      ["Wil", attributes.willpower],
+                      ["Mem", attributes.memory],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <span
+                      key={label}
+                      className="attribute-pill"
+                      title={`${value} = ${BASE_ATTRIBUTE_VALUE} base + ${value - BASE_ATTRIBUTE_VALUE} remap`}
+                    >
+                      {label} <strong>{value}</strong>
+                    </span>
+                  ))}
+                  <span className="attribute-remap-note">{remapAvailabilityText(attributes)}</span>
+                </div>
               )}
             </div>
             <button

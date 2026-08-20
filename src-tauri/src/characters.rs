@@ -39,7 +39,14 @@ fn save_index(app: &tauri::AppHandle, index: &CharacterIndex) -> Result<(), Stri
     let path = index_path(app)?;
     let contents = serde_json::to_string_pretty(index)
         .map_err(|e| format!("could not serialize character list: {e}"))?;
-    std::fs::write(&path, contents).map_err(|e| format!("could not write character list: {e}"))
+    // Written to a temp file and renamed into place rather than written
+    // directly, so a reader (this file is re-read on every app launch) can
+    // never observe a half-written file - a rename is atomic, a direct write
+    // isn't. Without this, a crash or a second app instance reading mid-write
+    // could see truncated JSON, fail to parse, and blank the whole session.
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, contents).map_err(|e| format!("could not write character list: {e}"))?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| format!("could not save character list: {e}"))
 }
 
 pub fn upsert_character(app: &tauri::AppHandle, record: CharacterRecord) -> Result<(), String> {

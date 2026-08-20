@@ -6,21 +6,44 @@ import Dashboard from "./components/Dashboard";
 import CharacterDetail from "./components/CharacterDetail";
 import KillsIntel from "./components/KillsIntel";
 import MapPage from "./components/MapPage";
+import MailPage from "./components/MailPage";
+import WalletMarketPage from "./components/WalletMarketPage";
+import PlanetaryIndustry from "./components/PlanetaryIndustry";
+import IntelCheck from "./components/IntelCheck";
+import WarsPage from "./components/WarsPage";
+import SettingsPage from "./components/SettingsPage";
+import CalendarPage from "./components/CalendarPage";
+import FittingsPage from "./components/FittingsPage";
+import PathWormholeFinderPage from "./components/PathWormholeFinderPage";
+import IndustryPage from "./components/IndustryPage";
+import ProximityFlashOverlay from "./components/ProximityFlashOverlay";
 import type { SystemSummary } from "./components/SystemKillboard";
+import type { CorporationSummary } from "./components/CorporationKillboard";
+import type { AllianceSummary } from "./components/AllianceKillboard";
+import type { MarketItemRef } from "./components/MarketBrowser";
 import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
 import { DASHBOARD_SCOPES } from "./lib/scopes";
 import { useErrorReporter } from "./hooks/useErrorReporter";
+import { CharacterLocationProvider } from "./hooks/useCharacterLocation";
+import { ChainAutoMappingEffect } from "./hooks/useChainAutoMapping";
+import { SkillQueueWatchEffect } from "./hooks/useSkillQueueWatch";
+import { useDefaultLandingTab } from "./hooks/useDefaultLandingTab";
+import { useReduceMotion } from "./hooks/useReduceMotion";
 import "./App.css";
 
 function App() {
-  const [activeId, setActiveId] = useState(NAV_ITEMS[0].id);
+  const [activeId, setActiveId] = useDefaultLandingTab(NAV_ITEMS[0].id);
+  useReduceMotion();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailCharacterId, setDetailCharacterId] = useState<number | null>(null);
   const [pendingKillmailId, setPendingKillmailId] = useState<number | null>(null);
   const [pendingSystem, setPendingSystem] = useState<SystemSummary | null>(null);
   const [pendingCharacterId, setPendingCharacterId] = useState<number | null>(null);
+  const [pendingCorporation, setPendingCorporation] = useState<CorporationSummary | null>(null);
+  const [pendingAlliance, setPendingAlliance] = useState<AllianceSummary | null>(null);
+  const [pendingMarketItem, setPendingMarketItem] = useState<MarketItemRef | null>(null);
   const reportError = useErrorReporter();
 
   useEffect(() => {
@@ -34,7 +57,12 @@ function App() {
       setSession(next);
     } catch (err) {
       reportError(String(err));
-      setSession({ characters: [], active_character_id: null });
+      // A transient failure here (disk hiccup, momentary lock) shouldn't
+      // blank out a session that already loaded successfully - that would
+      // force every character through EVE SSO again just to reappear in the
+      // switcher, even though their stored tokens were never actually lost.
+      // Only fall back to an empty session if we've never loaded one at all.
+      setSession((prev) => prev ?? { characters: [], active_character_id: null });
     } finally {
       setLoading(false);
     }
@@ -42,7 +70,15 @@ function App() {
 
   const active = NAV_ITEMS.find((item) => item.id === activeId) ?? NAV_ITEMS[0];
 
-  if (loading) {
+  // Only the very first load (nothing fetched yet) blanks the whole app -
+  // a character switch also flips `loading` briefly, but bouncing the
+  // entire shell (sidebar, topbar, overlay) out and back in for that is
+  // unnecessarily disruptive: it unmounts ProximityFlashOverlay mid-session,
+  // which was causing a spurious red flash on every character click (its
+  // effect sees whatever pulseToken already exists on remount and treats it
+  // as a brand-new alert). Session is already loaded by then, so there's
+  // nothing meaningful for a full loading screen to protect against.
+  if (loading && session === null) {
     return <div className="app-loading">Loading...</div>;
   }
 
@@ -82,8 +118,27 @@ function App() {
     setActiveId("kills");
   }
 
+  function handleOpenCorporationKillboard(corporation: CorporationSummary) {
+    setPendingCorporation(corporation);
+    setActiveId("kills");
+  }
+
+  function handleOpenAllianceKillboard(alliance: AllianceSummary) {
+    setPendingAlliance(alliance);
+    setActiveId("kills");
+  }
+
   function handleGoToMap() {
     setActiveId("map");
+  }
+
+  function handleGoToWars() {
+    setActiveId("wars");
+  }
+
+  function handleOpenMarketItem(item: MarketItemRef) {
+    setPendingMarketItem(item);
+    setActiveId("wallet");
   }
 
   async function handleAdd() {
@@ -99,40 +154,86 @@ function App() {
   const detailCharacter = session.characters.find((c) => c.id === detailCharacterId);
 
   return (
-    <div className="shell">
-      <Sidebar activeId={activeId} onSelect={handleSelectNav} />
-      <TopBar title={active.label} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
-      {activeId === "dashboard" ? (
-        detailCharacter ? (
-          <CharacterDetail
-            character={detailCharacter}
-            characters={session.characters}
-            onSwitchCharacter={handleOpenDetail}
-            onBack={() => setDetailCharacterId(null)}
-            onSelectKill={handleOpenKillmail}
-            onSelectCharacter={handleOpenCharacterKillboard}
-            onSelectSystem={handleOpenSystemKills}
-            onReconnect={handleAdd}
+    <CharacterLocationProvider characterId={session.active_character_id}>
+      <ChainAutoMappingEffect
+        characterName={session.characters.find((c) => c.id === session.active_character_id)?.name ?? null}
+      />
+      <SkillQueueWatchEffect characters={session.characters} />
+      <div className="shell">
+        <ProximityFlashOverlay />
+        <Sidebar activeId={activeId} onSelect={handleSelectNav} />
+        <TopBar title={active.label} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
+        {activeId === "dashboard" ? (
+          detailCharacter ? (
+            <CharacterDetail
+              character={detailCharacter}
+              characters={session.characters}
+              onSwitchCharacter={handleOpenDetail}
+              onBack={() => setDetailCharacterId(null)}
+              onSelectKill={handleOpenKillmail}
+              onSelectCharacter={handleOpenCharacterKillboard}
+              onSelectSystem={handleOpenSystemKills}
+              onSelectCorporation={handleOpenCorporationKillboard}
+              onSelectAlliance={handleOpenAllianceKillboard}
+              onReconnect={handleAdd}
+            />
+          ) : (
+            <Dashboard session={session} onOpenDetail={handleOpenDetail} onAdd={handleAdd} />
+          )
+        ) : activeId === "kills" ? (
+          <KillsIntel
+            initialKillmailId={pendingKillmailId}
+            onConsumeInitialKillmail={() => setPendingKillmailId(null)}
+            initialSystem={pendingSystem}
+            onConsumeInitialSystem={() => setPendingSystem(null)}
+            initialCharacterId={pendingCharacterId}
+            onConsumeInitialCharacter={() => setPendingCharacterId(null)}
+            initialCorporation={pendingCorporation}
+            onConsumeInitialCorporation={() => setPendingCorporation(null)}
+            initialAlliance={pendingAlliance}
+            onConsumeInitialAlliance={() => setPendingAlliance(null)}
+            onGoToMap={handleGoToMap}
+            onGoToWars={handleGoToWars}
+            onSelectItem={handleOpenMarketItem}
           />
+        ) : activeId === "map" ? (
+          <MapPage onSelectKill={handleOpenKillmail} onSelectSystem={handleOpenSystemKills} characters={session.characters} />
+        ) : activeId === "mail" ? (
+          <MailPage characters={session.characters} initialCharacterId={session.active_character_id} />
+        ) : activeId === "wallet" ? (
+          <WalletMarketPage
+            characters={session.characters}
+            initialCharacterId={session.active_character_id}
+            initialMarketItem={pendingMarketItem}
+            onConsumeInitialMarketItem={() => setPendingMarketItem(null)}
+          />
+        ) : activeId === "intel-check" ? (
+          <IntelCheck onSelectCharacter={handleOpenCharacterKillboard} />
+        ) : activeId === "planetary" ? (
+          <PlanetaryIndustry />
+        ) : activeId === "wars" ? (
+          <main className="main">
+            <WarsPage characters={session.characters} />
+          </main>
+        ) : activeId === "settings" ? (
+          <SettingsPage session={session} onAdd={handleAdd} onLogout={handleLogout} />
+        ) : activeId === "calendar" ? (
+          <CalendarPage characters={session.characters} initialCharacterId={session.active_character_id} />
+        ) : activeId === "fittings-fleets" ? (
+          <FittingsPage characters={session.characters} />
+        ) : activeId === "path-wormhole-finder" ? (
+          <PathWormholeFinderPage
+            activeCharacterId={session.active_character_id}
+            activeCharacterName={session.characters.find((c) => c.id === session.active_character_id)?.name ?? null}
+            onSelectSystem={handleOpenSystemKills}
+          />
+        ) : activeId === "industry" ? (
+          <IndustryPage />
         ) : (
-          <Dashboard session={session} onOpenDetail={handleOpenDetail} onAdd={handleAdd} />
-        )
-      ) : activeId === "kills" ? (
-        <KillsIntel
-          initialKillmailId={pendingKillmailId}
-          onConsumeInitialKillmail={() => setPendingKillmailId(null)}
-          initialSystem={pendingSystem}
-          onConsumeInitialSystem={() => setPendingSystem(null)}
-          initialCharacterId={pendingCharacterId}
-          onConsumeInitialCharacter={() => setPendingCharacterId(null)}
-          onGoToMap={handleGoToMap}
-        />
-      ) : activeId === "map" ? (
-        <MapPage onSelectKill={handleOpenKillmail} onSelectSystem={handleOpenSystemKills} />
-      ) : (
-        <MainContent icon={active.icon} label={active.label} description={active.description} />
-      )}
-    </div>
+          <MainContent icon={active.icon} label={active.label} description={active.description} />
+        )}
+      </div>
+    </CharacterLocationProvider>
   );
 }
 

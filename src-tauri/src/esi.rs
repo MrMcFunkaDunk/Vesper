@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const ESI_BASE: &str = "https://esi.evetech.net/latest";
 
@@ -181,6 +181,60 @@ pub(crate) async fn public_get<T: DeserializeOwned>(client: &reqwest::Client, pa
     }
 }
 
+/// Same contract as `public_get`, but for public endpoints that paginate
+/// (e.g. `/markets/{region_id}/orders/`, which can run to a dozen+ pages for
+/// a busy hub region). Mirrors `authorized_get_paginated` minus the bearer
+/// token, since these endpoints need no scope.
+pub(crate) async fn public_get_paginated<T: DeserializeOwned>(client: &reqwest::Client, path: &str) -> Result<Vec<T>, String> {
+    async fn fetch_page<T: DeserializeOwned>(client: &reqwest::Client, path: &str, page: u32) -> Result<(Vec<T>, u32), String> {
+        let separator = if path.contains('?') { '&' } else { '?' };
+        let url = format!("{ESI_BASE}{path}{separator}page={page}");
+        let mut attempt = 0;
+        loop {
+            let response = match client.get(&url).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    if retry_delay(attempt).await {
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(format!("ESI request failed: {e}"));
+                }
+            };
+            if is_retryable_status(response.status()) && retry_delay(attempt).await {
+                attempt += 1;
+                continue;
+            }
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await.unwrap_or_default();
+                return Err(format!("ESI {status} on {path}: {text}"));
+            }
+            let total_pages = response
+                .headers()
+                .get("x-pages")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(1);
+            let items = response
+                .json::<Vec<T>>()
+                .await
+                .map_err(|e| format!("failed to parse ESI response from {path}: {e}"))?;
+            return Ok((items, total_pages));
+        }
+    }
+
+    let (mut all, total_pages) = fetch_page::<T>(client, path, 1).await?;
+    if total_pages > 1 {
+        let rest = futures::future::join_all((2..=total_pages).map(|p| fetch_page::<T>(client, path, p))).await;
+        for r in rest {
+            let (items, _) = r?;
+            all.extend(items);
+        }
+    }
+    Ok(all)
+}
+
 #[derive(Deserialize)]
 struct EsiStatus {
     players: i64,
@@ -205,16 +259,67 @@ pub async fn fetch_server_status(client: &reqwest::Client) -> ServerStatus {
     }
 }
 
+#[derive(Deserialize)]
+struct EsiCostIndexEntry {
+    activity: String,
+    cost_index: f64,
+}
+
+#[derive(Deserialize)]
+struct EsiIndustrySystem {
+    solar_system_id: i64,
+    cost_indices: Vec<EsiCostIndexEntry>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SystemCostIndices {
+    pub solar_system_id: i64,
+    /// Keyed by ESI's own activity strings ("manufacturing", "reaction",
+    /// "invention", "copying", "researching_material_efficiency",
+    /// "researching_time_efficiency", "reverse_engineering") - verified live
+    /// against ESI's own OpenAPI schema this session, not guessed.
+    pub indices: HashMap<String, f64>,
+}
+
+/// Public, no auth - but a genuinely large payload (every solar system with
+/// industry activity, thousands of rows) that ESI itself only refreshes
+/// hourly (x-cache-age: 3600 per its own OpenAPI spec), so this is cached
+/// in memory for the same hour rather than re-fetched per calculator use.
+static COST_INDEX_CACHE: LazyLock<Mutex<Option<(i64, Vec<SystemCostIndices>)>>> = LazyLock::new(|| Mutex::new(None));
+const COST_INDEX_CACHE_SECONDS: i64 = 3600;
+
+pub async fn fetch_industry_system_cost_indices(client: &reqwest::Client) -> Result<Vec<SystemCostIndices>, String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    if let Some((cached_at, cached)) = COST_INDEX_CACHE.lock().unwrap().clone() {
+        if now - cached_at < COST_INDEX_CACHE_SECONDS {
+            return Ok(cached);
+        }
+    }
+
+    let raw: Vec<EsiIndustrySystem> = public_get(client, "/industry/systems/").await?;
+    let result: Vec<SystemCostIndices> = raw
+        .into_iter()
+        .map(|s| SystemCostIndices {
+            solar_system_id: s.solar_system_id,
+            indices: s.cost_indices.into_iter().map(|c| (c.activity, c.cost_index)).collect(),
+        })
+        .collect();
+
+    *COST_INDEX_CACHE.lock().unwrap() = Some((now, result.clone()));
+    Ok(result)
+}
+
 /// Any failure to get a usable token (no stored entry, a failed refresh) is
 /// treated the same as a missing scope by callers: the fix is the same
 /// "sign in again" action, so it should produce the same needs_reauth
 /// result rather than a hard error with no actionable button.
-async fn get_access_token(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Option<String> {
+pub(crate) async fn get_access_token(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Option<String> {
     match auth::ensure_fresh_token(client, config, character_id).await {
         Ok(()) => auth::keychain::load_tokens(character_id).ok().flatten().map(|t| t.access_token),
         Err(_) => None,
     }
 }
+
 
 #[derive(Deserialize)]
 struct SkillsResponse {
@@ -371,9 +476,10 @@ pub(crate) async fn resolve_names(client: &reqwest::Client, ids: Vec<i64>) -> Ha
 }
 
 #[derive(Deserialize, Serialize, Clone)]
-struct StructureInfo {
-    name: String,
-    solar_system_id: i64,
+pub(crate) struct StructureInfo {
+    pub(crate) name: String,
+    pub(crate) solar_system_id: i64,
+    pub(crate) owner_id: i64,
 }
 
 /// A structure's name is only visible via ESI to a character with CURRENT
@@ -410,7 +516,7 @@ fn save_structure_cache_to_disk(cache: &HashMap<i64, StructureInfo>) {
 /// transient failure while the other succeeds.
 static STRUCTURE_INFO_CACHE: LazyLock<Mutex<HashMap<i64, StructureInfo>>> = LazyLock::new(|| Mutex::new(load_structure_cache_from_disk()));
 
-async fn fetch_structure_info(client: &reqwest::Client, access_token: &str, structure_id: i64) -> Option<StructureInfo> {
+pub(crate) async fn fetch_structure_info(client: &reqwest::Client, access_token: &str, structure_id: i64) -> Option<StructureInfo> {
     if let Some(info) = STRUCTURE_INFO_CACHE.lock().unwrap().get(&structure_id).cloned() {
         return Some(info);
     }
@@ -465,6 +571,24 @@ pub(crate) async fn resolve_names_with_structures(client: &reqwest::Client, acce
         }
     }
     names
+}
+
+/// Market orders are public data (no character scope needed to fetch them),
+/// but their location_id can be a player structure, which does need an
+/// authorized token to name - same requirement Assets/Contracts/etc already
+/// hit. Any currently connected character works here since this is just
+/// borrowing a valid token to look a structure up, not acting as that
+/// character; the caller doesn't need to be "the active" one.
+pub async fn resolve_market_locations(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+    location_ids: Vec<i64>,
+) -> HashMap<i64, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return HashMap::new();
+    };
+    resolve_names_with_structures(client, &access_token, location_ids).await
 }
 
 /// Shared shape for the two pieces of universal (never-changes-per-character)
@@ -548,11 +672,42 @@ fn detect_clone_state(skills: &[SkillItem], alpha_limits: &HashMap<i64, i64>) ->
 }
 
 const SKILL_RANK_ATTRIBUTE_ID: i64 = 275;
+const SKILL_PRIMARY_ATTRIBUTE_ID: i64 = 180;
+const SKILL_SECONDARY_ATTRIBUTE_ID: i64 = 181;
+/// The 5 real attributes, as referenced by a skill's primaryAttribute(180)/
+/// secondaryAttribute(181) dogma values - a *different* id space from the
+/// implant-bonus ids (175-179, see ATTRIBUTE_BONUS_IDS) even though both
+/// represent the same 5 attributes. Verified live against ESI (not guessed):
+/// /dogma/attributes/{164..168}/ display_name, cross-checked against
+/// Gunnery's (type 3300) real primary/secondary (167 Perception/168
+/// Willpower, rank 1) matching known game data.
+const SKILL_ATTRIBUTE_REF_IDS: [(i64, &str); 5] =
+    [(164, "Charisma"), (165, "Intelligence"), (166, "Memory"), (167, "Perception"), (168, "Willpower")];
+
+fn attribute_ref_name(value: f64) -> Option<String> {
+    SKILL_ATTRIBUTE_REF_IDS.iter().find(|(id, _)| *id == value as i64).map(|(_, name)| name.to_string())
+}
+
+/// (requiredSkillN, requiredSkillNLevel) dogma attribute id pairs, N=1..6 -
+/// verified live against ESI (not guessed): Caldari Battlecruiser (type
+/// 33096) carries 182=3327 (Spaceship Command) / 277=3 and 183=3334
+/// (Caldari Cruiser) / 278=3, matching its known real prerequisites
+/// (Spaceship Command III + Caldari Cruiser III). Slots 3-6 confirmed by
+/// their /dogma/attributes/{id}/ display names (requiredSkill3..6,
+/// requiredSkill3..6Level) - the id sequence isn't linear (182-184, then
+/// 1285/1289/1290 for skill/1286/1287/1288 for level, with skill3Level
+/// oddly at 279 instead of adjacent to 184), so each pair was checked
+/// individually rather than assumed to follow a pattern.
+const SKILL_PREREQ_IDS: [(i64, i64); 6] = [(182, 277), (183, 278), (184, 279), (1285, 1286), (1289, 1287), (1290, 1288)];
 
 #[derive(Clone)]
 struct SkillInfo {
     group_name: String,
     rank: i64,
+    primary_attribute: Option<String>,
+    secondary_attribute: Option<String>,
+    /// (prerequisite skill_id, required level) pairs.
+    prerequisites: Vec<(i64, i64)>,
 }
 
 static SKILL_INFO_CACHE: LazyLock<Mutex<HashMap<i64, SkillInfo>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -567,6 +722,24 @@ async fn fetch_group_name(client: &reqwest::Client, group_id: i64) -> Option<Str
     Some(group.name)
 }
 
+/// Bulk group_id -> display name resolution (e.g. "Frigate", "Battleship")
+/// for zKillboard's per-ship-class stats breakdown - same cache as every
+/// other group-name lookup in this file, so once the ~80 or so ship
+/// classes that actually see kills have been resolved once, every later
+/// character/corp/alliance stats fetch reads from cache instead of
+/// re-hitting ESI.
+pub(crate) async fn resolve_group_names(client: &reqwest::Client, group_ids: &[i64]) -> HashMap<i64, String> {
+    let mut unique: Vec<i64> = group_ids.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    let mut merged = HashMap::new();
+    for chunk in unique.chunks(TYPE_DETAIL_CONCURRENCY) {
+        let results = futures::future::join_all(chunk.iter().map(|&id| async move { (id, fetch_group_name(client, id).await) })).await;
+        merged.extend(results.into_iter().filter_map(|(id, name)| name.map(|n| (id, n))));
+    }
+    merged
+}
+
 async fn fetch_skill_info(client: &reqwest::Client, skill_id: i64) -> Option<SkillInfo> {
     if let Some(info) = SKILL_INFO_CACHE.lock().unwrap().get(&skill_id).cloned() {
         return Some(info);
@@ -578,8 +751,26 @@ async fn fetch_skill_info(client: &reqwest::Client, skill_id: i64) -> Option<Ski
         .find(|a| a.attribute_id == SKILL_RANK_ATTRIBUTE_ID)
         .map(|a| a.value as i64)
         .unwrap_or(1);
+    let primary_attribute = detail
+        .dogma_attributes
+        .iter()
+        .find(|a| a.attribute_id == SKILL_PRIMARY_ATTRIBUTE_ID)
+        .and_then(|a| attribute_ref_name(a.value));
+    let secondary_attribute = detail
+        .dogma_attributes
+        .iter()
+        .find(|a| a.attribute_id == SKILL_SECONDARY_ATTRIBUTE_ID)
+        .and_then(|a| attribute_ref_name(a.value));
+    let prerequisites: Vec<(i64, i64)> = SKILL_PREREQ_IDS
+        .iter()
+        .filter_map(|(skill_attr, level_attr)| {
+            let skill_id = detail.dogma_attributes.iter().find(|a| a.attribute_id == *skill_attr)?.value as i64;
+            let level = detail.dogma_attributes.iter().find(|a| a.attribute_id == *level_attr).map(|a| a.value as i64).unwrap_or(1);
+            Some((skill_id, level))
+        })
+        .collect();
     let group_name = fetch_group_name(client, detail.group_id).await.unwrap_or_else(|| "Unknown".to_string());
-    let info = SkillInfo { group_name, rank };
+    let info = SkillInfo { group_name, rank, primary_attribute, secondary_attribute, prerequisites };
     SKILL_INFO_CACHE.lock().unwrap().insert(skill_id, info.clone());
     Some(info)
 }
@@ -626,11 +817,25 @@ struct EsiGroupTypes {
 }
 
 #[derive(Serialize, Clone)]
+pub struct SkillPrerequisite {
+    pub skill_id: i64,
+    pub skill_name: String,
+    pub level: i64,
+}
+
+#[derive(Serialize, Clone)]
 pub struct AllSkillEntry {
     pub skill_id: i64,
     pub name: String,
     pub group_name: String,
     pub rank: i64,
+    /// "Charisma"/"Intelligence"/"Memory"/"Perception"/"Willpower" - needed
+    /// for training-time math (SP/hour = primary*60 + secondary*30). None
+    /// for a small number of non-trainable/placeholder skill-group entries
+    /// that carry no attribute dogma at all.
+    pub primary_attribute: Option<String>,
+    pub secondary_attribute: Option<String>,
+    pub prerequisites: Vec<SkillPrerequisite>,
 }
 
 static ALL_SKILLS_CACHE: LazyLock<Mutex<Option<Vec<AllSkillEntry>>>> = LazyLock::new(|| Mutex::new(None));
@@ -673,8 +878,35 @@ pub async fn fetch_all_skills(client: &reqwest::Client) -> Result<Vec<AllSkillEn
         .filter_map(|id| {
             let name = names.get(&id)?.clone();
             let group_name = type_to_group.get(&id)?.clone();
-            let rank = skill_infos.get(&id).map(|i| i.rank).unwrap_or(1);
-            Some(AllSkillEntry { skill_id: id, name, group_name, rank })
+            let info = skill_infos.get(&id);
+            let rank = info.map(|i| i.rank).unwrap_or(1);
+            // Falls back to a placeholder name rather than dropping the
+            // entry entirely - `names` only covers published/catalogued
+            // skills, but an unpublished skill can still legitimately be
+            // someone's real prerequisite. Silently vanishing it would break
+            // the auto-insert-prerequisites feature (a plan entry the
+            // frontend never learns it needs) with no error anywhere.
+            let prerequisites = info
+                .map(|i| {
+                    i.prerequisites
+                        .iter()
+                        .map(|(prereq_id, level)| SkillPrerequisite {
+                            skill_id: *prereq_id,
+                            skill_name: names.get(prereq_id).cloned().unwrap_or_else(|| format!("Skill #{prereq_id}")),
+                            level: *level,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(AllSkillEntry {
+                skill_id: id,
+                name,
+                group_name,
+                rank,
+                primary_attribute: info.and_then(|i| i.primary_attribute.clone()),
+                secondary_attribute: info.and_then(|i| i.secondary_attribute.clone()),
+                prerequisites,
+            })
         })
         .collect();
     entries.sort_by(|a, b| a.group_name.cmp(&b.group_name).then_with(|| a.name.cmp(&b.name)));
@@ -694,6 +926,12 @@ const IMPLANT_SLOT_ATTRIBUTE_ID: i64 = 331;
 struct ImplantInfo {
     slot: i64,
     bonus_text: Option<String>,
+    /// Which of the 5 attributes this implant boosts, and by how much - the
+    /// same dogma lookup bonus_text already does, just kept structured
+    /// (rather than pre-formatted into text) so callers can sum bonuses per
+    /// attribute for an effective-value calculation, not just display them.
+    attribute: Option<String>,
+    bonus: Option<i64>,
 }
 
 static IMPLANT_INFO_CACHE: LazyLock<Mutex<HashMap<i64, ImplantInfo>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -709,14 +947,15 @@ async fn fetch_implant_info(client: &reqwest::Client, type_id: i64) -> Option<Im
         .find(|a| a.attribute_id == IMPLANT_SLOT_ATTRIBUTE_ID)
         .map(|a| a.value as i64)
         .unwrap_or(0);
-    let bonus_text = ATTRIBUTE_BONUS_IDS.iter().find_map(|(attr_id, label)| {
+    let matched = ATTRIBUTE_BONUS_IDS.iter().find_map(|(attr_id, label)| {
         detail
             .dogma_attributes
             .iter()
             .find(|a| a.attribute_id == *attr_id && a.value > 0.0)
-            .map(|a| format!("+{} {}", a.value as i64, label))
+            .map(|a| (*label, a.value as i64))
     });
-    let info = ImplantInfo { slot, bonus_text };
+    let bonus_text = matched.map(|(label, value)| format!("+{value} {label}"));
+    let info = ImplantInfo { slot, bonus_text, attribute: matched.map(|(label, _)| label.to_string()), bonus: matched.map(|(_, value)| value) };
     IMPLANT_INFO_CACHE.lock().unwrap().insert(type_id, info.clone());
     Some(info)
 }
@@ -1035,6 +1274,64 @@ pub async fn fetch_character_overview(
     Ok(overview)
 }
 
+#[derive(Serialize, Default, Clone)]
+pub struct CharacterLocation {
+    pub character_id: i64,
+    pub solar_system_id: Option<i64>,
+    pub solar_system_name: Option<String>,
+    pub ship_type_id: Option<i64>,
+    pub ship_type_name: Option<String>,
+    pub needs_reauth: bool,
+}
+
+/// A character's current solar system + ship hull, polled periodically for
+/// the Path & Wormhole Finder's live-location tracking. Both come from a
+/// single access-token fetch (not two independent get_access_token calls)
+/// for the same reason fetch_character_overview does it this way - EVE SSO
+/// rotates the refresh token on each use, so two independent refreshes for
+/// the same character racing each other can corrupt the stored token.
+pub async fn fetch_character_location(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+) -> Result<CharacterLocation, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterLocation { character_id, needs_reauth: true, ..Default::default() });
+    };
+    let access_token = access_token.as_str();
+
+    let mut result = CharacterLocation { character_id, ..Default::default() };
+    let mut lookup_ids: Vec<i64> = Vec::new();
+    let mut system_id: Option<i64> = None;
+    let mut ship_type_id: Option<i64> = None;
+
+    match authorized_get::<LocationResponse>(client, access_token, &format!("/characters/{character_id}/location/")).await
+    {
+        Ok(v) => {
+            system_id = Some(v.solar_system_id);
+            lookup_ids.push(v.solar_system_id);
+        }
+        Err(EsiError::MissingScope) => result.needs_reauth = true,
+        Err(EsiError::Failed(e)) => return Err(e),
+    }
+
+    match authorized_get::<ShipResponse>(client, access_token, &format!("/characters/{character_id}/ship/")).await {
+        Ok(v) => {
+            ship_type_id = Some(v.ship_type_id);
+            lookup_ids.push(v.ship_type_id);
+        }
+        Err(EsiError::MissingScope) => result.needs_reauth = true,
+        Err(EsiError::Failed(e)) => return Err(e),
+    }
+
+    let names = resolve_names(client, lookup_ids).await;
+    result.solar_system_id = system_id;
+    result.solar_system_name = system_id.and_then(|id| names.get(&id).cloned());
+    result.ship_type_id = ship_type_id;
+    result.ship_type_name = ship_type_id.and_then(|id| names.get(&id).cloned());
+    Ok(result)
+}
+
 #[derive(Serialize)]
 pub struct SkillEntry {
     pub skill_id: i64,
@@ -1253,6 +1550,8 @@ pub struct ImplantEntry {
     pub name: String,
     pub slot: i64,
     pub bonus_text: Option<String>,
+    pub attribute: Option<String>,
+    pub bonus: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -1269,6 +1568,19 @@ pub struct CharacterClones {
     pub active_implants: Vec<ImplantEntry>,
     pub jump_clones: Vec<JumpCloneEntry>,
     pub needs_reauth: bool,
+}
+
+/// Just the home station/structure id, without the full clones+implants
+/// fetch fetch_character_clones does - used by the map's home-base portrait
+/// pins, which only need to know where to place a marker. Best-effort: no
+/// token, missing scope, or no home location set all just mean no pin for
+/// that character rather than an error.
+pub async fn fetch_character_home_location_id(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Option<i64> {
+    let access_token = get_access_token(client, config, character_id).await?;
+    let raw = authorized_get::<EsiClonesResponse>(client, &access_token, &format!("/characters/{character_id}/clones/"))
+        .await
+        .ok()?;
+    raw.home_location.map(|h| h.location_id)
 }
 
 pub async fn fetch_character_clones(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterClones, String> {
@@ -1317,6 +1629,8 @@ pub async fn fetch_character_clones(client: &reqwest::Client, config: &SsoConfig
                 name: names.get(id).cloned().unwrap_or_else(|| format!("Implant #{id}")),
                 slot: info.map(|i| i.slot).unwrap_or(0),
                 bonus_text: info.and_then(|i| i.bonus_text.clone()),
+                attribute: info.and_then(|i| i.attribute.clone()),
+                bonus: info.and_then(|i| i.bonus),
             }
         })
         .collect();
@@ -1336,6 +1650,8 @@ pub async fn fetch_character_clones(client: &reqwest::Client, config: &SsoConfig
                         name: names.get(id).cloned().unwrap_or_else(|| format!("Implant #{id}")),
                         slot: info.map(|i| i.slot).unwrap_or(0),
                         bonus_text: info.and_then(|i| i.bonus_text.clone()),
+                        attribute: info.and_then(|i| i.attribute.clone()),
+                        bonus: info.and_then(|i| i.bonus),
                     }
                 })
                 .collect();
@@ -1353,6 +1669,210 @@ pub async fn fetch_character_clones(client: &reqwest::Client, config: &SsoConfig
         home_location_name: raw.home_location.and_then(|h| names.get(&h.location_id).cloned()),
         active_implants,
         jump_clones,
+        needs_reauth: false,
+    })
+}
+
+#[derive(Deserialize)]
+struct EsiAttributesResponse {
+    charisma: i64,
+    intelligence: i64,
+    memory: i64,
+    perception: i64,
+    willpower: i64,
+    bonus_remaps: i64,
+    last_remap_date: Option<String>,
+    accrued_remap_cooldown_date: Option<String>,
+}
+
+/// A character's 5 base attributes as ESI reports them - these are already
+/// the post-remap base values (17 + whatever remap points were spent, per
+/// EveConstants.CharacterBaseAttributePoints/SpareAttributePointsOnRemap in
+/// EVEMon's source - not raw un-remapped 17s). Implant bonuses are separate
+/// (see ImplantEntry.attribute/bonus from fetch_character_clones) since ESI's
+/// attributes endpoint doesn't fold them in.
+#[derive(Serialize, Default)]
+pub struct CharacterAttributes {
+    pub charisma: i64,
+    pub intelligence: i64,
+    pub memory: i64,
+    pub perception: i64,
+    pub willpower: i64,
+    pub bonus_remaps: i64,
+    pub last_remap_date: Option<String>,
+    pub accrued_remap_cooldown_date: Option<String>,
+    pub needs_reauth: bool,
+}
+
+/// Same auth pattern as fetch_character_clones: shares the skills scope
+/// (esi-skills.read_skills.v1) already granted for the Skills/Queue tabs per
+/// ESI's own endpoint grouping, so no new reconnect is expected - but if
+/// that grouping assumption is ever wrong for some account, a missing-scope
+/// response degrades to needs_reauth like every other tab, not a hard error.
+pub async fn fetch_character_attributes(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterAttributes, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterAttributes { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get::<EsiAttributesResponse>(client, &access_token, &format!("/characters/{character_id}/attributes/"))
+        .await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterAttributes { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+    Ok(CharacterAttributes {
+        charisma: raw.charisma,
+        intelligence: raw.intelligence,
+        memory: raw.memory,
+        perception: raw.perception,
+        willpower: raw.willpower,
+        bonus_remaps: raw.bonus_remaps,
+        last_remap_date: raw.last_remap_date,
+        accrued_remap_cooldown_date: raw.accrued_remap_cooldown_date,
+        needs_reauth: false,
+    })
+}
+
+#[derive(Deserialize)]
+struct EsiResearchAgent {
+    agent_id: i64,
+    points_per_day: f64,
+    remainder_points: f64,
+    skill_type_id: i64,
+    started_at: String,
+}
+
+#[derive(Serialize)]
+pub struct ResearchAgentEntry {
+    pub agent_id: i64,
+    pub agent_name: String,
+    pub skill_type_id: i64,
+    pub skill_name: String,
+    pub points_per_day: f64,
+    pub current_points: f64,
+    pub started_at: String,
+}
+
+#[derive(Serialize, Default)]
+pub struct CharacterResearch {
+    pub entries: Vec<ResearchAgentEntry>,
+    pub needs_reauth: bool,
+}
+
+/// R&D agent research points - distinct from corp loyalty points (the LP
+/// tab). Verified live against ESI's own OpenAPI spec (not guessed):
+/// GET /characters/{id}/agents_research/, scope
+/// esi-characters.read_agents_research.v1 - a scope no existing character
+/// has yet, so this shows needs_reauth for everyone until they reconnect,
+/// same as any other newly-added scope in this app's history.
+pub async fn fetch_character_research(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterResearch, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterResearch { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get::<Vec<EsiResearchAgent>>(client, &access_token, &format!("/characters/{character_id}/agents_research/"))
+        .await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterResearch { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+
+    let mut lookup_ids: Vec<i64> = raw.iter().map(|a| a.agent_id).collect();
+    lookup_ids.extend(raw.iter().map(|a| a.skill_type_id));
+    let names = resolve_names(client, lookup_ids).await;
+
+    let entries = raw
+        .into_iter()
+        .map(|a| ResearchAgentEntry {
+            agent_id: a.agent_id,
+            agent_name: names.get(&a.agent_id).cloned().unwrap_or_else(|| format!("Agent #{}", a.agent_id)),
+            skill_type_id: a.skill_type_id,
+            skill_name: names.get(&a.skill_type_id).cloned().unwrap_or_else(|| format!("Skill #{}", a.skill_type_id)),
+            points_per_day: a.points_per_day,
+            current_points: a.remainder_points,
+            started_at: a.started_at,
+        })
+        .collect();
+    Ok(CharacterResearch { entries, needs_reauth: false })
+}
+
+#[derive(Deserialize)]
+struct EsiFwKillsOrPoints {
+    yesterday: i64,
+    last_week: i64,
+    total: i64,
+}
+
+#[derive(Deserialize)]
+struct EsiCharacterFwStats {
+    // Confirmed live (not just per the OpenAPI spec, which marks these
+    // "required" but is wrong here): a character who has never enlisted in
+    // FW gets a response with ONLY kills/victory_points - current_rank,
+    // highest_rank, faction_id, and enlisted_on are all absent, not zeroed.
+    #[serde(default)]
+    current_rank: Option<i64>,
+    #[serde(default)]
+    highest_rank: Option<i64>,
+    #[serde(default)]
+    enlisted_on: Option<String>,
+    #[serde(default)]
+    faction_id: Option<i64>,
+    kills: EsiFwKillsOrPoints,
+    victory_points: EsiFwKillsOrPoints,
+}
+
+#[derive(Serialize, Clone, Default)]
+pub struct FwTally {
+    pub yesterday: i64,
+    pub last_week: i64,
+    pub total: i64,
+}
+
+#[derive(Serialize, Default)]
+pub struct CharacterFwStats {
+    pub enlisted: bool,
+    pub faction_name: Option<String>,
+    pub enlisted_on: Option<String>,
+    pub current_rank: Option<i64>,
+    pub highest_rank: Option<i64>,
+    pub kills: FwTally,
+    pub victory_points: FwTally,
+    pub needs_reauth: bool,
+}
+
+/// Verified live against ESI's own OpenAPI spec (not guessed, and not just
+/// trusted from EVEMon's older/incomplete swagger client, which doesn't even
+/// list this route - cross-checked against EveLens' current endpoint
+/// reference too): GET /characters/{id}/fw/stats/, scope
+/// esi-characters.read_fw_stats.v1. faction_id/enlisted_on are absent
+/// (not merely zero/empty) when the character has never enlisted in FW.
+pub async fn fetch_character_fw_stats(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterFwStats, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterFwStats { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get::<EsiCharacterFwStats>(client, &access_token, &format!("/characters/{character_id}/fw/stats/")).await {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterFwStats { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+
+    let faction_name = match raw.faction_id {
+        Some(id) => resolve_names(client, vec![id]).await.get(&id).cloned(),
+        None => None,
+    };
+
+    Ok(CharacterFwStats {
+        enlisted: raw.faction_id.is_some(),
+        faction_name,
+        enlisted_on: raw.enlisted_on,
+        current_rank: raw.current_rank,
+        highest_rank: raw.highest_rank,
+        kills: FwTally { yesterday: raw.kills.yesterday, last_week: raw.kills.last_week, total: raw.kills.total },
+        victory_points: FwTally {
+            yesterday: raw.victory_points.yesterday,
+            last_week: raw.victory_points.last_week,
+            total: raw.victory_points.total,
+        },
         needs_reauth: false,
     })
 }
@@ -1419,6 +1939,7 @@ struct EsiContact {
 
 #[derive(Serialize)]
 pub struct ContactEntry {
+    pub contact_id: i64,
     pub contact_name: String,
     pub contact_type: String,
     pub standing: f64,
@@ -1453,6 +1974,7 @@ pub async fn fetch_character_contacts(
     let mut entries: Vec<ContactEntry> = raw
         .into_iter()
         .map(|c| ContactEntry {
+            contact_id: c.contact_id,
             contact_name: names.get(&c.contact_id).cloned().unwrap_or_else(|| format!("#{}", c.contact_id)),
             contact_type: c.contact_type,
             standing: c.standing,
@@ -1660,6 +2182,7 @@ struct EsiOrder {
 #[derive(Serialize)]
 pub struct MarketOrderEntry {
     pub order_id: i64,
+    pub type_id: i64,
     pub type_name: String,
     pub location_name: String,
     pub is_buy_order: bool,
@@ -1718,6 +2241,7 @@ pub async fn fetch_character_market_orders(
         .into_iter()
         .map(|(o, is_active)| MarketOrderEntry {
             order_id: o.order_id,
+            type_id: o.type_id,
             type_name: names.get(&o.type_id).cloned().unwrap_or_else(|| format!("Type #{}", o.type_id)),
             location_name: names.get(&o.location_id).cloned().unwrap_or_else(|| location_fallback_name(o.location_id)),
             is_buy_order: o.is_buy_order.unwrap_or(false),
@@ -1824,6 +2348,279 @@ pub async fn fetch_character_contracts(
 }
 
 #[derive(Deserialize)]
+struct EsiContractItem {
+    #[serde(default)]
+    is_included: bool,
+    quantity: i64,
+    #[serde(default)]
+    runs: Option<i32>,
+    type_id: i64,
+}
+
+#[derive(Serialize)]
+pub struct ContractItemEntry {
+    pub type_id: i64,
+    pub type_name: String,
+    pub quantity: i64,
+    pub is_included: bool,
+    pub runs: Option<i32>,
+}
+
+/// Item list for one of a character's own item_exchange/auction contracts.
+/// Courier contracts (and expired/deleted ones) 400 or 404 here - that's a
+/// "nothing to show" case, not a real error, so it collapses to an empty list
+/// rather than surfacing an error to the UI.
+pub async fn fetch_contract_items(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+    contract_id: i64,
+) -> Result<Vec<ContractItemEntry>, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(Vec::new());
+    };
+    let raw: Vec<EsiContractItem> = match authorized_get(
+        client,
+        &access_token,
+        &format!("/characters/{character_id}/contracts/{contract_id}/items/"),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(Vec::new()),
+        Err(EsiError::Failed(_)) => return Ok(Vec::new()),
+    };
+    let lookup_ids: Vec<i64> = raw.iter().map(|i| i.type_id).collect();
+    let names = resolve_names(client, lookup_ids).await;
+    let mut entries: Vec<ContractItemEntry> = raw
+        .into_iter()
+        .map(|i| ContractItemEntry {
+            type_id: i.type_id,
+            type_name: names.get(&i.type_id).cloned().unwrap_or_else(|| format!("Type #{}", i.type_id)),
+            quantity: i.quantity,
+            is_included: i.is_included,
+            runs: i.runs,
+        })
+        .collect();
+    entries.sort_by(|a, b| b.quantity.cmp(&a.quantity));
+    Ok(entries)
+}
+
+#[derive(Deserialize)]
+struct EsiPublicContract {
+    contract_id: i64,
+    #[serde(default)]
+    collateral: f64,
+    date_expired: String,
+    date_issued: String,
+    #[serde(default)]
+    days_to_complete: i64,
+    #[serde(default)]
+    end_location_id: Option<i64>,
+    issuer_corporation_id: i64,
+    issuer_id: i64,
+    #[serde(default)]
+    price: f64,
+    #[serde(default)]
+    reward: f64,
+    #[serde(default)]
+    start_location_id: Option<i64>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(rename = "type")]
+    contract_type: String,
+    #[serde(default)]
+    volume: f64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct PublicContractEntry {
+    pub contract_id: i64,
+    pub contract_type: String,
+    pub title: Option<String>,
+    pub price: f64,
+    pub reward: f64,
+    pub collateral: f64,
+    pub volume: f64,
+    pub days_to_complete: i64,
+    pub date_issued: String,
+    pub date_expired: String,
+    pub issuer_name: String,
+    pub issuer_corporation_name: String,
+    pub start_location_name: Option<String>,
+    pub end_location_name: Option<String>,
+}
+
+/// Every public (item_exchange/courier/auction) contract in a region -
+/// confirmed live via `/contracts/public/{region_id}/`, no auth needed for
+/// the listing itself. Location names DO need a token if either end is a
+/// player structure (same docking-access nuance as everywhere else this
+/// app resolves structure names) - best-effort: with a token, structures
+/// resolve too; without one, only NPC stations/normal entities do and a
+/// structure location just falls back to its raw id.
+pub async fn fetch_public_contracts(
+    client: &reqwest::Client,
+    region_id: i64,
+    access_token: Option<&str>,
+) -> Result<Vec<PublicContractEntry>, String> {
+    let raw: Vec<EsiPublicContract> = public_get_paginated(client, &format!("/contracts/public/{region_id}/")).await?;
+
+    let mut lookup_ids: Vec<i64> = raw.iter().map(|c| c.issuer_id).collect();
+    lookup_ids.extend(raw.iter().map(|c| c.issuer_corporation_id));
+    lookup_ids.extend(raw.iter().filter_map(|c| c.start_location_id));
+    lookup_ids.extend(raw.iter().filter_map(|c| c.end_location_id));
+
+    let names = match access_token {
+        Some(token) => resolve_names_with_structures(client, token, lookup_ids).await,
+        None => resolve_names(client, lookup_ids).await,
+    };
+
+    let mut entries: Vec<PublicContractEntry> = raw
+        .into_iter()
+        .map(|c| PublicContractEntry {
+            contract_id: c.contract_id,
+            contract_type: c.contract_type,
+            title: c.title.filter(|t| !t.is_empty()),
+            price: c.price,
+            reward: c.reward,
+            collateral: c.collateral,
+            volume: c.volume,
+            days_to_complete: c.days_to_complete,
+            date_issued: c.date_issued,
+            date_expired: c.date_expired,
+            issuer_name: names.get(&c.issuer_id).cloned().unwrap_or_else(|| format!("#{}", c.issuer_id)),
+            issuer_corporation_name: names
+                .get(&c.issuer_corporation_id)
+                .cloned()
+                .unwrap_or_else(|| format!("#{}", c.issuer_corporation_id)),
+            start_location_name: c.start_location_id.and_then(|id| names.get(&id).cloned()),
+            end_location_name: c.end_location_id.and_then(|id| names.get(&id).cloned()),
+        })
+        .collect();
+    entries.sort_by(|a, b| b.date_issued.cmp(&a.date_issued));
+    Ok(entries)
+}
+
+#[derive(Deserialize)]
+struct EsiCalendarEvent {
+    event_id: i64,
+    event_date: String,
+    title: String,
+    importance: i64,
+    event_response: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct CalendarEventSummary {
+    pub event_id: i64,
+    pub event_date: String,
+    pub title: String,
+    pub importance: i64,
+    pub event_response: String,
+}
+
+#[derive(Serialize, Default)]
+pub struct CharacterCalendar {
+    pub entries: Vec<CalendarEventSummary>,
+    pub needs_reauth: bool,
+}
+
+/// ESI's calendar list returns "the next 50 chronological events from now" -
+/// plenty for an upcoming-events view without needing the from_event cursor
+/// pagination for a typical character's calendar load.
+pub async fn fetch_character_calendar(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+) -> Result<CharacterCalendar, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterCalendar { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get::<Vec<EsiCalendarEvent>>(client, &access_token, &format!("/characters/{character_id}/calendar/"))
+        .await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterCalendar { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+
+    let mut entries: Vec<CalendarEventSummary> = raw
+        .into_iter()
+        .map(|e| CalendarEventSummary {
+            event_id: e.event_id,
+            event_date: e.event_date,
+            title: e.title,
+            importance: e.importance,
+            event_response: e.event_response,
+        })
+        .collect();
+    entries.sort_by(|a, b| a.event_date.cmp(&b.event_date));
+    Ok(CharacterCalendar { entries, needs_reauth: false })
+}
+
+#[derive(Deserialize)]
+struct EsiCalendarEventDetail {
+    event_id: i64,
+    date: String,
+    title: String,
+    text: String,
+    duration: i64,
+    importance: i64,
+    response: String,
+    owner_id: i64,
+    owner_name: String,
+    owner_type: String,
+}
+
+#[derive(Serialize)]
+pub struct CalendarEventDetail {
+    pub event_id: i64,
+    pub date: String,
+    pub title: String,
+    pub text: String,
+    pub duration: i64,
+    pub importance: i64,
+    pub response: String,
+    pub owner_id: i64,
+    pub owner_name: String,
+    pub owner_type: String,
+}
+
+pub async fn fetch_calendar_event_detail(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+    event_id: i64,
+) -> Result<CalendarEventDetail, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Err("This character needs to reconnect to view calendar events.".to_string());
+    };
+    let e = match authorized_get::<EsiCalendarEventDetail>(
+        client,
+        &access_token,
+        &format!("/characters/{character_id}/calendar/{event_id}/"),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Err("This character needs to reconnect to view calendar events.".to_string()),
+        Err(EsiError::Failed(err)) => return Err(err),
+    };
+    Ok(CalendarEventDetail {
+        event_id: e.event_id,
+        date: e.date,
+        title: e.title,
+        text: mail_body_to_text(&e.text),
+        duration: e.duration,
+        importance: e.importance,
+        response: e.response,
+        owner_id: e.owner_id,
+        owner_name: e.owner_name,
+        owner_type: e.owner_type,
+    })
+}
+
+#[derive(Deserialize)]
 struct EsiIndustryJob {
     job_id: i64,
     activity_id: i64,
@@ -1920,6 +2717,7 @@ struct EsiTransaction {
 pub struct TransactionEntry {
     pub transaction_id: i64,
     pub date: String,
+    pub type_id: i64,
     pub type_name: String,
     pub location_name: String,
     pub quantity: i64,
@@ -1967,6 +2765,7 @@ pub async fn fetch_character_transactions(
         .map(|t| TransactionEntry {
             transaction_id: t.transaction_id,
             date: t.date,
+            type_id: t.type_id,
             type_name: names.get(&t.type_id).cloned().unwrap_or_else(|| format!("Type #{}", t.type_id)),
             location_name: names.get(&t.location_id).cloned().unwrap_or_else(|| location_fallback_name(t.location_id)),
             quantity: t.quantity,
@@ -2341,4 +3140,167 @@ pub async fn fetch_character_planets(client: &reqwest::Client, config: &SsoConfi
         .collect();
     entries.sort_by(|a, b| a.solar_system_name.cmp(&b.solar_system_name));
     Ok(CharacterPlanets { entries, needs_reauth: false })
+}
+
+/// Same contract as authorized_get, but for the one write call this app
+/// makes (pushing a fit to a character's in-game Fittings browser) -
+/// everything else ESI-facing here is read-only.
+async fn authorized_post<B: Serialize + ?Sized, T: DeserializeOwned>(
+    client: &reqwest::Client,
+    access_token: &str,
+    path: &str,
+    body: &B,
+) -> Result<T, EsiError> {
+    let mut attempt = 0;
+    loop {
+        let response = match client.post(format!("{ESI_BASE}{path}")).bearer_auth(access_token).json(body).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                if retry_delay(attempt).await {
+                    attempt += 1;
+                    continue;
+                }
+                return Err(EsiError::Failed(format!("ESI request failed: {e}")));
+            }
+        };
+        if matches!(response.status(), reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN) {
+            return Err(EsiError::MissingScope);
+        }
+        if is_retryable_status(response.status()) && retry_delay(attempt).await {
+            attempt += 1;
+            continue;
+        }
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(EsiError::Failed(format!("ESI {status} on {path}: {text}")));
+        }
+        return response
+            .json::<T>()
+            .await
+            .map_err(|e| EsiError::Failed(format!("failed to parse ESI response from {path}: {e}")));
+    }
+}
+
+#[derive(Deserialize)]
+struct EsiFittingItem {
+    type_id: i64,
+    flag: String,
+    quantity: i64,
+}
+
+#[derive(Deserialize)]
+struct EsiFitting {
+    fitting_id: i64,
+    name: String,
+    description: String,
+    ship_type_id: i64,
+    items: Vec<EsiFittingItem>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct FitItemEntry {
+    pub type_id: i64,
+    pub flag: String,
+    pub quantity: i64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct CharacterFittingEntry {
+    pub fitting_id: i64,
+    pub name: String,
+    pub description: String,
+    pub ship_type_id: i64,
+    pub items: Vec<FitItemEntry>,
+}
+
+#[derive(Serialize, Default)]
+pub struct CharacterFittings {
+    pub entries: Vec<CharacterFittingEntry>,
+    pub needs_reauth: bool,
+}
+
+/// A character's own saved in-game fits - not paginated, ESI returns the
+/// whole list in one call (typically a few dozen at most).
+pub async fn fetch_character_fittings(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+) -> Result<CharacterFittings, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterFittings { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get::<Vec<EsiFitting>>(client, &access_token, &format!("/characters/{character_id}/fittings/")).await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterFittings { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+    let entries = raw
+        .into_iter()
+        .map(|f| CharacterFittingEntry {
+            fitting_id: f.fitting_id,
+            name: f.name,
+            description: f.description,
+            ship_type_id: f.ship_type_id,
+            items: f.items.into_iter().map(|i| FitItemEntry { type_id: i.type_id, flag: i.flag, quantity: i.quantity }).collect(),
+        })
+        .collect();
+    Ok(CharacterFittings { entries, needs_reauth: false })
+}
+
+#[derive(Serialize)]
+struct EsiFittingItemPayload {
+    type_id: i64,
+    flag: String,
+    quantity: i64,
+}
+
+#[derive(Serialize)]
+struct EsiFittingPayload {
+    name: String,
+    description: String,
+    ship_type_id: i64,
+    items: Vec<EsiFittingItemPayload>,
+}
+
+#[derive(Deserialize)]
+struct EsiFittingCreated {
+    fitting_id: i64,
+}
+
+/// Pushes a fit directly into a character's in-game Fittings browser -
+/// this is the actual "send to character" mechanism (ESI's real write
+/// endpoint), no copy/paste through the client needed. Requires
+/// esi-fittings.write_fittings.v1.
+pub async fn create_character_fitting(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+    name: &str,
+    description: &str,
+    ship_type_id: i64,
+    items: &[FitItemEntry],
+) -> Result<i64, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Err("This character needs to reconnect to send fits in-game.".to_string());
+    };
+    let payload = EsiFittingPayload {
+        name: name.to_string(),
+        description: description.to_string(),
+        ship_type_id,
+        items: items.iter().map(|i| EsiFittingItemPayload { type_id: i.type_id, flag: i.flag.clone(), quantity: i.quantity }).collect(),
+    };
+    match authorized_post::<EsiFittingPayload, EsiFittingCreated>(
+        client,
+        &access_token,
+        &format!("/characters/{character_id}/fittings/"),
+        &payload,
+    )
+    .await
+    {
+        Ok(v) => Ok(v.fitting_id),
+        Err(EsiError::MissingScope) => Err("This character needs to reconnect to send fits in-game.".to_string()),
+        Err(EsiError::Failed(e)) => Err(e),
+    }
 }

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { X } from "lucide-react";
+import { X, ArrowLeftRight, Star } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getMapData, type MapSystem } from "../lib/map";
 import { planGateCheck, getGateActivity, type RoutePreference, type GateCheckSystem, type GateKillEvent } from "../lib/route";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { securityBand, formatSecurity } from "../lib/format";
+import { securityColor, formatSecurity } from "../lib/format";
+import { useSavedRoutes, type SavedRoute } from "../hooks/useSavedRoutes";
 import type { SystemSummary } from "./SystemKillboard";
 
 /** Kills older than this don't count as "recent" for a gate's danger rating - same window the map's heat overlay uses. */
@@ -78,6 +79,8 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
   const [checking, setChecking] = useState(false);
   const keyCounterRef = useRef(200);
   const reportError = useErrorReporter();
+  const { routes: savedRoutes, addRoute, removeRoute } = useSavedRoutes();
+  const [saveNameDraft, setSaveNameDraft] = useState("");
 
   useEffect(() => {
     getMapData()
@@ -175,6 +178,36 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
     openUrl(url).catch((err) => reportError(`Failed to open link: ${String(err)}`));
   }
 
+  const selectedWaypoints = waypoints.filter((s) => s.system);
+  const suggestedRouteName = selectedWaypoints.map((s) => s.system!.name).join(" → ");
+
+  function loadSavedRoute(route: SavedRoute, reversed: boolean) {
+    const systems = reversed ? [...route.systems].reverse() : route.systems;
+    const slots: Slot[] = systems.map((sys) => ({
+      key: ++keyCounterRef.current,
+      query: sys.name,
+      system: { id: sys.id, name: sys.name, security: sys.security, region_id: 0, constellation_id: 0, x: 0, y: 0 },
+      results: [],
+    }));
+    slots.push(emptySlot(++keyCounterRef.current));
+    setWaypoints(slots);
+    setRows(null);
+  }
+
+  function saveCurrentRoute() {
+    if (selectedWaypoints.length < 2) {
+      reportError("Pick at least a start and destination system before saving a journey.");
+      return;
+    }
+    const name = saveNameDraft.trim() || suggestedRouteName;
+    addRoute({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      systems: selectedWaypoints.map((s) => ({ id: s.system!.id, name: s.system!.name, security: s.system!.security })),
+    });
+    setSaveNameDraft("");
+  }
+
   function renderSlotRow(
     slots: Slot[],
     setter: SlotSetter,
@@ -189,7 +222,7 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
               {slot.system ? (
                 <span className="gatecheck-chip">
                   {slot.system.name}
-                  <span className={`kills-security kills-security-${securityBand(slot.system.security)}`}>
+                  <span className="kills-security" style={{ color: securityColor(slot.system.security) }}>
                     {formatSecurity(slot.system.security)}
                   </span>
                   <button type="button" onClick={() => removeSlot(setter, index)} aria-label="Remove">
@@ -208,7 +241,7 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
                     <div className="gatecheck-slot-results">
                       {slot.results.map((system) => (
                         <button key={system.id} type="button" onClick={() => pickSystem(setter, slots, index, system)}>
-                          <span className={`kills-security kills-security-${securityBand(system.security)}`}>
+                          <span className="kills-security" style={{ color: securityColor(system.security) }}>
                             {formatSecurity(system.security)}
                           </span>
                           {system.name}
@@ -230,10 +263,60 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
   return (
     <div className="gatecheck-page">
         <div className="gatecheck-form">
+          {savedRoutes.length > 0 && (
+            <div className="gatecheck-form-row">
+              <span className="gatecheck-label">Saved journeys</span>
+              <div className="gatecheck-saved-routes">
+                {savedRoutes.map((route) => (
+                  <span key={route.id} className="gatecheck-saved-chip">
+                    <button type="button" onClick={() => loadSavedRoute(route, false)}>
+                      {route.name}
+                    </button>
+                    <button
+                      type="button"
+                      className="gatecheck-saved-reverse"
+                      onClick={() => loadSavedRoute(route, true)}
+                      title={`Load ${route.name} in reverse`}
+                      aria-label={`Load ${route.name} in reverse`}
+                    >
+                      <ArrowLeftRight size={12} strokeWidth={2.2} />
+                    </button>
+                    <button
+                      type="button"
+                      className="gatecheck-saved-remove"
+                      onClick={() => removeRoute(route.id)}
+                      aria-label={`Delete saved journey ${route.name}`}
+                    >
+                      <X size={11} strokeWidth={2.5} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="gatecheck-form-row">
             <span className="gatecheck-label">I will be traveling from</span>
             {renderSlotRow(waypoints, setWaypoints, "to")}
           </div>
+
+          {selectedWaypoints.length >= 2 && (
+            <div className="gatecheck-form-row">
+              <span className="gatecheck-label">Save this journey</span>
+              <div className="gatecheck-save-controls">
+                <input
+                  type="text"
+                  value={saveNameDraft}
+                  onChange={(e) => setSaveNameDraft(e.target.value)}
+                  placeholder={suggestedRouteName}
+                />
+                <button type="button" className="gatecheck-save-button" onClick={saveCurrentRoute}>
+                  <Star size={13} strokeWidth={2} />
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="gatecheck-form-row">
             <span className="gatecheck-label">Avoid these systems</span>
@@ -299,7 +382,7 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
                           ) : null}
                         </td>
                         <td>
-                          <span className={`kills-security kills-security-${securityBand(row.security)}`}>
+                          <span className="kills-security" style={{ color: securityColor(row.security) }}>
                             {formatSecurity(row.security)}
                           </span>
                           <span
