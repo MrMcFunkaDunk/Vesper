@@ -1,4 +1,5 @@
 use crate::{auth, characters, config, esi, fittings, intel_feed, kills, map, market, news, pi, route, scout, skillplans, wars, wormholes};
+use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, State};
@@ -62,18 +63,28 @@ pub async fn get_session(app: AppHandle, state: State<'_, AppState>) -> Result<S
     let (records, active_id) = characters::list_characters(&app)?;
     let config = config::load()?;
 
-    let mut out = Vec::with_capacity(records.len());
-    for record in records {
-        // Best-effort silent refresh; a failure here (e.g. revoked token) still
-        // lets the character show up, just without a guaranteed-fresh session.
-        let _ = auth::ensure_fresh_token(&state.http_client, &config, record.id).await;
-        out.push(SessionCharacter {
+    let out: Vec<SessionCharacter> = records
+        .iter()
+        .map(|record| SessionCharacter {
             id: record.id,
-            name: record.name,
-            scopes: record.scopes,
+            name: record.name.clone(),
+            scopes: record.scopes.clone(),
             portrait_url: portrait_url(record.id),
-        });
-    }
+        })
+        .collect();
+
+    // Best-effort silent refresh, now backgrounded rather than awaited before
+    // returning - a stale/revoked token still lets every character show up
+    // immediately, and any command that actually needs a token refreshes it
+    // itself via get_access_token anyway. Previously this loop blocked the
+    // whole session load on one refresh round trip per saved character,
+    // which meant startup got slower the more alts were logged in.
+    let client = state.http_client.clone();
+    tauri::async_runtime::spawn(async move {
+        for record in records {
+            let _ = auth::ensure_fresh_token(&client, &config, record.id).await;
+        }
+    });
 
     Ok(Session { characters: out, active_character_id: active_id })
 }
@@ -560,6 +571,11 @@ pub struct CharacterHomeSystem {
 /// id. Best-effort per character - no token, no scope, no home location set,
 /// or a player-owned structure home (not in the local NPC stations table)
 /// all just mean that one character gets no pin, not a broken map.
+/// Bounds how many characters' home-system lookups run at once - each is an
+/// independent ESI + station-resolve chain per character, so a multi-alt
+/// roster no longer pays for them one at a time.
+const HOME_SYSTEM_RESOLVE_CONCURRENCY: usize = 6;
+
 #[tauri::command]
 pub async fn get_character_home_systems(
     app: AppHandle,
@@ -567,14 +583,22 @@ pub async fn get_character_home_systems(
     character_ids: Vec<i64>,
 ) -> Result<Vec<CharacterHomeSystem>, String> {
     let config = config::load()?;
-    let mut results = Vec::with_capacity(character_ids.len());
-    for character_id in character_ids {
-        let system_id = match esi::fetch_character_home_location_id(&state.http_client, &config, character_id).await {
-            Some(location_id) => map::resolve_station_system(&app, &state.http_client, location_id).await,
-            None => None,
-        };
-        results.push(CharacterHomeSystem { character_id, system_id });
-    }
+    let client = &state.http_client;
+    let results = stream::iter(character_ids)
+        .map(|character_id| {
+            let config = config.clone();
+            let app = app.clone();
+            async move {
+                let system_id = match esi::fetch_character_home_location_id(client, &config, character_id).await {
+                    Some(location_id) => map::resolve_station_system(&app, client, location_id).await,
+                    None => None,
+                };
+                CharacterHomeSystem { character_id, system_id }
+            }
+        })
+        .buffer_unordered(HOME_SYSTEM_RESOLVE_CONCURRENCY)
+        .collect()
+        .await;
     Ok(results)
 }
 
@@ -735,6 +759,18 @@ pub async fn get_region_sell_min_price(
     type_id: i64,
 ) -> Result<Option<f64>, String> {
     market::fetch_region_sell_min(&state.http_client, region_id, type_id).await
+}
+
+/// Bulk sibling of get_region_sell_min_price: one IPC round trip for a whole
+/// material list instead of one call per material (Industry's build-tree
+/// pricing used to invoke the singular command once per line item).
+#[tauri::command]
+pub async fn get_region_sell_min_prices(
+    state: State<'_, AppState>,
+    region_id: i64,
+    type_ids: Vec<i64>,
+) -> Result<HashMap<i64, f64>, String> {
+    Ok(market::fetch_region_sell_min_prices(&state.http_client, region_id, type_ids).await)
 }
 
 #[tauri::command]

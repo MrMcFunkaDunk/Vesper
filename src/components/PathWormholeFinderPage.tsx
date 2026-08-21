@@ -20,7 +20,7 @@ import { matchContactStanding } from "../lib/standings";
 import { findFreePosition } from "../lib/chainLayout";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useRecentActivity } from "../hooks/useRecentActivity";
-import { useCharacterLocation } from "../hooks/useCharacterLocation";
+import { useCharacterLocation, useCharacterLocationDemand } from "../hooks/useCharacterLocation";
 import type { SystemSummary } from "./SystemKillboard";
 import ChainSwitcher from "./wormholes/ChainSwitcher";
 import ChainCanvas from "./wormholes/ChainCanvas";
@@ -116,6 +116,10 @@ function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSele
   const reportError = useErrorReporter();
   const { kills } = useRecentActivity();
   const location = useCharacterLocation();
+  // Registers that live location is needed while this page is open, so
+  // CharacterLocationProvider's background poll wakes up even for a session
+  // with no auto-map-enabled chain yet - see useCharacterLocationDemand.
+  useCharacterLocationDemand();
 
   useEffect(() => {
     getMapData()

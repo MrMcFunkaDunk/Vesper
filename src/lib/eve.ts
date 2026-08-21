@@ -49,7 +49,6 @@ export interface CharacterOverview {
   training_finish_date: string | null;
   queue_length: number | null;
   queue_ends_at: string | null;
-  plex_balance: number | null;
   clone_state: string | null;
   ship_type_name: string | null;
   gender: string | null;

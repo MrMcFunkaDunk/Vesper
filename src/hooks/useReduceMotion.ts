@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
+import { usePersistentState } from "./usePersistentState";
 
 const STORAGE_KEY = "vesper.settings.reduceMotion";
 
@@ -9,25 +10,9 @@ const STORAGE_KEY = "vesper.settings.reduceMotion";
  * their system setting. Applies via a data attribute on <body> so any
  * component's CSS can gate on it without prop-drilling the flag. */
 export function useReduceMotion() {
-  const [reduceMotion, setReduceMotion] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [reduceMotion, setReduceMotion] = usePersistentState<boolean>(STORAGE_KEY, false);
 
-  const hydrated = useRef(false);
   useEffect(() => {
-    if (!hydrated.current) {
-      hydrated.current = true;
-    } else {
-      try {
-        localStorage.setItem(STORAGE_KEY, String(reduceMotion));
-      } catch {
-        // Not worth surfacing - worst case the preference doesn't persist.
-      }
-    }
     document.body.dataset.reduceMotion = String(reduceMotion);
   }, [reduceMotion]);
 

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ensureNotificationPermission } from "../lib/notifications";
+import { usePersistentState } from "./usePersistentState";
 
 const STORAGE_KEY = "vesper.settings.notifications";
 
@@ -23,16 +24,6 @@ const DEFAULT_PREFS: NotificationPreferences = {
   skillQueueLowHours: 24,
 };
 
-function readPrefs(): NotificationPreferences {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_PREFS;
-    return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<NotificationPreferences>) };
-  } catch {
-    return DEFAULT_PREFS;
-  }
-}
-
 /** Per-event desktop-notification preferences, gated behind a master
  * `enabled` toggle that requests the OS permission the first time it's
  * switched on (evemon/eve-nexum/eve-tools-suite all use this same
@@ -40,21 +31,11 @@ function readPrefs(): NotificationPreferences {
  * switch itself, so opting in immediately gets the full set rather than
  * needing every checkbox ticked one at a time. */
 export function useNotificationPreferences() {
-  const [prefs, setPrefs] = useState<NotificationPreferences>(() => readPrefs());
+  const [prefs, setPrefs] = usePersistentState<NotificationPreferences>(STORAGE_KEY, DEFAULT_PREFS, (stored) => ({
+    ...DEFAULT_PREFS,
+    ...stored,
+  }));
   const [permissionDenied, setPermissionDenied] = useState(false);
-
-  const hydrated = useRef(false);
-  useEffect(() => {
-    if (!hydrated.current) {
-      hydrated.current = true;
-      return;
-    }
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-    } catch {
-      // Not worth surfacing - worst case the preference doesn't persist.
-    }
-  }, [prefs]);
 
   async function setEnabled(next: boolean) {
     if (!next) {
@@ -80,5 +61,11 @@ export function useNotificationPreferences() {
  * (a new kill, a new jump), so a live-reactive value isn't needed and a
  * plain read keeps them from re-rendering every time any preference changes. */
 export function readNotificationPreferences(): NotificationPreferences {
-  return readPrefs();
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return DEFAULT_PREFS;
+    return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<NotificationPreferences>) };
+  } catch {
+    return DEFAULT_PREFS;
+  }
 }

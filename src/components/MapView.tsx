@@ -407,6 +407,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const transformRef = useRef<Transform>({ scale: 1, translateX: 0, translateY: 0 });
   const fitScaleRef = useRef(1);
   const draggingRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  /** Once the user manually zooms or drags, auto-refit (below) stops
+   * overriding their view on subsequent resizes - only takes over before
+   * that, to correct for the canvas not yet being at its final laid-out
+   * size the moment the map first loads. */
+  const hasInteractedRef = useRef(false);
   const selectedIdRef = useRef<number | null>(null);
   const hoveredIdRef = useRef<number | null>(null);
   const tickerHoveredIdRef = useRef<number | null>(null);
@@ -991,10 +996,23 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
   useEffect(() => {
     if (!mapData) return;
-    fitToView();
 
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // The canvas can still be at a stale/default size (e.g. mid tab-switch
+    // layout, before the sidebar/flex layout has settled) the instant this
+    // effect fires - fitting to that would center the map for the wrong
+    // dimensions and never get corrected, since a plain resize listener
+    // only redraws with the existing (wrong) transform rather than
+    // recalculating it. A ResizeObserver fires with the canvas's real
+    // laid-out size as soon as it stabilizes, and again on every genuine
+    // resize after that - auto-refitting until the user actually takes the
+    // view into their own hands via pan/zoom.
+    const resizeObserver = new ResizeObserver(() => {
+      if (!hasInteractedRef.current) fitToView();
+    });
+    resizeObserver.observe(canvas);
 
     function pickSystem(clientX: number, clientY: number): MapSystem | null {
       const data = dataRef.current;
@@ -1070,6 +1088,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
     function handleWheel(e: WheelEvent) {
       e.preventDefault();
+      hasInteractedRef.current = true;
       const rect = canvas!.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
@@ -1104,7 +1123,10 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       if (draggingRef.current) {
         const dx = e.clientX - draggingRef.current.x;
         const dy = e.clientY - draggingRef.current.y;
-        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) draggingRef.current.moved = true;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+          draggingRef.current.moved = true;
+          hasInteractedRef.current = true;
+        }
         draggingRef.current.x = e.clientX;
         draggingRef.current.y = e.clientY;
         transformRef.current = {
@@ -1161,6 +1183,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     window.addEventListener("resize", requestDraw);
 
     return () => {
+      resizeObserver.disconnect();
       canvas.removeEventListener("wheel", handleWheel);
       canvas.removeEventListener("mousedown", handleMouseDown);
       canvas.removeEventListener("mouseleave", clearHover);
@@ -1281,21 +1304,33 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   // location change clears alertKillIds (see setCurrentSystem in
   // useLocationTracking), so the nearby feed empties and any of its old
   // entries fall back into the general feed the moment you re-track.
-  const proximityTickerKills = kills
-    .filter(
-      (k) =>
-        new Date(k.time).getTime() >= APP_LOADED_AT &&
-        alertKillIds.has(k.killmail_id) &&
-        proximityClock - new Date(k.time).getTime() < PROXIMITY_EXPIRY_MS,
-    )
-    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-    .slice(0, PROXIMITY_TICKER_LIMIT);
-  const proximityTickerIds = new Set(proximityTickerKills.map((k) => k.killmail_id));
+  // Both lists used to be plain per-render filter/sort/slice passes over the
+  // full live kill array - recomputed on every render, including ones
+  // triggered by unrelated state like a canvas mousemove. Same fix as
+  // hoveredKillCount above.
+  const proximityTickerKills = useMemo(
+    () =>
+      kills
+        .filter(
+          (k) =>
+            new Date(k.time).getTime() >= APP_LOADED_AT &&
+            alertKillIds.has(k.killmail_id) &&
+            proximityClock - new Date(k.time).getTime() < PROXIMITY_EXPIRY_MS,
+        )
+        .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+        .slice(0, PROXIMITY_TICKER_LIMIT),
+    [kills, alertKillIds, proximityClock],
+  );
+  const proximityTickerIds = useMemo(() => new Set(proximityTickerKills.map((k) => k.killmail_id)), [proximityTickerKills]);
 
-  const tickerKills = kills
-    .filter((k) => new Date(k.time).getTime() >= APP_LOADED_AT && !proximityTickerIds.has(k.killmail_id))
-    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-    .slice(0, TICKER_LIMIT);
+  const tickerKills = useMemo(
+    () =>
+      kills
+        .filter((k) => new Date(k.time).getTime() >= APP_LOADED_AT && !proximityTickerIds.has(k.killmail_id))
+        .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+        .slice(0, TICKER_LIMIT),
+    [kills, proximityTickerIds],
+  );
 
   return (
     <>

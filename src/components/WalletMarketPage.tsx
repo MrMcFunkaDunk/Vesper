@@ -12,7 +12,7 @@ import {
 } from "../lib/eve";
 import { getPublicContracts, type PublicContractEntry } from "../lib/market";
 import { getMapData, type MapData } from "../lib/map";
-import { formatIsk, formatPlex, typeIconUrl } from "../lib/format";
+import { formatIsk, typeIconUrl } from "../lib/format";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 import MarketBrowser, { type MarketItemRef } from "./MarketBrowser";
@@ -317,12 +317,6 @@ function WalletMarketPage({
                 <p className="eyebrow">ISK Balance</p>
                 <h2>{overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}</h2>
               </div>
-              {overview?.plex_balance != null && overview.plex_balance > 0 && (
-                <div className="wallet-balance-card">
-                  <p className="eyebrow">PLEX</p>
-                  <h2>{formatPlex(overview.plex_balance)}</h2>
-                </div>
-              )}
             </div>
             {!walletJournal ? (
               <p className="detail-empty">Loading wallet journal...</p>

@@ -1,5 +1,6 @@
 use crate::esi;
 use crate::kills;
+use crate::market;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -331,15 +332,6 @@ fn needs_migration(conn: &rusqlite::Connection) -> bool {
     total > 0 && (with_constellation == 0 || services_count == 0 || celestials_count == 0 || op_services_count == 0)
 }
 
-async fn download_csv(client: &reqwest::Client, url: &str) -> Result<String, String> {
-    let response = client.get(url).send().await.map_err(|e| format!("failed to download {url}: {e}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        return Err(format!("{url} returned {status}"));
-    }
-    response.text().await.map_err(|e| format!("failed to read response body from {url}: {e}"))
-}
-
 /// Replaces the whole local map cache from freshly-downloaded CSVs, inside
 /// one transaction so a crash or network failure mid-import leaves the
 /// previous (or empty) state intact rather than a half-populated table.
@@ -614,17 +606,17 @@ pub(crate) async fn ensure_synced(app: &tauri::AppHandle, client: &reqwest::Clie
             (denormalize_csv, groups_csv),
         ) = futures::future::try_join3(
             futures::future::try_join4(
-                download_csv(client, SYSTEMS_CSV_URL),
-                download_csv(client, JUMPS_CSV_URL),
-                download_csv(client, REGIONS_CSV_URL),
-                download_csv(client, CONSTELLATIONS_CSV_URL),
+                market::download_csv(client, SYSTEMS_CSV_URL),
+                market::download_csv(client, JUMPS_CSV_URL),
+                market::download_csv(client, REGIONS_CSV_URL),
+                market::download_csv(client, CONSTELLATIONS_CSV_URL),
             ),
             futures::future::try_join3(
-                download_csv(client, STA_STATIONS_CSV_URL),
-                download_csv(client, STA_OPERATION_SERVICES_CSV_URL),
-                download_csv(client, STA_SERVICES_CSV_URL),
+                market::download_csv(client, STA_STATIONS_CSV_URL),
+                market::download_csv(client, STA_OPERATION_SERVICES_CSV_URL),
+                market::download_csv(client, STA_SERVICES_CSV_URL),
             ),
-            futures::future::try_join(download_csv(client, MAP_DENORMALIZE_CSV_URL), download_csv(client, INV_GROUPS_CSV_URL)),
+            futures::future::try_join(market::download_csv(client, MAP_DENORMALIZE_CSV_URL), market::download_csv(client, INV_GROUPS_CSV_URL)),
         )
         .await?;
 

@@ -9,7 +9,7 @@ import {
   type ReprocessingInfo,
   type BlueprintDetail,
 } from "../lib/industry";
-import { getMarketPrices, getRegionSellMinPrice, searchMarketTypes } from "../lib/market";
+import { getMarketPrices, getRegionSellMinPrices, searchMarketTypes } from "../lib/market";
 import { buildCostTree, flattenRawMaterials, type BuildTreeNode } from "../lib/industryBuildTree";
 import {
   jobInstallCost,
@@ -247,24 +247,22 @@ function ProductionCalculator() {
     // while the fresh per-hub fetch is in flight.
     setHubPrices(new Map());
     setHubPricesLoading(true);
-    Promise.all(
-      materials.map(async ([typeId]) => {
-        try {
-          const minSell = await getRegionSellMinPrice(hubRegionId, typeId);
-          return [typeId, minSell] as const;
-        } catch {
-          return [typeId, null] as const;
-        }
-      }),
-    ).then((results) => {
-      if (cancelled) return;
-      const next = new Map<number, number>();
-      for (const [typeId, price] of results) {
-        if (price != null) next.set(typeId, price);
-      }
-      setHubPrices(next);
-      setHubPricesLoading(false);
-    });
+    // One IPC call for the whole material list instead of one per material -
+    // the backend batches and caches these itself now.
+    getRegionSellMinPrices(
+      hubRegionId,
+      materials.map(([typeId]) => typeId),
+    )
+      .then((next) => {
+        if (cancelled) return;
+        setHubPrices(next);
+      })
+      .catch(() => {
+        if (!cancelled) setHubPrices(new Map());
+      })
+      .finally(() => {
+        if (!cancelled) setHubPricesLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -623,24 +621,20 @@ function ReprocessingCalculator() {
     let cancelled = false;
     setHubPrices(new Map());
     setHubPricesLoading(true);
-    Promise.all(
-      info.materials.map(async (m) => {
-        try {
-          const minSell = await getRegionSellMinPrice(hubRegionId, m.type_id);
-          return [m.type_id, minSell] as const;
-        } catch {
-          return [m.type_id, null] as const;
-        }
-      }),
-    ).then((results) => {
-      if (cancelled) return;
-      const next = new Map<number, number>();
-      for (const [typeId, price] of results) {
-        if (price != null) next.set(typeId, price);
-      }
-      setHubPrices(next);
-      setHubPricesLoading(false);
-    });
+    getRegionSellMinPrices(
+      hubRegionId,
+      info.materials.map((m) => m.type_id),
+    )
+      .then((next) => {
+        if (cancelled) return;
+        setHubPrices(next);
+      })
+      .catch(() => {
+        if (!cancelled) setHubPrices(new Map());
+      })
+      .finally(() => {
+        if (!cancelled) setHubPricesLoading(false);
+      });
     return () => {
       cancelled = true;
     };

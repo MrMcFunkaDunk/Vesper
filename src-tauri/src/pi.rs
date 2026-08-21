@@ -59,15 +59,6 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<(), String> {
     Ok(())
 }
 
-async fn download_csv(client: &reqwest::Client, url: &str) -> Result<String, String> {
-    let response = client.get(url).send().await.map_err(|e| format!("failed to download {url}: {e}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        return Err(format!("{url} returned {status}"));
-    }
-    response.text().await.map_err(|e| format!("failed to read response body from {url}: {e}"))
-}
-
 fn import_pi_data(conn: &mut rusqlite::Connection, schematics_csv: &str, materials_csv: &str) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| format!("sqlite transaction failed: {e}"))?;
     tx.execute_batch("DELETE FROM pi_schematics; DELETE FROM pi_schematic_materials;")
@@ -115,8 +106,8 @@ async fn ensure_synced(app: &tauri::AppHandle, client: &reqwest::Client) -> Resu
 
     if needs_sync {
         let (schematics_csv, materials_csv) = futures::future::try_join(
-            download_csv(client, PLANET_SCHEMATICS_CSV_URL),
-            download_csv(client, PLANET_SCHEMATICS_TYPE_MAP_CSV_URL),
+            market::download_csv(client, PLANET_SCHEMATICS_CSV_URL),
+            market::download_csv(client, PLANET_SCHEMATICS_TYPE_MAP_CSV_URL),
         )
         .await?;
 

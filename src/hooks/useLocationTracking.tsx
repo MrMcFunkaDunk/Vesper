@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getMapData, type MapData } from "../lib/map";
 import { useRecentActivity } from "./useRecentActivity";
 import { useErrorReporter } from "./useErrorReporter";
@@ -115,6 +115,13 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
   const seenKillIdsRef = useRef<Set<number> | null>(null);
   const reportError = useErrorReporter();
   const { kills } = useRecentActivity();
+  // Mirrors `kills` for setCurrentSystem to read without needing `kills`
+  // itself in its dependency array - kills updates on every poll tick, and a
+  // callback that closed over it directly would get a new identity that
+  // often, which would in turn make the context value below rebuild just as
+  // often even though nothing consumers actually care about changed.
+  const killsRef = useRef(kills);
+  killsRef.current = kills;
 
   useEffect(() => {
     getMapData()
@@ -173,8 +180,11 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
       return;
     }
     const newlyAlerted: number[] = [];
+    // kills is sorted newest-first, so the first id already in seenKillIdsRef
+    // marks the boundary of what's been scanned before - everything after it
+    // is guaranteed already-seen too, no need to keep walking the rest.
     for (const kill of kills) {
-      if (seenKillIdsRef.current.has(kill.killmail_id)) continue;
+      if (seenKillIdsRef.current.has(kill.killmail_id)) break;
       seenKillIdsRef.current.add(kill.killmail_id);
       if (radiusSystemIds.has(kill.system_id)) newlyAlerted.push(kill.killmail_id);
     }
@@ -207,19 +217,26 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
     setPulseToken((n) => n + 1);
   }, [kills, radiusSystemIds]);
 
-  function setCurrentSystem(system: CurrentSystem | null) {
+  const setCurrentSystem = useCallback((system: CurrentSystem | null) => {
     setCurrentSystemState(system);
     // A newly-set location shouldn't retroactively flag kills already
     // sitting in the feed as "just happened near me" - only kills arriving
     // from here on should trigger an alert.
-    seenKillIdsRef.current = new Set(kills.map((k) => k.killmail_id));
+    seenKillIdsRef.current = new Set(killsRef.current.map((k) => k.killmail_id));
     setAlertKillIds(new Set());
-  }
+  }, []);
+
+  // Without this, the provider re-renders on every kills poll tick (kills
+  // isn't even part of the context value, just used internally) and handed
+  // every consumer a brand-new object each time, making them all eligible to
+  // re-render regardless of whether anything they read actually changed.
+  const value = useMemo(
+    () => ({ currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, soundToken }),
+    [currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, soundToken],
+  );
 
   return (
-    <LocationTrackingContext.Provider
-      value={{ currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, soundToken }}
-    >
+    <LocationTrackingContext.Provider value={value}>
       {children}
     </LocationTrackingContext.Provider>
   );

@@ -61,7 +61,6 @@ import {
   formatTimeRemainingFull,
   formatEveDateTime,
   formatQueueSummary,
-  formatPlex,
   typeIconUrl,
   standingClass,
 } from "../lib/format";
@@ -1347,12 +1346,6 @@ function CharacterDetail({
                 <p className="eyebrow">ISK Balance</p>
                 <h2>{overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}</h2>
               </div>
-              {overview?.plex_balance != null && overview.plex_balance > 0 && (
-                <div className="wallet-balance-card">
-                  <p className="eyebrow">PLEX</p>
-                  <h2>{formatPlex(overview.plex_balance)}</h2>
-                </div>
-              )}
             </div>
             {!walletJournal ? (
               <p className="detail-empty">Loading wallet journal...</p>
@@ -1735,12 +1728,6 @@ function CharacterDetail({
               </span>
               <div className="detail-stats-row">
                 <span className="detail-stats-isk">{overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}</span>
-                {overview?.plex_balance != null && overview.plex_balance > 0 && (
-                  <>
-                    <span className="detail-stats-sep">//</span>
-                    <span className="detail-stats-isk">{formatPlex(overview.plex_balance)}</span>
-                  </>
-                )}
                 <span className="detail-stats-sep">//</span>
                 <span className="detail-stats-sp">{overview?.total_sp != null ? formatSp(overview.total_sp) : "—"}</span>
                 <span className="detail-stats-sep">//</span>

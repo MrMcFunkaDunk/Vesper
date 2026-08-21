@@ -63,61 +63,43 @@ function buyPrice(ctx: BuildContext, typeId: number): number {
   return ctx.prices.get(typeId) ?? 0;
 }
 
+/** Leaf node for a component that gets bought outright rather than built -
+ * hit whenever expand() gives up going deeper (depth/node cap, no blueprint
+ * for this product, or a blueprint with no usable activity). */
+function buyOnlyLeaf(typeId: number, name: string, quantityNeeded: number, buyCostPerUnit: number): BuildTreeNode {
+  return {
+    typeId,
+    name,
+    quantityNeeded,
+    runs: 0,
+    activity: null,
+    shouldBuild: false,
+    buildCostPerUnit: null,
+    buyCostPerUnit,
+    totalCost: buyCostPerUnit * quantityNeeded,
+    timeSeconds: null,
+    materials: [],
+  };
+}
+
 async function expand(ctx: BuildContext, typeId: number, name: string, quantityNeeded: number, depth: number): Promise<BuildTreeNode> {
   ctx.nodeCount++;
   const buyCostPerUnit = buyPrice(ctx, typeId);
-  const buyTotal = buyCostPerUnit * quantityNeeded;
 
   if (depth >= ctx.options.maxDepth || ctx.nodeCount >= ctx.options.maxNodes) {
-    return {
-      typeId,
-      name,
-      quantityNeeded,
-      runs: 0,
-      activity: null,
-      shouldBuild: false,
-      buildCostPerUnit: null,
-      buyCostPerUnit,
-      totalCost: buyTotal,
-      timeSeconds: null,
-      materials: [],
-    };
+    return buyOnlyLeaf(typeId, name, quantityNeeded, buyCostPerUnit);
   }
 
   const blueprintTypeId = await getCachedBlueprintForProduct(ctx, typeId);
   if (blueprintTypeId == null) {
-    return {
-      typeId,
-      name,
-      quantityNeeded,
-      runs: 0,
-      activity: null,
-      shouldBuild: false,
-      buildCostPerUnit: null,
-      buyCostPerUnit,
-      totalCost: buyTotal,
-      timeSeconds: null,
-      materials: [],
-    };
+    return buyOnlyLeaf(typeId, name, quantityNeeded, buyCostPerUnit);
   }
 
   const detail = await getCachedBlueprintDetail(ctx, blueprintTypeId);
   const activityInfo: ActivityInfo | null = detail.manufacturing ?? detail.reaction;
   const activity: ActivityType | null = detail.manufacturing ? "manufacturing" : detail.reaction ? "reaction" : null;
   if (!activityInfo || !activity) {
-    return {
-      typeId,
-      name,
-      quantityNeeded,
-      runs: 0,
-      activity: null,
-      shouldBuild: false,
-      buildCostPerUnit: null,
-      buyCostPerUnit,
-      totalCost: buyTotal,
-      timeSeconds: null,
-      materials: [],
-    };
+    return buyOnlyLeaf(typeId, name, quantityNeeded, buyCostPerUnit);
   }
 
   const outputPerRun = activityInfo.products.find((p) => p.type_id === typeId)?.quantity ?? 1;
@@ -141,6 +123,7 @@ async function expand(ctx: BuildContext, typeId: number, name: string, quantityN
 
   const timeSeconds = jobTimeSeconds(activityInfo.time_seconds, runs, te, ctx.options.structureTimeBonus, activity);
   const buildCostPerUnit = materialCost / quantityNeeded;
+  const buyTotal = buyCostPerUnit * quantityNeeded;
   const shouldBuild = materialCost < buyTotal || buyCostPerUnit === 0;
 
   return {

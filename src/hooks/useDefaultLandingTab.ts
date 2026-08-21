@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { usePersistentState } from "./usePersistentState";
 
 const STORAGE_KEY = "vesper.settings.defaultLandingTab";
 
@@ -7,26 +7,5 @@ const STORAGE_KEY = "vesper.settings.defaultLandingTab";
  * than hardcoding "dashboard" here, so it can't drift from Sidebar.tsx's
  * own ordering. */
 export function useDefaultLandingTab(fallbackId: string) {
-  const [tabId, setTabId] = useState<string>(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY) ?? fallbackId;
-    } catch {
-      return fallbackId;
-    }
-  });
-
-  const hydrated = useRef(false);
-  useEffect(() => {
-    if (!hydrated.current) {
-      hydrated.current = true;
-      return;
-    }
-    try {
-      localStorage.setItem(STORAGE_KEY, tabId);
-    } catch {
-      // Not worth surfacing - worst case the preference doesn't persist.
-    }
-  }, [tabId]);
-
-  return [tabId, setTabId] as const;
+  return usePersistentState<string>(STORAGE_KEY, fallbackId);
 }

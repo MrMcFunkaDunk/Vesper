@@ -1136,14 +1136,6 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   font-variant-numeric: tabular-nums;
 }
 
-.character-card-plex {
-  font-family: var(--font-label);
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--isk);
-  font-variant-numeric: tabular-nums;
-}
-
 .character-card-training,
 .character-card-location,
 .character-card-queue {

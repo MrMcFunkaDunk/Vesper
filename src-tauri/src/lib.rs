@@ -143,6 +143,7 @@ pub fn run() {
             commands::get_market_group_types,
             commands::get_region_market_orders,
             commands::get_region_sell_min_price,
+            commands::get_region_sell_min_prices,
             commands::get_scout_connections,
             commands::resync_market_data,
             commands::get_region_market_history,

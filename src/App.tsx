@@ -1,22 +1,27 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import Sidebar, { NAV_ITEMS } from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import MainContent from "./components/MainContent";
 import Dashboard from "./components/Dashboard";
-import CharacterDetail from "./components/CharacterDetail";
-import KillsIntel from "./components/KillsIntel";
-import MapPage from "./components/MapPage";
-import MailPage from "./components/MailPage";
-import WalletMarketPage from "./components/WalletMarketPage";
-import PlanetaryIndustry from "./components/PlanetaryIndustry";
-import IntelCheck from "./components/IntelCheck";
-import WarsPage from "./components/WarsPage";
-import SettingsPage from "./components/SettingsPage";
-import CalendarPage from "./components/CalendarPage";
-import FittingsPage from "./components/FittingsPage";
-import PathWormholeFinderPage from "./components/PathWormholeFinderPage";
-import IndustryPage from "./components/IndustryPage";
 import ProximityFlashOverlay from "./components/ProximityFlashOverlay";
+
+// Every other page is lazy-loaded - each one only needs its (often
+// substantial, e.g. React Flow for the wormhole finder) code once the user
+// actually navigates there, instead of all of it landing in the initial
+// startup bundle alongside the shell and Dashboard.
+const CharacterDetail = lazy(() => import("./components/CharacterDetail"));
+const KillsIntel = lazy(() => import("./components/KillsIntel"));
+const MapPage = lazy(() => import("./components/MapPage"));
+const MailPage = lazy(() => import("./components/MailPage"));
+const WalletMarketPage = lazy(() => import("./components/WalletMarketPage"));
+const PlanetaryIndustry = lazy(() => import("./components/PlanetaryIndustry"));
+const IntelCheck = lazy(() => import("./components/IntelCheck"));
+const WarsPage = lazy(() => import("./components/WarsPage"));
+const SettingsPage = lazy(() => import("./components/SettingsPage"));
+const CalendarPage = lazy(() => import("./components/CalendarPage"));
+const FittingsPage = lazy(() => import("./components/FittingsPage"));
+const PathWormholeFinderPage = lazy(() => import("./components/PathWormholeFinderPage"));
+const IndustryPage = lazy(() => import("./components/IndustryPage"));
 import type { SystemSummary } from "./components/SystemKillboard";
 import type { CorporationSummary } from "./components/CorporationKillboard";
 import type { AllianceSummary } from "./components/AllianceKillboard";
@@ -163,6 +168,7 @@ function App() {
         <ProximityFlashOverlay />
         <Sidebar activeId={activeId} onSelect={handleSelectNav} />
         <TopBar title={active.label} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
+        <Suspense fallback={<div className="app-loading">Loading...</div>}>
         {activeId === "dashboard" ? (
           detailCharacter ? (
             <CharacterDetail
@@ -232,6 +238,7 @@ function App() {
         ) : (
           <MainContent icon={active.icon} label={active.label} description={active.description} />
         )}
+        </Suspense>
       </div>
     </CharacterLocationProvider>
   );

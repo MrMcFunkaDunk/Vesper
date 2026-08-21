@@ -41,40 +41,45 @@ export function useSkillQueueWatch(characters: CharacterRef[]) {
 
     async function pollOnce() {
       const prefs = readNotificationPreferences();
-      for (const character of characters) {
-        if (!active) return;
-        try {
-          const queue = await getCharacterSkillQueue(character.id);
-          if (queue.needs_reauth) continue;
+      // Each character's queue fetch is independent - previously awaited one
+      // after another, so a multiboxing roster stretched a single poll pass
+      // out to N sequential round trips for no benefit.
+      await Promise.allSettled(
+        characters.map(async (character) => {
+          if (!active) return;
+          try {
+            const queue = await getCharacterSkillQueue(character.id);
+            if (queue.needs_reauth) return;
 
-          const length = queue.items.length;
-          const lastItem = queue.items[queue.items.length - 1];
-          const finishDateMs = lastItem?.finish_date ? new Date(lastItem.finish_date).getTime() : null;
+            const length = queue.items.length;
+            const lastItem = queue.items[queue.items.length - 1];
+            const finishDateMs = lastItem?.finish_date ? new Date(lastItem.finish_date).getTime() : null;
 
-          const prevSnapshot = snapshotsRef.current.get(character.id);
-          snapshotsRef.current.set(character.id, { length, finishDateMs });
+            const prevSnapshot = snapshotsRef.current.get(character.id);
+            snapshotsRef.current.set(character.id, { length, finishDateMs });
 
-          // First time seeing this character's queue (app just started, or
-          // this character was just added) - only establishes a baseline,
-          // nothing to compare against yet, so no notification either way.
-          if (!prefs.enabled || !prevSnapshot) continue;
+            // First time seeing this character's queue (app just started, or
+            // this character was just added) - only establishes a baseline,
+            // nothing to compare against yet, so no notification either way.
+            if (!prefs.enabled || !prevSnapshot) return;
 
-          if (prefs.skillQueueEmpty && length === 0 && prevSnapshot.length > 0) {
-            notify("Skill Queue Empty", `${character.name}'s skill queue has finished training.`);
-          }
-
-          if (prefs.skillQueueLowHours != null && finishDateMs != null) {
-            const hoursLeft = (finishDateMs - Date.now()) / 3_600_000;
-            const prevHoursLeft = prevSnapshot.finishDateMs != null ? (prevSnapshot.finishDateMs - Date.now()) / 3_600_000 : null;
-            const justCrossed = hoursLeft < prefs.skillQueueLowHours && (prevHoursLeft == null || prevHoursLeft >= prefs.skillQueueLowHours);
-            if (justCrossed) {
-              notify("Skill Queue Running Low", `${character.name} has less than ${prefs.skillQueueLowHours}h of training queued.`);
+            if (prefs.skillQueueEmpty && length === 0 && prevSnapshot.length > 0) {
+              notify("Skill Queue Empty", `${character.name}'s skill queue has finished training.`);
             }
+
+            if (prefs.skillQueueLowHours != null && finishDateMs != null) {
+              const hoursLeft = (finishDateMs - Date.now()) / 3_600_000;
+              const prevHoursLeft = prevSnapshot.finishDateMs != null ? (prevSnapshot.finishDateMs - Date.now()) / 3_600_000 : null;
+              const justCrossed = hoursLeft < prefs.skillQueueLowHours && (prevHoursLeft == null || prevHoursLeft >= prefs.skillQueueLowHours);
+              if (justCrossed) {
+                notify("Skill Queue Running Low", `${character.name} has less than ${prefs.skillQueueLowHours}h of training queued.`);
+              }
+            }
+          } catch {
+            // Best-effort - one character's failed fetch shouldn't block the rest or crash the poller.
           }
-        } catch {
-          // Best-effort - one character's failed fetch shouldn't block the rest or crash the poller.
-        }
-      }
+        }),
+      );
     }
 
     async function loop() {

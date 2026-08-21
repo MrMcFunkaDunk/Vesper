@@ -1,8 +1,10 @@
 use crate::esi::{public_get, public_get_paginated};
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, SystemTime};
 use tauri::Manager;
 
 /// Same Fuzzwork SDE CSV mirror the map sync uses (see map.rs), pulling the
@@ -215,7 +217,10 @@ fn needs_migration(conn: &rusqlite::Connection) -> bool {
         || (types_total > 0 && activities_total == 0)
 }
 
-async fn download_csv(client: &reqwest::Client, url: &str) -> Result<String, String> {
+/// Shared by every domain module (map, PI, market) that syncs its reference
+/// data from a Fuzzwork SDE CSV mirror - was copy-pasted identically in each
+/// of those three files before this became the one canonical copy.
+pub(crate) async fn download_csv(client: &reqwest::Client, url: &str) -> Result<String, String> {
     let response = client.get(url).send().await.map_err(|e| format!("failed to download {url}: {e}"))?;
     if !response.status().is_success() {
         let status = response.status();
@@ -827,13 +832,48 @@ pub async fn fetch_region_orders(client: &reqwest::Client, region_id: i64, type_
 /// book fetch_region_orders returns. order_type=sell halves the pages ESI
 /// has to paginate through for busy hub items (minerals in Jita etc.),
 /// and only the minimum price crosses back into Rust->JS, not every order.
+const SELL_MIN_CACHE_TTL: Duration = Duration::from_secs(45);
+const SELL_MIN_RESOLVE_CONCURRENCY: usize = 10;
+
+static SELL_MIN_CACHE: LazyLock<Mutex<HashMap<(i64, i64), (Option<f64>, SystemTime)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Cheapest region sell-order price for one item, cached briefly (45s) so
+/// repeated Industry "Calculate" presses while tweaking ME/TE/runs/hub don't
+/// re-hit ESI for materials whose price hasn't meaningfully changed.
 pub async fn fetch_region_sell_min(client: &reqwest::Client, region_id: i64, type_id: i64) -> Result<Option<f64>, String> {
+    let key = (region_id, type_id);
+    if let Some((price, fetched_at)) = SELL_MIN_CACHE.lock().unwrap().get(&key).copied() {
+        if fetched_at.elapsed().unwrap_or(Duration::MAX) < SELL_MIN_CACHE_TTL {
+            return Ok(price);
+        }
+    }
     let orders = public_get_paginated::<MarketOrder>(client, &format!("/markets/{region_id}/orders/?order_type=sell&type_id={type_id}")).await?;
-    Ok(orders.into_iter().map(|o| o.price).fold(None, |min, price| match min {
+    let price = orders.into_iter().map(|o| o.price).fold(None, |min, price| match min {
         None => Some(price),
         Some(m) if price < m => Some(price),
         Some(m) => Some(m),
-    }))
+    });
+    SELL_MIN_CACHE.lock().unwrap().insert(key, (price, SystemTime::now()));
+    Ok(price)
+}
+
+/// Bulk variant for Industry's build-tree pricing: one IPC call for a whole
+/// material list instead of one per material. Bounded concurrency keeps a
+/// large BOM from firing dozens of simultaneous ESI requests; the per-item
+/// cache above means repeat calls for materials that haven't changed are
+/// nearly free. Silently drops any material ESI failed to price rather than
+/// failing the whole batch over one bad type_id.
+pub async fn fetch_region_sell_min_prices(client: &reqwest::Client, region_id: i64, type_ids: Vec<i64>) -> HashMap<i64, f64> {
+    stream::iter(type_ids)
+        .map(|type_id| async move {
+            let price = fetch_region_sell_min(client, region_id, type_id).await.ok().flatten();
+            price.map(|p| (type_id, p))
+        })
+        .buffer_unordered(SELL_MIN_RESOLVE_CONCURRENCY)
+        .filter_map(|result| async move { result })
+        .collect()
+        .await
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -859,18 +899,24 @@ pub struct MarketPrice {
     pub average_price: Option<f64>,
 }
 
-static GLOBAL_PRICES_CACHE: std::sync::LazyLock<std::sync::Mutex<Option<Vec<MarketPrice>>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+static GLOBAL_PRICES_CACHE: LazyLock<Mutex<Option<(Vec<MarketPrice>, SystemTime)>>> = LazyLock::new(|| Mutex::new(None));
+/// EVE-wide prices drift slowly - a 15 minute cache means every feature that
+/// reads this (Industry, Market Browser, Appraisal, Fittings, Screener) gets
+/// a shared, recently-fresh snapshot instead of each one re-fetching from
+/// ESI, while still not going stale for the length of a session like the
+/// previous unconditional-forever cache did.
+const GLOBAL_PRICES_TTL: Duration = Duration::from_secs(15 * 60);
 
-/// EVE-wide average/adjusted price per item type, refreshed at most once per
-/// server session. Used as Price Checker's fallback valuation for items with
-/// no live order book in the chosen region (or as a fast first estimate
-/// before drilling into real orders).
+/// EVE-wide average/adjusted price per item type. Used as Price Checker's
+/// fallback valuation for items with no live order book in the chosen region
+/// (or as a fast first estimate before drilling into real orders).
 pub async fn fetch_market_prices(client: &reqwest::Client) -> Result<Vec<MarketPrice>, String> {
-    if let Some(cached) = GLOBAL_PRICES_CACHE.lock().unwrap().clone() {
-        return Ok(cached);
+    if let Some((cached, fetched_at)) = GLOBAL_PRICES_CACHE.lock().unwrap().clone() {
+        if fetched_at.elapsed().unwrap_or(Duration::MAX) < GLOBAL_PRICES_TTL {
+            return Ok(cached);
+        }
     }
     let prices = public_get::<Vec<MarketPrice>>(client, "/markets/prices/").await?;
-    *GLOBAL_PRICES_CACHE.lock().unwrap() = Some(prices.clone());
+    *GLOBAL_PRICES_CACHE.lock().unwrap() = Some((prices.clone(), SystemTime::now()));
     Ok(prices)
 }

@@ -1,17 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
+import { usePersistentState } from "./usePersistentState";
 
 type CloneStateMap = Record<number, "Alpha" | "Omega">;
 
 const STORAGE_KEY = "vesper-clone-state-overrides";
-
-function readStorage(): CloneStateMap {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as CloneStateMap) : {};
-  } catch {
-    return {};
-  }
-}
 
 /**
  * ESI has no Alpha/Omega field anywhere - the effective clone state shown is
@@ -20,32 +12,26 @@ function readStorage(): CloneStateMap {
  * for that character, persisted here the same way sidebar color overrides are.
  */
 export function useCloneStateOverride() {
-  const [overrides, setOverrides] = useState<CloneStateMap>(() => readStorage());
+  const [overrides, setOverrides] = usePersistentState<CloneStateMap>(STORAGE_KEY, {});
 
-  // Skip the write-back on mount - see useTrackedEntries for why a cold
-  // WebView2 start can read stale/empty and shouldn't immediately re-persist
-  // that as ground truth.
-  const hydrated = useRef(false);
-  useEffect(() => {
-    if (!hydrated.current) {
-      hydrated.current = true;
-      return;
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
-  }, [overrides]);
+  const setOverride = useCallback(
+    (characterId: number, state: "Alpha" | "Omega") => {
+      setOverrides((prev) => ({ ...prev, [characterId]: state }));
+    },
+    [setOverrides],
+  );
 
-  const setOverride = useCallback((characterId: number, state: "Alpha" | "Omega") => {
-    setOverrides((prev) => ({ ...prev, [characterId]: state }));
-  }, []);
-
-  const clearOverride = useCallback((characterId: number) => {
-    setOverrides((prev) => {
-      if (!(characterId in prev)) return prev;
-      const next = { ...prev };
-      delete next[characterId];
-      return next;
-    });
-  }, []);
+  const clearOverride = useCallback(
+    (characterId: number) => {
+      setOverrides((prev) => {
+        if (!(characterId in prev)) return prev;
+        const next = { ...prev };
+        delete next[characterId];
+        return next;
+      });
+    },
+    [setOverrides],
+  );
 
   const cycleOverride = useCallback(
     (characterId: number, autoDetected: string | null) => {
@@ -62,7 +48,7 @@ export function useCloneStateOverride() {
         return next;
       });
     },
-    [],
+    [setOverrides],
   );
 
   return { overrides, setOverride, clearOverride, cycleOverride };

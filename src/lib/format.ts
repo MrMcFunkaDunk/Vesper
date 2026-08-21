@@ -30,10 +30,6 @@ export function formatSp(value: number): string {
   return `${new Intl.NumberFormat("en-US").format(value)} SP`;
 }
 
-export function formatPlex(value: number): string {
-  return `${new Intl.NumberFormat("en-US").format(value)} PLEX`;
-}
-
 /** Formats a part/total ratio as a percentage, e.g. for kill-value or efficiency breakdowns. */
 export function formatPercent(part: number, total: number): string {
   return total > 0 ? `${((part / total) * 100).toFixed(1)}%` : "0.0%";

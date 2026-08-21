@@ -1,0 +1,39 @@
+name: Release
+
+# Builds a Windows installer and attaches it to a GitHub Release whenever a
+# version tag (e.g. v1.2.0) is pushed. VESPER has only been built and tested
+# on Windows this far, so this workflow is scoped to windows-latest rather
+# than also claiming macOS/Linux support that hasn't actually been verified.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "VESPER ${{ github.ref_name }}"
+          releaseBody: "See the commit history for what's changed."
+          releaseDraft: true
+          prerelease: false

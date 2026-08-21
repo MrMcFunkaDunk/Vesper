@@ -394,7 +394,6 @@ pub struct CharacterOverview {
     pub training_finish_date: Option<String>,
     pub queue_length: Option<i32>,
     pub queue_ends_at: Option<String>,
-    pub plex_balance: Option<i64>,
     /// "Alpha" / "Omega" / None if undetermined - see detect_clone_state.
     pub clone_state: Option<String>,
     pub ship_type_name: Option<String>,
@@ -1170,25 +1169,53 @@ pub async fn fetch_character_overview(
     let mut ship_type_id: Option<i64> = None;
     let mut docked_id: Option<i64> = None;
 
-    match authorized_get::<f64>(client, access_token, &format!("/characters/{character_id}/wallet/")).await {
+    // Wallet, skills, skill queue, location, ship and PLEX are all
+    // independent ESI reads once the token is in hand - previously awaited
+    // one after another, turning six round trips into six times the
+    // latency. Fire them concurrently instead; each branch stays
+    // self-contained (e.g. the region/constellation name lookups that
+    // depend on the location result are awaited inside that same branch)
+    // so none of them need another branch's result.
+    let wallet_url = format!("/characters/{character_id}/wallet/");
+    let skills_url = format!("/characters/{character_id}/skills/");
+    let queue_url = format!("/characters/{character_id}/skillqueue/");
+    let location_url = format!("/characters/{character_id}/location/");
+    let ship_url = format!("/characters/{character_id}/ship/");
+
+    let (wallet_result, skills_result, queue_result, location_result, ship_result) = futures::join!(
+        authorized_get::<f64>(client, access_token, &wallet_url),
+        async {
+            let v = authorized_get::<SkillsResponse>(client, access_token, &skills_url).await?;
+            let alpha_limits = fetch_alpha_skill_limits(client).await;
+            let clone_state = detect_clone_state(&v.skills, &alpha_limits).map(|s| s.to_string());
+            Ok::<_, EsiError>((v.total_sp, clone_state))
+        },
+        authorized_get::<Vec<SkillQueueEntry>>(client, access_token, &queue_url),
+        async {
+            let v = authorized_get::<LocationResponse>(client, access_token, &location_url).await?;
+            let region_name = fetch_region_for_system(client, v.solar_system_id).await;
+            let constellation_name = fetch_constellation_for_system(client, v.solar_system_id).await;
+            Ok::<_, EsiError>((v, region_name, constellation_name))
+        },
+        authorized_get::<ShipResponse>(client, access_token, &ship_url),
+    );
+
+    match wallet_result {
         Ok(v) => overview.isk_balance = Some(v),
         Err(EsiError::MissingScope) => overview.needs_reauth = true,
         Err(EsiError::Failed(e)) => return Err(e),
     }
 
-    match authorized_get::<SkillsResponse>(client, access_token, &format!("/characters/{character_id}/skills/")).await {
-        Ok(v) => {
-            overview.total_sp = Some(v.total_sp);
-            let alpha_limits = fetch_alpha_skill_limits(client).await;
-            overview.clone_state = detect_clone_state(&v.skills, &alpha_limits).map(|s| s.to_string());
+    match skills_result {
+        Ok((total_sp, clone_state)) => {
+            overview.total_sp = Some(total_sp);
+            overview.clone_state = clone_state;
         }
         Err(EsiError::MissingScope) => overview.needs_reauth = true,
         Err(EsiError::Failed(e)) => return Err(e),
     }
 
-    match authorized_get::<Vec<SkillQueueEntry>>(client, access_token, &format!("/characters/{character_id}/skillqueue/"))
-        .await
-    {
+    match queue_result {
         Ok(entries) => {
             overview.queue_length = Some(entries.len() as i32);
             overview.queue_ends_at = entries
@@ -1207,13 +1234,12 @@ pub async fn fetch_character_overview(
         Err(EsiError::Failed(e)) => return Err(e),
     }
 
-    match authorized_get::<LocationResponse>(client, access_token, &format!("/characters/{character_id}/location/")).await
-    {
-        Ok(v) => {
+    match location_result {
+        Ok((v, region_name, constellation_name)) => {
             system_id = Some(v.solar_system_id);
             lookup_ids.push(v.solar_system_id);
-            overview.region_name = fetch_region_for_system(client, v.solar_system_id).await;
-            overview.constellation_name = fetch_constellation_for_system(client, v.solar_system_id).await;
+            overview.region_name = region_name;
+            overview.constellation_name = constellation_name;
             docked_id = v.station_id.or(v.structure_id);
             if let Some(id) = docked_id {
                 lookup_ids.push(id);
@@ -1223,25 +1249,10 @@ pub async fn fetch_character_overview(
         Err(EsiError::Failed(e)) => return Err(e),
     }
 
-    match authorized_get::<ShipResponse>(client, access_token, &format!("/characters/{character_id}/ship/")).await {
+    match ship_result {
         Ok(v) => {
             ship_type_id = Some(v.ship_type_id);
             lookup_ids.push(v.ship_type_id);
-        }
-        Err(EsiError::MissingScope) => overview.needs_reauth = true,
-        Err(EsiError::Failed(e)) => return Err(e),
-    }
-
-    // ESI has no dedicated PLEX balance endpoint (confirmed against the full
-    // ESI OpenAPI spec - no plex/vault route exists at all); the only
-    // ESI-visible PLEX is literal PLEX items sitting in assets, so this pulls
-    // the whole paginated asset list just to sum one type_id. Deliberately
-    // skips name/region resolution (unlike the Assets tab's own fetch) since
-    // only the quantity is needed here.
-    const PLEX_TYPE_ID: i64 = 44992;
-    match authorized_get_paginated::<EsiAsset>(client, access_token, &format!("/characters/{character_id}/assets/")).await {
-        Ok(assets) => {
-            overview.plex_balance = Some(assets.iter().filter(|a| a.type_id == PLEX_TYPE_ID).map(|a| a.quantity).sum());
         }
         Err(EsiError::MissingScope) => overview.needs_reauth = true,
         Err(EsiError::Failed(e)) => return Err(e),
@@ -1305,8 +1316,16 @@ pub async fn fetch_character_location(
     let mut system_id: Option<i64> = None;
     let mut ship_type_id: Option<i64> = None;
 
-    match authorized_get::<LocationResponse>(client, access_token, &format!("/characters/{character_id}/location/")).await
-    {
+    // Independent endpoints once the token is in hand - fetch concurrently
+    // rather than one after another, same reasoning as fetch_character_overview.
+    let location_url = format!("/characters/{character_id}/location/");
+    let ship_url = format!("/characters/{character_id}/ship/");
+    let (location_result, ship_result) = futures::join!(
+        authorized_get::<LocationResponse>(client, access_token, &location_url),
+        authorized_get::<ShipResponse>(client, access_token, &ship_url),
+    );
+
+    match location_result {
         Ok(v) => {
             system_id = Some(v.solar_system_id);
             lookup_ids.push(v.solar_system_id);
@@ -1315,7 +1334,7 @@ pub async fn fetch_character_location(
         Err(EsiError::Failed(e)) => return Err(e),
     }
 
-    match authorized_get::<ShipResponse>(client, access_token, &format!("/characters/{character_id}/ship/")).await {
+    match ship_result {
         Ok(v) => {
             ship_type_id = Some(v.ship_type_id);
             lookup_ids.push(v.ship_type_id);

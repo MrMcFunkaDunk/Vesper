@@ -68,6 +68,14 @@ export function getRegionSellMinPrice(regionId: number, typeId: number): Promise
   return invoke("get_region_sell_min_price", { regionId, typeId });
 }
 
+/** Bulk sibling of getRegionSellMinPrice: one IPC call for a whole material
+ * list instead of one call per material. Missing/unpriced materials are
+ * simply absent from the returned map rather than null-valued. */
+export async function getRegionSellMinPrices(regionId: number, typeIds: number[]): Promise<Map<number, number>> {
+  const result = await invoke<Record<number, number>>("get_region_sell_min_prices", { regionId, typeIds });
+  return new Map(Object.entries(result).map(([typeId, price]) => [Number(typeId), price]));
+}
+
 /** Forces a full re-download of the market/industry SDE cache (types,
  * market groups, blueprint/reaction/reprocessing data) - only touches
  * redownloadable reference data, never a chain or a character. */

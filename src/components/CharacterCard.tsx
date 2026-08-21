@@ -1,5 +1,5 @@
 import type { CharacterOverview, SessionCharacter } from "../lib/eve";
-import { formatIsk, formatSp, formatPlex, formatTimeRemaining, formatQueueSummary } from "../lib/format";
+import { formatIsk, formatSp, formatTimeRemaining, formatQueueSummary } from "../lib/format";
 import CloneStateBadge from "./CloneStateBadge";
 
 interface CharacterCardProps {
@@ -61,9 +61,6 @@ function CharacterCard({ character, overview, isActive, pending, onSelect, onRea
           <div className="character-card-isk">
             {loading ? "—" : overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}
           </div>
-          {!loading && overview?.plex_balance != null && overview.plex_balance > 0 && (
-            <div className="character-card-plex">{formatPlex(overview.plex_balance)}</div>
-          )}
           <div className="character-card-sp">
             {loading ? "—" : overview?.total_sp != null ? formatSp(overview.total_sp) : "—"}
           </div>

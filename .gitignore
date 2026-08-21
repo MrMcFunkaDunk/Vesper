@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Local SSO client id override / callback port - never commit real values,
+# only src-tauri/.env.example (placeholders) is meant to be tracked.
+.env
+src-tauri/.env
+
 # Local-only reference clones of other projects' repos (eve-nexum, Pathfinder,
 # evemon, wanderer, zKillboard, EveLens, LazyBlacksmith, eve-tools-suite) used
 # for source-verification research - not part of VESPER itself.
