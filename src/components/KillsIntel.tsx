@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Search, Swords } from "lucide-react";
 import TrackedSystemsFeed from "./TrackedSystemsFeed";
 import RecentKillsFeed from "./RecentKillsFeed";
+import BattleReportsFeed from "./BattleReportsFeed";
 import KillDetailView from "./KillDetailView";
 import CharacterKillboard from "./CharacterKillboard";
 import SystemKillboard, { type SystemSummary } from "./SystemKillboard";
@@ -14,7 +15,7 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { searchCharacter, searchCharactersLive, searchEntitiesLive, type CharacterMatch, type EntityMatch } from "../lib/kills";
 import type { MarketItemRef } from "./MarketBrowser";
 
-type KillsTab = "tracked" | "recent";
+type KillsTab = "tracked" | "recent" | "battles";
 
 interface SearchSuggestion {
   kind: "character" | "corporation" | "alliance";
@@ -25,6 +26,7 @@ interface SearchSuggestion {
 const TABS: { id: KillsTab; label: string }[] = [
   { id: "tracked", label: "Tracked Systems" },
   { id: "recent", label: "Most Recent Kills" },
+  { id: "battles", label: "Battles" },
 ];
 
 type KillsView =
@@ -373,7 +375,7 @@ function KillsIntel({
 
         <div className="kills-header">
           <p className="eyebrow">Kills & Intel</p>
-          <h2>{tab === "tracked" ? "Tracked Systems" : "Most Recent Kills"}</h2>
+          <h2>{tab === "tracked" ? "Tracked Systems" : tab === "recent" ? "Most Recent Kills" : "Battles"}</h2>
         </div>
 
         <form className="kills-character-search-form" onSubmit={handleSearchCharacter}>
@@ -445,8 +447,16 @@ function KillsIntel({
             onSelectCorporation={pushCorporation}
             onSelectAlliance={pushAlliance}
           />
-        ) : (
+        ) : tab === "recent" ? (
           <RecentKillsFeed
+            onSelectKill={pushKillDetail}
+            onSelectCharacter={pushCharacter}
+            onSelectSystem={pushSystem}
+            onSelectCorporation={pushCorporation}
+            onSelectAlliance={pushAlliance}
+          />
+        ) : (
+          <BattleReportsFeed
             onSelectKill={pushKillDetail}
             onSelectCharacter={pushCharacter}
             onSelectSystem={pushSystem}

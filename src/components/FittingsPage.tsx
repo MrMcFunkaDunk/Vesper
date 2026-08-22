@@ -1,56 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Rocket, Copy, Send, Trash2, Save, RefreshCw } from "lucide-react";
-import {
-  listFits,
-  saveFit,
-  deleteFit,
-  syncCharacterFittings,
-  sendFitToCharacter,
-  exportFitEft,
-  exportFitDna,
-  type Fit,
-  type FitItem,
-} from "../lib/fittings";
-import { searchMarketTypes, getMarketPrices, type TypeSearchMatch } from "../lib/market";
+import { Rocket, Trash2, RefreshCw } from "lucide-react";
+import { listFits, saveFit, deleteFit, syncCharacterFittings, sendFitToCharacter, type Fit } from "../lib/fittings";
+import { getMarketPrices } from "../lib/market";
 import { resolveEntityNames } from "../lib/wars";
 import { formatIsk, typeIconUrl } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
+import FitBuilder from "./FitBuilder";
 import type { SessionCharacter } from "../lib/eve";
 
 interface FittingsPageProps {
   characters: SessionCharacter[];
+  /** A ship to jump straight into the builder with, e.g. from Item
+   * Database's "Fit This Ship" button (now on the Wallet & Market page). */
+  initialShipTypeId?: number | null;
+  onConsumeInitialShipTypeId?: () => void;
 }
 
 type FitTab = "library" | "builder";
 
 const PURPOSES = ["PvP", "PvE", "Exploring", "Industry", "Mining", "Mission", "Other"];
-
-const SLOT_GROUPS: { flagPrefix: string; label: string; group: number }[] = [
-  { flagPrefix: "LoSlot", label: "Low Slots", group: 0 },
-  { flagPrefix: "MedSlot", label: "Mid Slots", group: 1 },
-  { flagPrefix: "HiSlot", label: "High Slots", group: 2 },
-  { flagPrefix: "RigSlot", label: "Rig Slots", group: 3 },
-  { flagPrefix: "SubSystemSlot", label: "Subsystems", group: 4 },
-];
-
-function flagGroup(flag: string): number {
-  if (flag.startsWith("LoSlot")) return 0;
-  if (flag.startsWith("MedSlot")) return 1;
-  if (flag.startsWith("HiSlot")) return 2;
-  if (flag.startsWith("RigSlot")) return 3;
-  if (flag.startsWith("SubSystemSlot")) return 4;
-  if (flag === "DroneBay") return 5;
-  if (flag === "Cargo") return 6;
-  return 7;
-}
-
-function nextFlag(items: FitItem[], prefix: string): string {
-  let n = 0;
-  while (items.some((i) => i.flag === `${prefix}${n}`)) n++;
-  return `${prefix}${n}`;
-}
 
 /** Ship + a picker's worth of items priced from a bulk map - the same
  * average-price valuation used elsewhere in this app (Appraisal, etc.),
@@ -59,75 +28,6 @@ function computeCost(fit: Fit, priceById: Map<number, number>): number {
   let total = priceById.get(fit.ship_type_id) ?? 0;
   for (const item of fit.items) total += (priceById.get(item.type_id) ?? 0) * item.quantity;
   return total;
-}
-
-function TypeSearchBox({
-  placeholder,
-  onPick,
-}: {
-  placeholder: string;
-  onPick: (match: TypeSearchMatch) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      setSuggestions([]);
-      setOpen(false);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      searchMarketTypes(trimmed)
-        .then((results) => {
-          if (cancelled) return;
-          setSuggestions(results);
-          setOpen(results.length > 0);
-        })
-        .catch(() => {
-          if (!cancelled) setSuggestions([]);
-        });
-    }, 150);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [query]);
-
-  return (
-    <div className="kills-add-combobox fittings-search-combobox">
-      <input
-        type="text"
-        placeholder={placeholder}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onFocus={() => suggestions.length > 0 && setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
-      />
-      {open && (
-        <div className="gatecheck-slot-results kills-add-suggestions">
-          {suggestions.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                onPick(s);
-                setQuery("");
-                setOpen(false);
-              }}
-            >
-              <img src={typeIconUrl(s.id)} alt="" className="market-browser-row-icon" />
-              {s.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function emptyFit(): Fit {
@@ -146,7 +46,7 @@ function emptyFit(): Fit {
   };
 }
 
-function FittingsPage({ characters }: FittingsPageProps) {
+function FittingsPage({ characters, initialShipTypeId, onConsumeInitialShipTypeId }: FittingsPageProps) {
   const [tab, setTab] = useState<FitTab>("library");
   const [fits, setFits] = useState<Fit[] | null>(null);
   const [priceById, setPriceById] = useState<Map<number, number>>(new Map());
@@ -164,7 +64,6 @@ function FittingsPage({ characters }: FittingsPageProps) {
   const [sendCharacterId, setSendCharacterId] = useState<number | null>(characters[0]?.id ?? null);
   const [sending, setSending] = useState(false);
   const [sendMessage, setSendMessage] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
 
   const reportError = useErrorReporter();
 
@@ -228,6 +127,19 @@ function FittingsPage({ characters }: FittingsPageProps) {
     setTab("builder");
   }
 
+  function newFitWithShip(shipTypeId: number) {
+    setDraft({ ...emptyFit(), ship_type_id: shipTypeId });
+    setTab("builder");
+  }
+
+  useEffect(() => {
+    if (initialShipTypeId != null) {
+      newFitWithShip(initialShipTypeId);
+      onConsumeInitialShipTypeId?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialShipTypeId]);
+
   async function handleSync() {
     if (syncCharacterId == null) return;
     setSyncing(true);
@@ -279,36 +191,6 @@ function FittingsPage({ characters }: FittingsPageProps) {
     }
   }
 
-  async function handleCopyEft() {
-    if (!draft.id) {
-      reportError("Save the fit first.");
-      return;
-    }
-    try {
-      const text = await exportFitEft(draft.id);
-      await writeText(text);
-      setCopied("eft");
-      setTimeout(() => setCopied(null), 1500);
-    } catch (err) {
-      reportError(`Failed to copy EFT: ${String(err)}`);
-    }
-  }
-
-  async function handleCopyDna() {
-    if (!draft.id) {
-      reportError("Save the fit first.");
-      return;
-    }
-    try {
-      const text = await exportFitDna(draft.id);
-      await writeText(text);
-      setCopied("dna");
-      setTimeout(() => setCopied(null), 1500);
-    } catch (err) {
-      reportError(`Failed to copy DNA: ${String(err)}`);
-    }
-  }
-
   async function handleSendToCharacter() {
     if (!draft.id || sendCharacterId == null) return;
     setSending(true);
@@ -324,36 +206,18 @@ function FittingsPage({ characters }: FittingsPageProps) {
     }
   }
 
-  function addItem(flag: string, typeId: number) {
-    setDraft((prev) => {
-      const group = flagGroup(flag);
-      if (group === 5 || group === 6) {
-        const existing = prev.items.find((i) => i.flag === flag && i.type_id === typeId);
-        if (existing) {
-          return {
-            ...prev,
-            items: prev.items.map((i) => (i === existing ? { ...i, quantity: i.quantity + 1 } : i)),
-          };
-        }
-        return { ...prev, items: [...prev.items, { type_id: typeId, flag, quantity: 1 }] };
-      }
-      const newFlag = nextFlag(prev.items, flag);
-      return { ...prev, items: [...prev.items, { type_id: typeId, flag: newFlag, quantity: 1 }] };
-    });
-  }
-
-  function removeItem(index: number) {
-    setDraft((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
-  }
-
   function nameFor(typeId: number): string {
     return names[String(typeId)] ?? `Type #${typeId}`;
   }
 
-  const draftCost = computeCost(draft, priceById);
-  const shipItems = [...draft.items].sort((a, b) => flagGroup(a.flag) - flagGroup(b.flag));
-  const droneItems = shipItems.filter((i) => i.flag === "DroneBay");
-  const cargoItems = shipItems.filter((i) => i.flag === "Cargo");
+  /** Called the moment an item is picked in the Fit Builder (search box or
+   * item-browser tree) - both already know the item's real name from the
+   * pick itself, so there's no need to wait for a save+refetch cycle
+   * before nameFor() can resolve it (that gap is what showed "Type #N"
+   * for anything just added to an in-progress draft). */
+  function registerName(typeId: number, name: string) {
+    setNames((prev) => (prev[String(typeId)] ? prev : { ...prev, [String(typeId)]: name }));
+  }
 
   return (
     <main className="main main-fittings">
@@ -472,168 +336,21 @@ function FittingsPage({ characters }: FittingsPageProps) {
             )}
           </>
         ) : (
-          <div className="fittings-builder">
-            <div className="fittings-builder-main">
-              <div className="fittings-builder-ship">
-                {draft.ship_type_id ? (
-                  <div className="fittings-builder-ship-picked">
-                    <img src={typeIconUrl(draft.ship_type_id, 64)} alt="" />
-                    <span>{nameFor(draft.ship_type_id)}</span>
-                    <button type="button" className="detail-back" onClick={() => setDraft((p) => ({ ...p, ship_type_id: 0, items: [] }))}>
-                      Change Ship
-                    </button>
-                  </div>
-                ) : (
-                  <TypeSearchBox
-                    placeholder="Search for a ship..."
-                    onPick={(s) => setDraft((p) => ({ ...p, ship_type_id: s.id }))}
-                  />
-                )}
-              </div>
-
-              <div className="fittings-builder-fields">
-                <input
-                  type="text"
-                  className="fittings-name-input"
-                  value={draft.name}
-                  onChange={(e) => setDraft((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="Fit name"
-                />
-                <select className="market-region-select" value={draft.purpose} onChange={(e) => setDraft((p) => ({ ...p, purpose: e.target.value }))}>
-                  {PURPOSES.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  className="contracts-search-input"
-                  value={draft.tags.join(", ")}
-                  onChange={(e) => setDraft((p) => ({ ...p, tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) }))}
-                  placeholder="Tags, comma separated"
-                />
-                <textarea
-                  className="price-checker-input fittings-description-input"
-                  value={draft.description}
-                  onChange={(e) => setDraft((p) => ({ ...p, description: e.target.value }))}
-                  placeholder="Description (optional)"
-                  rows={2}
-                />
-              </div>
-
-              {draft.ship_type_id > 0 && (
-                <>
-                  {SLOT_GROUPS.map((g) => {
-                    const groupItems = shipItems.filter((i) => flagGroup(i.flag) === g.group);
-                    return (
-                      <div key={g.flagPrefix} className="fittings-slot-group">
-                        <p className="fittings-slot-group-label">{g.label}</p>
-                        <div className="fittings-slot-list">
-                          {groupItems.map((item) => {
-                            const index = draft.items.indexOf(item);
-                            return (
-                              <div key={item.flag} className="fittings-slot-item">
-                                <img src={typeIconUrl(item.type_id)} alt="" className="market-browser-row-icon" />
-                                <span>{nameFor(item.type_id)}</span>
-                                <button type="button" onClick={() => removeItem(index)}>
-                                  <Trash2 size={12} strokeWidth={2} />
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <TypeSearchBox placeholder={`+ Add to ${g.label.toLowerCase()}`} onPick={(s) => addItem(g.flagPrefix, s.id)} />
-                      </div>
-                    );
-                  })}
-
-                  <div className="fittings-slot-group">
-                    <p className="fittings-slot-group-label">Drones</p>
-                    <div className="fittings-slot-list">
-                      {droneItems.map((item) => {
-                        const index = draft.items.indexOf(item);
-                        return (
-                          <div key={`${item.flag}-${item.type_id}`} className="fittings-slot-item">
-                            <img src={typeIconUrl(item.type_id)} alt="" className="market-browser-row-icon" />
-                            <span>
-                              {nameFor(item.type_id)} x{item.quantity}
-                            </span>
-                            <button type="button" onClick={() => removeItem(index)}>
-                              <Trash2 size={12} strokeWidth={2} />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <TypeSearchBox placeholder="+ Add drone" onPick={(s) => addItem("DroneBay", s.id)} />
-                  </div>
-
-                  <div className="fittings-slot-group">
-                    <p className="fittings-slot-group-label">Cargo</p>
-                    <div className="fittings-slot-list">
-                      {cargoItems.map((item) => {
-                        const index = draft.items.indexOf(item);
-                        return (
-                          <div key={`${item.flag}-${item.type_id}`} className="fittings-slot-item">
-                            <img src={typeIconUrl(item.type_id)} alt="" className="market-browser-row-icon" />
-                            <span>
-                              {nameFor(item.type_id)} x{item.quantity}
-                            </span>
-                            <button type="button" onClick={() => removeItem(index)}>
-                              <Trash2 size={12} strokeWidth={2} />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <TypeSearchBox placeholder="+ Add cargo item" onPick={(s) => addItem("Cargo", s.id)} />
-                  </div>
-                </>
-              )}
-            </div>
-
-            <div className="fittings-builder-side">
-              <div className="fittings-cost-card">
-                <span className="market-stat-label">Estimated Cost</span>
-                <span className="market-stat-value">{formatIsk(draftCost)}</span>
-              </div>
-
-              <button type="button" className="kills-sync-btn fittings-full-btn" onClick={handleSave} disabled={saving}>
-                <Save size={14} strokeWidth={2} />
-                {saving ? "Saving..." : "Save Fit"}
-              </button>
-
-              <div className="fittings-export-row">
-                <button type="button" className="detail-back" onClick={handleCopyEft} disabled={!draft.id}>
-                  <Copy size={13} strokeWidth={2} />
-                  {copied === "eft" ? "Copied!" : "Copy EFT"}
-                </button>
-                <button type="button" className="detail-back" onClick={handleCopyDna} disabled={!draft.id}>
-                  <Copy size={13} strokeWidth={2} />
-                  {copied === "dna" ? "Copied!" : "Copy DNA"}
-                </button>
-              </div>
-              <p className="fittings-export-hint">Paste EFT text into EVE's in-game "Import Fitting" dialog.</p>
-
-              {characters.length > 0 && (
-                <div className="fittings-send-card">
-                  <p className="fittings-slot-group-label">Send to Character</p>
-                  <CharacterSelectorStrip characters={characters} selectedId={sendCharacterId} onSelect={setSendCharacterId} />
-                  <button
-                    type="button"
-                    className="kills-sync-btn fittings-full-btn"
-                    onClick={handleSendToCharacter}
-                    disabled={sending || !draft.id || sendCharacterId == null}
-                  >
-                    <Send size={14} strokeWidth={2} />
-                    {sending ? "Sending..." : "Send Straight to In-Game Fittings"}
-                  </button>
-                  {sendMessage && <p className="fittings-inline-success">{sendMessage}</p>}
-                </div>
-              )}
-            </div>
-          </div>
+          <FitBuilder
+            characters={characters}
+            draft={draft}
+            setDraft={setDraft}
+            nameFor={nameFor}
+            onRegisterName={registerName}
+            priceById={priceById}
+            sendCharacterId={sendCharacterId}
+            setSendCharacterId={setSendCharacterId}
+            saving={saving}
+            sending={sending}
+            sendMessage={sendMessage}
+            onSave={handleSave}
+            onSendToCharacter={handleSendToCharacter}
+          />
         )}
       </div>
     </main>

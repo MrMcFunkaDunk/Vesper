@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ChevronRight, Factory } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronRight, Factory, X } from "lucide-react";
 import {
   searchBlueprints,
   getBlueprintDetail,
@@ -32,9 +32,13 @@ import {
 } from "../lib/industryMath";
 import { formatIsk, typeIconUrl } from "../lib/format";
 import { searchSystemsLive, TRADE_HUB_REGIONS, type SystemSearchMatch } from "../lib/map";
+import { getCharacterMiningLedger, type CharacterMiningLedger, type SessionCharacter } from "../lib/eve";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useIndustryDefaults } from "../hooks/useIndustryDefaults";
+import HelpBadge from "./HelpBadge";
+import { HELP_CONTENT } from "../lib/helpContent";
+import CharacterSelectorStrip from "./CharacterSelectorStrip";
 
 const FACILITY_LABEL: Record<ReprocessingFacility, string> = {
   npc_station: "NPC Station",
@@ -64,7 +68,7 @@ const IMPLANT_LABEL: Record<ImplantTier, string> = {
   rx804: "RX-804 (+4%)",
 };
 
-type IndustryTab = "production" | "reprocessing" | "invention" | "research";
+type IndustryTab = "production" | "reprocessing" | "invention" | "research" | "mining";
 
 type StructureTier = "npc_station" | "engineering_complex";
 
@@ -173,6 +177,27 @@ function ProductionCalculator() {
   const [hubPrices, setHubPrices] = useState<Map<number, number>>(new Map());
   const [hubPricesLoading, setHubPricesLoading] = useState(false);
   const reportError = useErrorReporter();
+
+  // Multiple queued build jobs, each a snapshot of the tree as computed at
+  // "add" time (its own ME/TE/runs baked in) - independent of whatever the
+  // inputs above currently show, so reconfiguring for the next product
+  // doesn't retroactively change an already-queued one.
+  const [shoppingListJobs, setShoppingListJobs] = useState<{ id: string; name: string; runs: number; tree: BuildTreeNode }[]>([]);
+
+  function handleAddToShoppingList() {
+    if (!tree || !selected) return;
+    setShoppingListJobs((prev) => [...prev, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: selected.name, runs, tree }]);
+  }
+
+  function handleRemoveShoppingListJob(id: string) {
+    setShoppingListJobs((prev) => prev.filter((j) => j.id !== id));
+  }
+
+  const aggregatedMaterials = useMemo(() => {
+    const combined = new Map<number, { name: string; quantity: number }>();
+    for (const job of shoppingListJobs) flattenRawMaterials(job.tree, combined);
+    return Array.from(combined.entries());
+  }, [shoppingListJobs]);
 
   function handleSaveDefaults() {
     saveProductionDefaults({ materialEfficiency, timeEfficiency, structure, facilityTax });
@@ -457,6 +482,16 @@ function ProductionCalculator() {
             <button type="button" className="detail-back" onClick={handleSaveDefaults} title="Remember these ME/TE/structure/tax inputs as the default next time">
               {savedDefaults ? "Saved!" : "Save as Default"}
             </button>
+            {tree && (
+              <button
+                type="button"
+                className="detail-back"
+                onClick={handleAddToShoppingList}
+                title="Add this build (with its current ME/TE/runs) to the running shopping list below"
+              >
+                + Add to Shopping List
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -547,6 +582,61 @@ function ProductionCalculator() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {shoppingListJobs.length > 0 && (
+        <div className="industry-results-panel">
+          <div className="industry-shopping-list-header">
+            <p className="wh-side-label">Multi-Job Shopping List ({shoppingListJobs.length} job{shoppingListJobs.length === 1 ? "" : "s"})</p>
+          </div>
+          <div className="industry-shopping-list-jobs">
+            {shoppingListJobs.map((job) => (
+              <span key={job.id} className="data-table-tag data-table-tag-neutral industry-shopping-list-job-tag">
+                {job.name} x{job.runs}
+                <button type="button" onClick={() => handleRemoveShoppingListJob(job.id)} title="Remove this job from the list">
+                  <X size={11} strokeWidth={2.5} />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Material</th>
+                  <th className="data-table-numeric">Unit Price</th>
+                  <th className="data-table-numeric">Quantity</th>
+                  <th className="data-table-numeric">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aggregatedMaterials.map(([typeId, m]) => {
+                  const unitPrice = hubPrices.get(typeId) ?? basePrices.get(typeId) ?? 0;
+                  const total = unitPrice * m.quantity;
+                  return (
+                    <tr key={typeId}>
+                      <td className="industry-shopping-list-name">
+                        <img src={typeIconUrl(typeId, 32, m.name)} alt="" className="market-browser-row-icon" />
+                        {m.name}
+                      </td>
+                      <td className="data-table-numeric wallet-amount-negative">{formatIsk(unitPrice)}</td>
+                      <td className="data-table-numeric">{m.quantity.toLocaleString()}</td>
+                      <td className="data-table-numeric wallet-amount-negative">{formatIsk(total)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="industry-shopping-list-total-row">
+                  <td colSpan={3}>Combined Shopping List Total</td>
+                  <td className="data-table-numeric wallet-amount-negative">
+                    {formatIsk(aggregatedMaterials.reduce((sum, [typeId, m]) => sum + (hubPrices.get(typeId) ?? basePrices.get(typeId) ?? 0) * m.quantity, 0))}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -1468,7 +1558,112 @@ function ResearchCalculator() {
   );
 }
 
-function IndustryPage() {
+/** Character-only, per D5's scoping - corp mining observer data (refinery
+ * -level tracking of a whole team) is skipped for this pass. */
+function MiningLedgerTab({ characters }: { characters: SessionCharacter[] }) {
+  const [selectedId, setSelectedId] = useState<number | null>(characters[0]?.id ?? null);
+  const [ledger, setLedger] = useState<CharacterMiningLedger | null>(null);
+  const [prices, setPrices] = useState<Map<number, number>>(new Map());
+  const reportError = useErrorReporter();
+
+  useEffect(() => {
+    getMarketPrices()
+      .then((list) => {
+        const map = new Map<number, number>();
+        for (const p of list) if (p.average_price != null) map.set(p.type_id, p.average_price);
+        setPrices(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setLedger(null);
+    if (selectedId == null) return;
+    getCharacterMiningLedger(selectedId)
+      .then(setLedger)
+      .catch((err) => reportError(`Failed to load mining ledger: ${String(err)}`));
+  }, [selectedId, reportError]);
+
+  const grouped = useMemo(() => {
+    if (!ledger) return [];
+    const byType = new Map<number, { typeName: string; quantity: number }>();
+    for (const e of ledger.entries) {
+      const existing = byType.get(e.type_id);
+      if (existing) existing.quantity += e.quantity;
+      else byType.set(e.type_id, { typeName: e.type_name, quantity: e.quantity });
+    }
+    return [...byType.entries()]
+      .map(([typeId, v]) => ({ typeId, ...v, value: (prices.get(typeId) ?? 0) * v.quantity }))
+      .sort((a, b) => b.value - a.value);
+  }, [ledger, prices]);
+
+  const totalValue = grouped.reduce((sum, g) => sum + g.value, 0);
+  const distinctDays = ledger ? new Set(ledger.entries.map((e) => e.date)).size : 0;
+  const iskPerDay = distinctDays > 0 ? totalValue / distinctDays : 0;
+
+  return (
+    <div className="industry-production">
+      {characters.length > 1 && <CharacterSelectorStrip characters={characters} selectedId={selectedId} onSelect={setSelectedId} />}
+      {selectedId == null ? (
+        <p className="detail-empty">No connected characters.</p>
+      ) : !ledger ? (
+        <p className="detail-empty">Loading mining ledger...</p>
+      ) : ledger.needs_reauth ? (
+        <p className="detail-empty">Sign in again to unlock the mining ledger for this character.</p>
+      ) : ledger.entries.length === 0 ? (
+        <p className="detail-empty">No mining activity recorded in the last 90 days.</p>
+      ) : (
+        <>
+          <p className="settings-section-hint">
+            Up to 90 days of mining history from ESI, valued at EVE-wide average price - a rough guide, not a
+            guaranteed sell price.
+          </p>
+          <div className="market-browser-stats">
+            <div className="market-stat-card">
+              <span className="market-stat-label">Total Value</span>
+              <span className="market-stat-value">{formatIsk(totalValue)}</span>
+            </div>
+            <div className="market-stat-card">
+              <span className="market-stat-label">Active Days</span>
+              <span className="market-stat-value">{distinctDays}</span>
+            </div>
+            <div className="market-stat-card">
+              <span className="market-stat-label">ISK / Active Day</span>
+              <span className="market-stat-value">{formatIsk(iskPerDay)}</span>
+            </div>
+          </div>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Ore / Ice</th>
+                  <th className="data-table-numeric">Quantity</th>
+                  <th className="data-table-numeric">Est. Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {grouped.map((g) => (
+                  <tr key={g.typeId}>
+                    <td>
+                      <span className="asset-item-cell">
+                        <img src={typeIconUrl(g.typeId, 32, g.typeName)} alt="" className="market-browser-row-icon" />
+                        {g.typeName}
+                      </span>
+                    </td>
+                    <td className="data-table-numeric">{g.quantity.toLocaleString()}</td>
+                    <td className="data-table-numeric">{formatIsk(g.value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function IndustryPage({ characters }: { characters: SessionCharacter[] }) {
   const [tab, setTab] = useState<IndustryTab>("production");
 
   return (
@@ -1497,6 +1692,10 @@ function IndustryPage() {
           <button type="button" className={`character-tab${tab === "research" ? " character-tab-active" : ""}`} onClick={() => setTab("research")}>
             Research
           </button>
+          <button type="button" className={`character-tab${tab === "mining" ? " character-tab-active" : ""}`} onClick={() => setTab("mining")}>
+            Mining Ledger
+          </button>
+          <HelpBadge content={HELP_CONTENT[`industry.${tab}`] ?? HELP_CONTENT.industry} />
         </div>
 
         {tab === "production" ? (
@@ -1505,8 +1704,10 @@ function IndustryPage() {
           <ReprocessingCalculator />
         ) : tab === "invention" ? (
           <InventionCalculator />
-        ) : (
+        ) : tab === "research" ? (
           <ResearchCalculator />
+        ) : (
+          <MiningLedgerTab characters={characters} />
         )}
       </div>
     </main>

@@ -2066,6 +2066,7 @@ struct EsiLoyaltyPoints {
 
 #[derive(Serialize)]
 pub struct LoyaltyEntry {
+    pub corporation_id: i64,
     pub corporation_name: String,
     pub loyalty_points: i64,
 }
@@ -2093,12 +2094,143 @@ pub async fn fetch_character_loyalty(client: &reqwest::Client, config: &SsoConfi
     let mut entries: Vec<LoyaltyEntry> = raw
         .into_iter()
         .map(|l| LoyaltyEntry {
+            corporation_id: l.corporation_id,
             corporation_name: names.get(&l.corporation_id).cloned().unwrap_or_else(|| format!("Corporation #{}", l.corporation_id)),
             loyalty_points: l.loyalty_points,
         })
         .collect();
     entries.sort_by(|a, b| b.loyalty_points.cmp(&a.loyalty_points));
     Ok(CharacterLoyalty { entries, needs_reauth: false })
+}
+
+#[derive(Deserialize)]
+struct EsiMiningLedgerEntry {
+    date: String,
+    solar_system_id: i64,
+    type_id: i64,
+    quantity: i64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct MiningLedgerEntry {
+    pub date: String,
+    pub solar_system_id: i64,
+    pub solar_system_name: String,
+    pub type_id: i64,
+    pub type_name: String,
+    pub quantity: i64,
+}
+
+#[derive(Serialize, Default)]
+pub struct CharacterMiningLedger {
+    pub entries: Vec<MiningLedgerEntry>,
+    pub needs_reauth: bool,
+}
+
+/// Character's own mining ledger - up to 90 days of history, aggregated by
+/// ESI itself per (date, system, ore/ice type). ISK valuation is left to
+/// the frontend, which already has the shared market-price map other
+/// pages use, same as every other valuation feature this session.
+pub async fn fetch_character_mining_ledger(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterMiningLedger, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterMiningLedger { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get_paginated::<EsiMiningLedgerEntry>(client, &access_token, &format!("/characters/{character_id}/mining/")).await {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterMiningLedger { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+
+    let mut ids: Vec<i64> = raw.iter().flat_map(|e| [e.solar_system_id, e.type_id]).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let names = resolve_names(client, ids).await;
+
+    let entries = raw
+        .into_iter()
+        .map(|e| MiningLedgerEntry {
+            solar_system_name: names.get(&e.solar_system_id).cloned().unwrap_or_else(|| format!("System #{}", e.solar_system_id)),
+            type_name: names.get(&e.type_id).cloned().unwrap_or_else(|| format!("Type #{}", e.type_id)),
+            date: e.date,
+            solar_system_id: e.solar_system_id,
+            type_id: e.type_id,
+            quantity: e.quantity,
+        })
+        .collect();
+    Ok(CharacterMiningLedger { entries, needs_reauth: false })
+}
+
+#[derive(Deserialize, Default)]
+struct EsiLoyaltyRequiredItem {
+    type_id: i64,
+    quantity: i64,
+}
+
+#[derive(Deserialize)]
+struct EsiLoyaltyStoreOffer {
+    offer_id: i64,
+    type_id: i64,
+    quantity: i64,
+    isk_cost: i64,
+    lp_cost: i64,
+    #[serde(default)]
+    required_items: Vec<EsiLoyaltyRequiredItem>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct LoyaltyRequiredItem {
+    pub type_id: i64,
+    pub type_name: String,
+    pub quantity: i64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct LoyaltyStoreOffer {
+    pub offer_id: i64,
+    pub type_id: i64,
+    pub type_name: String,
+    pub quantity: i64,
+    pub isk_cost: i64,
+    pub lp_cost: i64,
+    pub required_items: Vec<LoyaltyRequiredItem>,
+}
+
+/// Every item purchasable with LP at one corporation's store - a public
+/// endpoint (no character token needed), unlike the character's own LP
+/// balance above. ISK-per-LP ranking is left to the frontend, which
+/// already has the shared market-price map the rest of Wallet & Market
+/// uses rather than duplicating pricing logic here.
+pub async fn fetch_loyalty_store_offers(client: &reqwest::Client, corporation_id: i64) -> Result<Vec<LoyaltyStoreOffer>, String> {
+    let raw: Vec<EsiLoyaltyStoreOffer> = public_get(client, &format!("/loyalty/stores/{corporation_id}/offers/")).await?;
+
+    let mut ids: Vec<i64> = Vec::new();
+    for offer in &raw {
+        ids.push(offer.type_id);
+        for item in &offer.required_items {
+            ids.push(item.type_id);
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    let names = resolve_names(client, ids).await;
+    let name_for = |type_id: i64| names.get(&type_id).cloned().unwrap_or_else(|| format!("Type #{type_id}"));
+
+    Ok(raw
+        .into_iter()
+        .map(|offer| LoyaltyStoreOffer {
+            offer_id: offer.offer_id,
+            type_id: offer.type_id,
+            type_name: name_for(offer.type_id),
+            quantity: offer.quantity,
+            isk_cost: offer.isk_cost,
+            lp_cost: offer.lp_cost,
+            required_items: offer
+                .required_items
+                .into_iter()
+                .map(|item| LoyaltyRequiredItem { type_id: item.type_id, type_name: name_for(item.type_id), quantity: item.quantity })
+                .collect(),
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]

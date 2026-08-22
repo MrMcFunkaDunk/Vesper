@@ -73,6 +73,13 @@ struct SystemRow {
     position_2d_x: f64,
     #[serde(rename = "position2Dy")]
     position_2d_y: f64,
+    /// The system's real 3D position in meters (distinct from the
+    /// position2Dx/y DOTLAN-style map projection above) - needed for
+    /// genuine light-year jump-range math, since the flattened 2D
+    /// projection distorts real distances between systems.
+    x: f64,
+    y: f64,
+    z: f64,
 }
 
 #[derive(Deserialize)]
@@ -282,7 +289,10 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<(), String> {
             constellation_id INTEGER NOT NULL DEFAULT 0,
             security REAL NOT NULL,
             x REAL NOT NULL,
-            y REAL NOT NULL
+            y REAL NOT NULL,
+            real_x REAL NOT NULL DEFAULT 0,
+            real_y REAL NOT NULL DEFAULT 0,
+            real_z REAL NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS jumps (from_id INTEGER NOT NULL, to_id INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS regions (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
@@ -317,19 +327,34 @@ fn ensure_schema(conn: &rusqlite::Connection) -> Result<(), String> {
     // actual constellation_id values get backfilled by the resync
     // needs_migration triggers below.
     let _ = conn.execute("ALTER TABLE systems ADD COLUMN constellation_id INTEGER NOT NULL DEFAULT 0", []);
+    // Installs synced before real 3D coordinates were tracked (only the
+    // flattened position2Dx/y map-projection columns existed) - add the
+    // columns if missing; the real values get backfilled by the
+    // needs_migration resync trigger below, same as constellation_id.
+    let _ = conn.execute("ALTER TABLE systems ADD COLUMN real_x REAL NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE systems ADD COLUMN real_y REAL NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE systems ADD COLUMN real_z REAL NOT NULL DEFAULT 0", []);
     Ok(())
 }
 
-/// True if the local cache predates constellation_id, system_services, or
-/// celestials/stations, and needs a full resync to backfill them.
+/// True if the local cache predates constellation_id, system_services,
+/// celestials/stations, or real 3D coordinates, and needs a full resync to
+/// backfill them.
 fn needs_migration(conn: &rusqlite::Connection) -> bool {
     let total: i64 = conn.query_row("SELECT COUNT(*) FROM systems", [], |row| row.get(0)).unwrap_or(0);
     let with_constellation: i64 =
         conn.query_row("SELECT COUNT(*) FROM systems WHERE constellation_id != 0", [], |row| row.get(0)).unwrap_or(0);
+    // No real system in New Eden sits exactly at the coordinate origin, so
+    // an all-zero real_x/y/z across every row is a reliable "never
+    // populated" signal, same reasoning as with_constellation above.
+    let with_real_coords: i64 = conn
+        .query_row("SELECT COUNT(*) FROM systems WHERE real_x != 0 OR real_y != 0 OR real_z != 0", [], |row| row.get(0))
+        .unwrap_or(0);
     let services_count: i64 = conn.query_row("SELECT COUNT(*) FROM system_services", [], |row| row.get(0)).unwrap_or(0);
     let celestials_count: i64 = conn.query_row("SELECT COUNT(*) FROM celestials", [], |row| row.get(0)).unwrap_or(0);
     let op_services_count: i64 = conn.query_row("SELECT COUNT(*) FROM operation_services", [], |row| row.get(0)).unwrap_or(0);
-    total > 0 && (with_constellation == 0 || services_count == 0 || celestials_count == 0 || op_services_count == 0)
+    total > 0
+        && (with_constellation == 0 || with_real_coords == 0 || services_count == 0 || celestials_count == 0 || op_services_count == 0)
 }
 
 /// Replaces the whole local map cache from freshly-downloaded CSVs, inside
@@ -358,7 +383,10 @@ fn import_map_data(
 
     {
         let mut stmt = tx
-            .prepare("INSERT INTO systems (id, name, region_id, constellation_id, security, x, y) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")
+            .prepare(
+                "INSERT INTO systems (id, name, region_id, constellation_id, security, x, y, real_x, real_y, real_z) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )
             .map_err(|e| format!("failed to prepare systems insert: {e}"))?;
         let mut reader = csv::Reader::from_reader(systems_csv.as_bytes());
         for result in reader.deserialize::<SystemRow>() {
@@ -371,6 +399,9 @@ fn import_map_data(
                 row.security,
                 row.position_2d_x,
                 row.position_2d_y,
+                row.x,
+                row.y,
+                row.z,
             ]);
         }
     }
@@ -740,6 +771,43 @@ pub async fn search_systems(app: tauri::AppHandle, client: &reqwest::Client, que
     })
     .await
     .map_err(|e| format!("system search task failed: {e}"))?
+}
+
+#[derive(Serialize, Clone)]
+pub struct SystemPosition {
+    pub system_id: i64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+/// Real 3D positions (meters) for a batch of systems - the light-year jump
+/// range/fuel/fatigue math the Capital Route planner runs needs true
+/// straight-line distance through space, not the flattened position2Dx/y
+/// map projection everything else in this file uses for on-screen layout.
+pub async fn get_system_positions(app: tauri::AppHandle, client: &reqwest::Client, ids: Vec<i64>) -> Result<Vec<SystemPosition>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SystemPosition>, String> {
+        let mut results = Vec::new();
+        if ids.is_empty() {
+            return Ok(results);
+        }
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open map database: {e}"))?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("SELECT id, real_x, real_y, real_z FROM systems WHERE id IN ({placeholders})");
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("failed to query system positions: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+                Ok(SystemPosition { system_id: row.get(0)?, x: row.get(1)?, y: row.get(2)?, z: row.get(3)? })
+            })
+            .map_err(|e| format!("failed to query system positions: {e}"))?;
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read system position row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("system positions task failed: {e}"))?
 }
 
 /// Breadth-first search outward from originId over the jump graph for the

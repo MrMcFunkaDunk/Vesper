@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Pin, PinOff } from "lucide-react";
 import { getMapData, regionHubColor, regionLabelWithHub, TRADE_HUB_REGIONS, type MapData } from "../lib/map";
+import { isPriceWidgetOpen, openPriceWidget, closePriceWidget } from "../lib/priceWidget";
+import { useErrorReporter } from "../hooks/useErrorReporter";
+import { toCsv, downloadCsv } from "../lib/csvExport";
 import {
   searchMarketTypes,
   getMarketGroups,
@@ -33,7 +36,7 @@ const iconModules = import.meta.glob("../assets/market-icons/icon-*.png", { eage
   string,
   string
 >;
-const CATEGORY_ICON_BY_ICON_ID: Record<number, string> = {};
+export const CATEGORY_ICON_BY_ICON_ID: Record<number, string> = {};
 for (const [path, url] of Object.entries(iconModules)) {
   const match = path.match(/icon-(\d+)\.png$/);
   if (match) CATEGORY_ICON_BY_ICON_ID[Number(match[1])] = url;
@@ -87,7 +90,7 @@ function getAncestorPath(groupId: number, groups: MarketGroupNode[]): MarketGrou
   return path;
 }
 
-interface CategoryTreeNodeProps {
+export interface CategoryTreeNodeProps {
   group: MarketGroupNode;
   depth: number;
   childrenByParent: Map<number | null, MarketGroupNode[]>;
@@ -102,7 +105,7 @@ interface CategoryTreeNodeProps {
  * (and, once expanded, its items) so every tier is browsable at once
  * instead of only one level at a time. Every row - not just the top
  * level - shows its real CCP category icon when we have one bundled. */
-function CategoryTreeNode({
+export function CategoryTreeNode({
   group,
   depth,
   childrenByParent,
@@ -216,6 +219,28 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
   const [regionId, setRegionId] = useState(defaultTradeHub);
   const [hubTouched, setHubTouched] = useState(false);
   const [otherRegionTouched, setOtherRegionTouched] = useState(false);
+  const [widgetPinned, setWidgetPinned] = useState(false);
+  const reportError = useErrorReporter();
+
+  useEffect(() => {
+    isPriceWidgetOpen()
+      .then(setWidgetPinned)
+      .catch(() => {});
+  }, []);
+
+  async function handleTogglePriceWidget() {
+    try {
+      if (widgetPinned) {
+        await closePriceWidget();
+        setWidgetPinned(false);
+      } else {
+        await openPriceWidget(regionId);
+        setWidgetPinned(true);
+      }
+    } catch (err) {
+      reportError(`Failed to ${widgetPinned ? "close" : "open"} the price widget: ${String(err)}`);
+    }
+  }
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -240,7 +265,7 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
 
   useEffect(() => {
     if (!initialItem) return;
-    pickType({ id: initialItem.id, name: initialItem.name });
+    pickType({ id: initialItem.id, name: initialItem.name, slot_type: null, volume: 0 });
     onConsumeInitialItem?.();
     // Only meant to consume the value this component received, not re-fire
     // on every render (pickType/onConsumeInitialItem are stable enough for
@@ -381,6 +406,36 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
   const splitPrice = bestSell != null && bestBuy != null ? (bestSell + bestBuy) / 2 : null;
   const avgVolume7d = history && history.length > 0 ? history.slice(-7).reduce((sum, p) => sum + p.volume, 0) / Math.min(7, history.length) : null;
 
+  function exportItemTabCsv() {
+    if (!selectedType) return;
+    const namePrefix = selectedType.name.replace(/\s+/g, "_");
+    if (itemTab === "history") {
+      if (!history) return;
+      const csv = toCsv(history, [
+        { header: "Date", value: (p) => p.date },
+        { header: "Average", value: (p) => p.average },
+        { header: "Highest", value: (p) => p.highest },
+        { header: "Lowest", value: (p) => p.lowest },
+        { header: "Order Count", value: (p) => p.order_count },
+        { header: "Volume", value: (p) => p.volume },
+      ]);
+      downloadCsv(`${namePrefix}_price_history.csv`, csv);
+      return;
+    }
+    const rows = [...sellOrders.map((o) => ({ ...o, side: "Sell" })), ...buyOrders.map((o) => ({ ...o, side: "Buy" }))];
+    const csv = toCsv(rows, [
+      { header: "Side", value: (o) => o.side },
+      { header: "Price", value: (o) => o.price },
+      { header: "Volume Remaining", value: (o) => o.volume_remain },
+      { header: "Volume Total", value: (o) => o.volume_total },
+      { header: "Min Volume", value: (o) => o.min_volume },
+      { header: "Location", value: (o) => locationNames[o.location_id] ?? String(o.location_id) },
+      { header: "Range", value: (o) => o.range },
+      { header: "Issued", value: (o) => o.issued },
+    ]);
+    downloadCsv(`${namePrefix}_orders.csv`, csv);
+  }
+
   return (
     <div className="market-browser">
       <div className="market-browser-toolbar">
@@ -424,6 +479,19 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
               </option>
             ))}
         </select>
+        <button
+          type="button"
+          className={`overlay-toggle-btn${widgetPinned ? " overlay-toggle-btn-active" : ""}`}
+          onClick={handleTogglePriceWidget}
+          title={
+            widgetPinned
+              ? "Close the floating price widget"
+              : "Pin a small always-on-top window with a live price lookup for the current region"
+          }
+        >
+          {widgetPinned ? <PinOff size={13} strokeWidth={2} /> : <Pin size={13} strokeWidth={2} />}
+          {widgetPinned ? "Unpin Price Widget" : "Pin Price Widget"}
+        </button>
       </div>
 
       <div className="market-browser-layout">
@@ -532,6 +600,9 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
                   onClick={() => setItemTab("history")}
                 >
                   Price History
+                </button>
+                <button type="button" className="skill-action-btn market-item-export-btn" onClick={exportItemTabCsv}>
+                  Export CSV
                 </button>
               </div>
 

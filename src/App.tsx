@@ -22,6 +22,7 @@ const CalendarPage = lazy(() => import("./components/CalendarPage"));
 const FittingsPage = lazy(() => import("./components/FittingsPage"));
 const PathWormholeFinderPage = lazy(() => import("./components/PathWormholeFinderPage"));
 const IndustryPage = lazy(() => import("./components/IndustryPage"));
+const MultiboxPage = lazy(() => import("./components/MultiboxPage"));
 import type { SystemSummary } from "./components/SystemKillboard";
 import type { CorporationSummary } from "./components/CorporationKillboard";
 import type { AllianceSummary } from "./components/AllianceKillboard";
@@ -49,6 +50,7 @@ function App() {
   const [pendingCorporation, setPendingCorporation] = useState<CorporationSummary | null>(null);
   const [pendingAlliance, setPendingAlliance] = useState<AllianceSummary | null>(null);
   const [pendingMarketItem, setPendingMarketItem] = useState<MarketItemRef | null>(null);
+  const [pendingFitShipTypeId, setPendingFitShipTypeId] = useState<number | null>(null);
   const reportError = useErrorReporter();
 
   useEffect(() => {
@@ -146,6 +148,11 @@ function App() {
     setActiveId("wallet");
   }
 
+  function handleFitShip(shipTypeId: number) {
+    setPendingFitShipTypeId(shipTypeId);
+    setActiveId("fittings-fleets");
+  }
+
   async function handleAdd() {
     await startLogin(DASHBOARD_SCOPES);
     refreshSession();
@@ -167,7 +174,7 @@ function App() {
       <div className="shell">
         <ProximityFlashOverlay />
         <Sidebar activeId={activeId} onSelect={handleSelectNav} />
-        <TopBar title={active.label} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
+        <TopBar title={active.label} activeId={activeId} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
         <Suspense fallback={<div className="app-loading">Loading...</div>}>
         {activeId === "dashboard" ? (
           detailCharacter ? (
@@ -212,6 +219,7 @@ function App() {
             initialCharacterId={session.active_character_id}
             initialMarketItem={pendingMarketItem}
             onConsumeInitialMarketItem={() => setPendingMarketItem(null)}
+            onFitShip={handleFitShip}
           />
         ) : activeId === "intel-check" ? (
           <IntelCheck onSelectCharacter={handleOpenCharacterKillboard} />
@@ -226,15 +234,22 @@ function App() {
         ) : activeId === "calendar" ? (
           <CalendarPage characters={session.characters} initialCharacterId={session.active_character_id} />
         ) : activeId === "fittings-fleets" ? (
-          <FittingsPage characters={session.characters} />
+          <FittingsPage
+            characters={session.characters}
+            initialShipTypeId={pendingFitShipTypeId}
+            onConsumeInitialShipTypeId={() => setPendingFitShipTypeId(null)}
+          />
         ) : activeId === "path-wormhole-finder" ? (
           <PathWormholeFinderPage
             activeCharacterId={session.active_character_id}
             activeCharacterName={session.characters.find((c) => c.id === session.active_character_id)?.name ?? null}
+            characters={session.characters}
             onSelectSystem={handleOpenSystemKills}
           />
         ) : activeId === "industry" ? (
-          <IndustryPage />
+          <IndustryPage characters={session.characters} />
+        ) : activeId === "multiboxing" ? (
+          <MultiboxPage />
         ) : (
           <MainContent icon={active.icon} label={active.label} description={active.description} />
         )}

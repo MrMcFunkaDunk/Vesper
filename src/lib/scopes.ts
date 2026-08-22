@@ -33,4 +33,5 @@ export const DASHBOARD_SCOPES = [
   "esi-fittings.write_fittings.v1",
   "esi-characters.read_agents_research.v1",
   "esi-characters.read_fw_stats.v1",
+  "esi-industry.read_character_mining.v1",
 ];

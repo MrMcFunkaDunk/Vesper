@@ -4,9 +4,12 @@ import { getServerStatus, type Session } from "../lib/eve";
 import { searchSystemsLive, type SystemSearchMatch } from "../lib/map";
 import { useLocationTracking, type ProximityRadius } from "../hooks/useLocationTracking";
 import StatusChip from "./StatusChip";
+import HelpBadge from "./HelpBadge";
+import { HELP_CONTENT } from "../lib/helpContent";
 
 interface TopBarProps {
   title: string;
+  activeId: string;
   session: Session;
   onSwitch: (id: number) => void;
   onAdd: () => void;
@@ -238,15 +241,19 @@ function LocationTracker() {
   );
 }
 
-function TopBar({ title, session, onSwitch, onAdd, onLogout }: TopBarProps) {
+function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout }: TopBarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const active =
     session.characters.find((c) => c.id === session.active_character_id) ??
     session.characters[0];
+  const helpContent = HELP_CONTENT[activeId];
 
   return (
     <header className="topbar">
-      <h1 className="topbar-title">{title}</h1>
+      <div className="topbar-title-group">
+        <h1 className="topbar-title">{title}</h1>
+        {helpContent && <HelpBadge content={helpContent} />}
+      </div>
       <div className="topbar-right">
         <LocationTracker />
         <ServerStatusBadge />

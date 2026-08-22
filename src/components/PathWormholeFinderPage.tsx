@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Waypoints, Star, Trash2, Navigation, Sparkles, Download, Telescope } from "lucide-react";
+import { Waypoints, Star, Trash2, Navigation, Sparkles, Download, Telescope, Rocket } from "lucide-react";
 import { toPng } from "html-to-image";
 import {
   listChains,
@@ -15,7 +15,7 @@ import {
   type ChainDetail,
 } from "../lib/wormholes";
 import { searchSystemsLive, getMapData, type SystemSearchMatch } from "../lib/map";
-import { getCharacterContacts, type ContactEntry } from "../lib/eve";
+import { getCharacterContacts, type ContactEntry, type SessionCharacter } from "../lib/eve";
 import { matchContactStanding } from "../lib/standings";
 import { findFreePosition } from "../lib/chainLayout";
 import { useErrorReporter } from "../hooks/useErrorReporter";
@@ -30,10 +30,12 @@ import ConnectionEditor from "./wormholes/ConnectionEditor";
 import RoutePanel from "./wormholes/RoutePanel";
 import ChainEffectSummary from "./wormholes/ChainEffectSummary";
 import ScoutConnectionsPanel from "./wormholes/ScoutConnectionsPanel";
+import CapitalRoutePanel from "./wormholes/CapitalRoutePanel";
 
 interface PathWormholeFinderPageProps {
   activeCharacterId: number | null;
   activeCharacterName: string | null;
+  characters: SessionCharacter[];
   onSelectSystem: (system: SystemSummary) => void;
 }
 
@@ -99,7 +101,7 @@ function SystemSearchBox({ onPick }: { onPick: (match: SystemSearchMatch) => voi
   );
 }
 
-function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSelectSystem }: PathWormholeFinderPageProps) {
+function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, characters, onSelectSystem }: PathWormholeFinderPageProps) {
   const [chains, setChains] = useState<ChainSummary[] | null>(null);
   const [activeChainId, setActiveChainId] = useState<string | null>(null);
   const [chain, setChain] = useState<ChainDetail | null>(null);
@@ -108,6 +110,7 @@ function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSele
   const [routePanelOpen, setRoutePanelOpen] = useState(false);
   const [effectsPanelOpen, setEffectsPanelOpen] = useState(false);
   const [scoutPanelOpen, setScoutPanelOpen] = useState(false);
+  const [capitalPanelOpen, setCapitalPanelOpen] = useState(false);
   const [pendingRouteDestination, setPendingRouteDestination] = useState<{ id: number; name: string } | null>(null);
   const [followLiveLocation, setFollowLiveLocation] = useState(true);
   const [securityBySystemId, setSecurityBySystemId] = useState<Map<number, number>>(new Map());
@@ -437,7 +440,7 @@ function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSele
       <div className="wh-page">
         <div className="wh-page-header">
           <p className="eyebrow">
-            <Waypoints size={14} strokeWidth={2} /> Path & Wormhole Finder
+            <Waypoints size={14} strokeWidth={2} /> Path & Wormhole Tracker
           </p>
           <h2>Chain Mapper</h2>
           <p className="wh-page-subtitle">
@@ -474,9 +477,19 @@ function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSele
                         setRoutePanelOpen((v) => !v);
                         setEffectsPanelOpen(false);
                         setScoutPanelOpen(false);
+                        setCapitalPanelOpen(false);
                       }}
                     >
                       <Navigation size={13} strokeWidth={2} /> Route
+                    </button>
+                    <button
+                      type="button"
+                      className={`wh-mode-btn wh-live-tracking-toggle ${chain.auto_map_enabled ? "wh-live-tracking-on" : "wh-live-tracking-off"}`}
+                      onClick={() => handleToggleAutoMap(chain.id, !chain.auto_map_enabled)}
+                      title="When this is toggled on, VESPER automatically tracks your path through systems and wormholes as you jump, adding each new system to this chain for you."
+                    >
+                      <span className="wh-live-tracking-dot" />
+                      {chain.auto_map_enabled ? "Live Tracking On" : "Live Tracking Off"}
                     </button>
                     <button
                       type="button"
@@ -485,6 +498,7 @@ function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSele
                         setEffectsPanelOpen((v) => !v);
                         setRoutePanelOpen(false);
                         setScoutPanelOpen(false);
+                        setCapitalPanelOpen(false);
                       }}
                     >
                       <Sparkles size={13} strokeWidth={2} /> Effects
@@ -496,9 +510,22 @@ function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSele
                         setScoutPanelOpen((v) => !v);
                         setRoutePanelOpen(false);
                         setEffectsPanelOpen(false);
+                        setCapitalPanelOpen(false);
                       }}
                     >
                       <Telescope size={13} strokeWidth={2} /> Scout
+                    </button>
+                    <button
+                      type="button"
+                      className={`wh-mode-btn wh-capital-toggle${capitalPanelOpen ? " wh-mode-btn-active" : ""}`}
+                      onClick={() => {
+                        setCapitalPanelOpen((v) => !v);
+                        setRoutePanelOpen(false);
+                        setEffectsPanelOpen(false);
+                        setScoutPanelOpen(false);
+                      }}
+                    >
+                      <Rocket size={13} strokeWidth={2} /> Capital
                     </button>
                     <button type="button" className="wh-mode-btn wh-export-btn" onClick={handleExportPng} title="Export chain as PNG">
                       <Download size={13} strokeWidth={2} /> Export
@@ -554,6 +581,8 @@ function PathWormholeFinderPage({ activeCharacterId, activeCharacterName, onSele
                       }}
                       onClose={() => setScoutPanelOpen(false)}
                     />
+                  ) : capitalPanelOpen ? (
+                    <CapitalRoutePanel characters={characters} onClose={() => setCapitalPanelOpen(false)} />
                   ) : selectedSystem ? (
                     <>
                       <div className="wh-system-header">

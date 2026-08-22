@@ -14,6 +14,7 @@ import {
   Swords,
   Calendar as CalendarIcon,
   Waypoints,
+  Users,
 } from "lucide-react";
 import Wordmark from "./Wordmark";
 import ColorPickerMenu from "./ColorPickerMenu";
@@ -34,6 +35,7 @@ import fittingsFleetsIcon from "../assets/sidebar-icons/fittings-fleets.png";
 import warsIcon from "../assets/sidebar-icons/wars.png";
 import calendarIcon from "../assets/sidebar-icons/calendar.png";
 import pathWormholeFinderIcon from "../assets/sidebar-icons/path-wormhole-finder.png";
+import multiboxingIcon from "../assets/sidebar-icons/multiboxing.png";
 
 export interface NavItem {
   id: string;
@@ -71,7 +73,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     id: "path-wormhole-finder",
-    label: "Path & Wormhole Finder",
+    label: "Path & Wormhole Tracker",
     icon: Waypoints,
     image: pathWormholeFinderIcon,
     description: "Plot routes across New Eden including wormhole connections, not just stargates.",
@@ -116,7 +118,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     id: "fittings-fleets",
-    label: "Fittings & Fleets",
+    label: "Fitting",
     icon: Wrench,
     image: fittingsFleetsIcon,
     description: "An in-app fit builder with saved fits and fleet composition tooling.",
@@ -134,6 +136,13 @@ export const NAV_ITEMS: NavItem[] = [
     icon: CalendarIcon,
     image: calendarIcon,
     description: "Upcoming in-game events and fleet ops.",
+  },
+  {
+    id: "multiboxing",
+    label: "Multiboxing",
+    icon: Users,
+    image: multiboxingIcon,
+    description: "Live thumbnail previews of every running EVE client, with click-to-switch - opens as its own floating window.",
   },
   {
     id: "settings",

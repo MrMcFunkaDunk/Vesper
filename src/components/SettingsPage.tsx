@@ -13,12 +13,15 @@ import type { Session } from "../lib/eve";
 import { TRADE_HUB_REGIONS } from "../lib/map";
 import { NAV_ITEMS } from "./Sidebar";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import SettingsSyncPanel from "./SettingsSyncPanel";
 
 interface SettingsPageProps {
   session: Session;
   onAdd: () => void;
   onLogout: (id: number) => void;
 }
+
+type SettingsTab = "general" | "sync";
 
 /** Strips the "esi-"/".v1" boilerplate every scope carries and turns the
  * dot/underscore-separated remainder into something readable, e.g.
@@ -32,6 +35,7 @@ function formatScope(scope: string): string {
 }
 
 function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
+  const [tab, setTab] = useState<SettingsTab>("general");
   const [tested, setTested] = useState(false);
   const [soundEnabled, setSoundEnabled] = useSoundEnabled();
   const { prefs: notifPrefs, setEnabled: setNotifEnabled, update: updateNotifPrefs, permissionDenied } = useNotificationPreferences();
@@ -79,6 +83,19 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
           <p className="settings-intro">Manage logged-in characters, granted scopes, notifications, and app-wide preferences.</p>
         </div>
 
+        <div className="kills-tabs">
+          <button type="button" className={`kills-tab ${tab === "general" ? "kills-tab-active" : ""}`} onClick={() => setTab("general")}>
+            General
+          </button>
+          <button type="button" className={`kills-tab ${tab === "sync" ? "kills-tab-active" : ""}`} onClick={() => setTab("sync")}>
+            Settings Sync
+          </button>
+        </div>
+
+        {tab === "sync" ? (
+          <SettingsSyncPanel characters={session.characters} />
+        ) : (
+          <>
         <div className="settings-section">
           <h3>Characters &amp; Scopes</h3>
           <p className="settings-section-hint">
@@ -257,6 +274,8 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
             {resyncing ? "Re-syncing..." : resyncDone ? "Done!" : "Re-sync Market & Industry Data"}
           </button>
         </div>
+          </>
+        )}
       </div>
     </main>
   );

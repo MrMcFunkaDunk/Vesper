@@ -3,9 +3,10 @@ import { ExternalLink, Radio } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { checkIntel, type IntelEntry } from "../lib/kills";
 import { listIntelChannels, pollIntelChannel, type IntelChannelInfo, type IntelLine } from "../lib/intelFeed";
+import { resolveTypeIdsByName } from "../lib/market";
 import { useIntelChannel } from "../hooks/useIntelChannel";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { formatIsk } from "../lib/format";
+import { formatIsk, typeIconUrl } from "../lib/format";
 
 interface IntelCheckProps {
   onSelectCharacter: (characterId: number) => void;
@@ -123,12 +124,37 @@ function IntelPilotCard({
   );
 }
 
-type IntelCheckTab = "paste" | "live";
+type IntelCheckTab = "paste" | "live" | "dscan";
 
 const INTEL_CHECK_TABS: { id: IntelCheckTab; label: string }[] = [
   { id: "paste", label: "Paste Local" },
   { id: "live", label: "Live Feed" },
+  { id: "dscan", label: "D-Scan" },
 ];
+
+interface DScanGroup {
+  typeName: string;
+  typeId: number | null;
+  count: number;
+}
+
+/** EVE's own Directional Scanner clipboard format (Ctrl+A, Ctrl+C in the
+ * D-Scan window): one tab-separated "Name\tType\tDistance" row per
+ * detected item. Only the Type column matters for a count summary - Name
+ * is often blank (ships) or a celestial's proper name, and distance isn't
+ * needed to know what's out there. Malformed/header rows (anything that
+ * doesn't split into exactly 3 tab-separated fields) are silently skipped. */
+function parseDScan(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const line of text.split(/\r?\n/)) {
+    const parts = line.split("\t");
+    if (parts.length !== 3) continue;
+    const typeName = parts[1].trim();
+    if (!typeName) continue;
+    counts.set(typeName, (counts.get(typeName) ?? 0) + 1);
+  }
+  return counts;
+}
 
 /** How often the Live tab re-polls its watched channel's log file for new
  * lines - frequent enough to feel live, far short of hammering disk I/O. */
@@ -153,6 +179,35 @@ function IntelCheck({ onSelectCharacter }: IntelCheckProps) {
   const [checkedPilot, setCheckedPilot] = useState<IntelEntry | null>(null);
   const [checkingSpeaker, setCheckingSpeaker] = useState<string | null>(null);
   const cursorRef = useRef(0);
+
+  const [dscanText, setDscanText] = useState("");
+  const [dscanGroups, setDscanGroups] = useState<DScanGroup[] | null>(null);
+  const [dscanAnalyzing, setDscanAnalyzing] = useState(false);
+
+  async function handleAnalyzeDScan() {
+    const counts = parseDScan(dscanText);
+    if (counts.size === 0) {
+      reportError("Couldn't find any tab-separated rows - paste directly from the D-Scan window (Ctrl+A, Ctrl+C there).");
+      return;
+    }
+    setDscanAnalyzing(true);
+    try {
+      const typeIds = await resolveTypeIdsByName([...counts.keys()]);
+      const groups = [...counts.entries()]
+        .map(([typeName, count]) => ({ typeName, typeId: typeIds.get(typeName) ?? null, count }))
+        .sort((a, b) => b.count - a.count);
+      setDscanGroups(groups);
+    } catch (err) {
+      reportError(`Failed to analyze D-Scan: ${String(err)}`);
+    } finally {
+      setDscanAnalyzing(false);
+    }
+  }
+
+  function handleClearDScan() {
+    setDscanText("");
+    setDscanGroups(null);
+  }
 
   // Distinct characters seen in the logs, most-recently-active first (channels
   // is already sorted that way) - lets the user pick "which of my characters"
@@ -290,11 +345,13 @@ function IntelCheck({ onSelectCharacter }: IntelCheckProps) {
       <div className="intel-check-page">
         <div className="intel-check-header">
           <p className="eyebrow">Intel Check</p>
-          <h2>{tab === "paste" ? "Local Threat Check" : "Live Intel Feed"}</h2>
+          <h2>{tab === "paste" ? "Local Threat Check" : tab === "live" ? "Live Intel Feed" : "D-Scan Analysis"}</h2>
           <p className="intel-check-intro">
             {tab === "paste"
               ? "Paste names from Local chat to get intelligence on pilots in your system - killboard history, corp and alliance affiliations, and a threat score to help you decide whether to engage or dock up."
-              : "Reads EVE's own local chat log for a channel you pick - no copy-paste needed. Click any name to run the same threat check against them."}
+              : tab === "live"
+                ? "Reads EVE's own local chat log for a channel you pick - no copy-paste needed. Click any name to run the same threat check against them."
+                : "Paste a Directional Scan result to get an instant count of every ship, structure, and object type it found - who and what is actually out there right now."}
           </p>
         </div>
 
@@ -379,7 +436,7 @@ function IntelCheck({ onSelectCharacter }: IntelCheckProps) {
               </>
             )}
           </>
-        ) : (
+        ) : tab === "live" ? (
           <>
             {channels === null ? (
               <p className="detail-empty">Reading EVE chat logs...</p>
@@ -463,6 +520,67 @@ function IntelCheck({ onSelectCharacter }: IntelCheckProps) {
                   ))
                 )}
               </div>
+            )}
+          </>
+        ) : (
+          <>
+            <textarea
+              className="price-checker-input"
+              placeholder={"Paste your D-Scan results here (Ctrl+A, Ctrl+C in the Directional Scanner window)."}
+              value={dscanText}
+              onChange={(e) => setDscanText(e.target.value)}
+              rows={8}
+            />
+            <p className="intel-check-hint">
+              Paste directly from EVE's Directional Scan results window - the tab-separated Name/Type/Distance format
+              copies straight from there.
+            </p>
+
+            <div className="intel-check-actions">
+              <button type="button" className="kills-sync-btn" onClick={handleAnalyzeDScan} disabled={dscanAnalyzing || !dscanText.trim()}>
+                {dscanAnalyzing ? "Analyzing..." : "Analyze D-Scan"}
+              </button>
+              <button type="button" className="detail-back" onClick={handleClearDScan} disabled={dscanAnalyzing}>
+                Clear
+              </button>
+            </div>
+
+            {dscanGroups && (
+              <>
+                <div className="market-browser-stats">
+                  <div className="market-stat-card">
+                    <span className="market-stat-label">Total Objects</span>
+                    <span className="market-stat-value">{dscanGroups.reduce((sum, g) => sum + g.count, 0)}</span>
+                  </div>
+                  <div className="market-stat-card">
+                    <span className="market-stat-label">Distinct Types</span>
+                    <span className="market-stat-value">{dscanGroups.length}</span>
+                  </div>
+                </div>
+                <div className="data-table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th className="data-table-numeric">Count</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dscanGroups.map((g) => (
+                        <tr key={g.typeName}>
+                          <td>
+                            <span className="asset-item-cell">
+                              {g.typeId != null && <img className="asset-item-icon" src={typeIconUrl(g.typeId, 32, g.typeName)} alt="" />}
+                              {g.typeName}
+                            </span>
+                          </td>
+                          <td className="data-table-numeric">{g.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </>
         )}

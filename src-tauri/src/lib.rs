@@ -1,5 +1,8 @@
+mod abyssal;
+mod asset_history;
 mod auth;
 mod characters;
+mod combat_overlay;
 mod commands;
 mod config;
 mod esi;
@@ -8,10 +11,13 @@ mod intel_feed;
 mod kills;
 mod map;
 mod market;
+mod multibox;
 mod news;
 mod pi;
+mod price_widget;
 mod route;
 mod scout;
+mod settings_sync;
 mod skillplans;
 mod wars;
 mod wormholes;
@@ -31,6 +37,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(commands::AppState { http_client })
         .setup(|app| {
             let handle = app.handle().clone();
@@ -64,6 +71,11 @@ pub fn run() {
             commands::get_character_contacts,
             commands::get_character_medals,
             commands::get_character_loyalty,
+            commands::get_character_mining_ledger,
+            commands::get_loyalty_store_offers,
+            commands::check_abyssal_value,
+            commands::record_asset_snapshot,
+            commands::get_asset_history,
             commands::get_character_assets,
             commands::get_character_market_orders,
             commands::get_character_contracts,
@@ -134,13 +146,23 @@ pub fn run() {
             commands::get_war_detail,
             commands::resolve_entity_names,
             commands::search_systems_live,
+            commands::get_system_positions,
             commands::plan_gate_check,
             commands::get_gate_activity,
             commands::get_system_gates,
+            commands::get_item_categories,
+            commands::get_category_groups,
+            commands::get_group_items,
+            commands::get_item_detail,
+            commands::get_ship_stats,
+            commands::get_jump_drive_info,
+            commands::get_item_resource_costs,
+            commands::get_skill_requirements_bulk,
             commands::search_market_types,
             commands::get_market_groups,
             commands::get_pi_data,
             commands::get_market_group_types,
+            commands::resolve_type_ids_by_name,
             commands::get_region_market_orders,
             commands::get_region_sell_min_price,
             commands::get_region_sell_min_prices,
@@ -174,6 +196,35 @@ pub fn run() {
             commands::reorder_plan_entries,
             commands::delete_plan_entry,
             commands::find_chain_route,
+            commands::get_multibox_clients,
+            commands::is_multibox_overlay_open,
+            commands::open_multibox_overlay,
+            commands::close_multibox_overlay,
+            commands::get_multibox_settings,
+            commands::set_multibox_settings,
+            commands::list_multibox_profiles,
+            commands::save_multibox_profile,
+            commands::delete_multibox_profile,
+            commands::is_price_widget_open,
+            commands::open_price_widget,
+            commands::close_price_widget,
+            commands::is_combat_overlay_open,
+            commands::open_combat_overlay,
+            commands::close_combat_overlay,
+            commands::get_default_eve_settings_path,
+            commands::list_eve_settings_servers,
+            commands::list_eve_settings_profiles,
+            commands::list_eve_settings_files,
+            commands::sync_eve_settings_file,
+            commands::list_settings_backups,
+            commands::create_settings_file_backup,
+            commands::create_settings_profile_backup,
+            commands::restore_settings_backup,
+            commands::delete_settings_backup,
+            commands::create_eve_settings_profile,
+            commands::rename_eve_settings_profile,
+            commands::duplicate_eve_settings_profile,
+            commands::delete_eve_settings_profile,
             commands::set_chain_auto_map,
             commands::upsert_mass_log,
             commands::delete_mass_log_entry,

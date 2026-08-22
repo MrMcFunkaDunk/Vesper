@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Search, RefreshCw } from "lucide-react";
+import { ArrowLeft, Search, RefreshCw, Sparkles } from "lucide-react";
+import { toCsv, downloadCsv } from "../lib/csvExport";
 import {
   getCharacterOverview,
   getCharacterSkills,
@@ -52,6 +53,9 @@ import {
   type SessionCharacter,
 } from "../lib/eve";
 import { getCharacterKills, getCharacterLosses, type KillEntry } from "../lib/kills";
+import { getMarketPrices } from "../lib/market";
+import { recordAssetSnapshot, getAssetHistory, type AssetSnapshot } from "../lib/assetHistory";
+import { checkAbyssalValue, type AbyssalValueResult } from "../lib/abyssal";
 import InsuranceCalculator from "./InsuranceCalculator";
 import SkillPlanTab from "./SkillPlanTab";
 import {
@@ -208,6 +212,34 @@ function fmtCount(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+/** A tiny value-over-time trend line - only ever as many points as there
+ * are recorded days (starts empty, grows a day at a time), so this stays
+ * hidden until there's at least two days to actually draw a line between. */
+function AssetValueSparkline({ points }: { points: AssetSnapshot[] }) {
+  if (points.length < 2) return null;
+  const width = 220;
+  const height = 40;
+  const values = points.map((p) => p.total_value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const stepX = width / (points.length - 1);
+  const coords = points.map((p, i) => `${(i * stepX).toFixed(1)},${(height - ((p.total_value - min) / range) * height).toFixed(1)}`);
+  const change = values[values.length - 1] - values[0];
+  const changePct = values[0] !== 0 ? (change / Math.abs(values[0])) * 100 : 0;
+  return (
+    <div className="asset-sparkline-wrap" title={`${points[0].snapshot_date} to ${points[points.length - 1].snapshot_date}`}>
+      <svg viewBox={`0 0 ${width} ${height}`} className="asset-sparkline" preserveAspectRatio="none">
+        <polyline points={coords.join(" ")} className={change >= 0 ? "asset-sparkline-line-up" : "asset-sparkline-line-down"} fill="none" />
+      </svg>
+      <span className={change >= 0 ? "wallet-amount-positive" : "wallet-amount-negative"}>
+        {change >= 0 ? "+" : ""}
+        {changePct.toFixed(1)}% over {points.length} day{points.length === 1 ? "" : "s"}
+      </span>
+    </div>
+  );
+}
+
 /** Bonus remaps (new-player grants) bypass the normal once-a-year cooldown entirely - checked first regardless of accrued_remap_cooldown_date. */
 function remapAvailabilityText(attributes: CharacterAttributes): string {
   if (attributes.bonus_remaps > 0) {
@@ -251,6 +283,9 @@ function CharacterDetail({
   const [assetQuery, setAssetQuery] = useState("");
   const [assetGroupBy, setAssetGroupBy] = useState<"region" | "location" | "group">("region");
   const [expandedAssetGroups, setExpandedAssetGroups] = useState<Set<string>>(new Set());
+  const [assetPrices, setAssetPrices] = useState<Map<number, number>>(new Map());
+  const [assetHistory, setAssetHistory] = useState<AssetSnapshot[] | null>(null);
+  const [abyssalChecks, setAbyssalChecks] = useState<Record<number, "checking" | "none" | AbyssalValueResult>>({});
   const [marketOrders, setMarketOrders] = useState<CharacterMarketOrders | null>(null);
   const [contracts, setContracts] = useState<CharacterContracts | null>(null);
   const [expandedContractId, setExpandedContractId] = useState<number | null>(null);
@@ -272,6 +307,25 @@ function CharacterDetail({
   const reportError = useErrorReporter();
 
   useEffect(() => {
+    getMarketPrices()
+      .then((list) => {
+        const map = new Map<number, number>();
+        for (const p of list) if (p.average_price != null) map.set(p.type_id, p.average_price);
+        setAssetPrices(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "assets" || !assets || assets.needs_reauth || assetPrices.size === 0) return;
+    const totalValue = assets.entries.reduce((sum, a) => sum + (assetPrices.get(a.type_id) ?? 0) * a.quantity, 0);
+    recordAssetSnapshot(character.id, totalValue)
+      .then(() => getAssetHistory(character.id))
+      .then(setAssetHistory)
+      .catch(() => {});
+  }, [tab, assets, assetPrices, character.id]);
+
+  useEffect(() => {
     // Hydrate from the last successful fetch rather than blanking to null -
     // if Tranquility is down right now, this is the only data there is to
     // show until it comes back.
@@ -288,6 +342,8 @@ function CharacterDetail({
     setLoyalty(null);
     setAssets(null);
     setAssetQuery("");
+    setAssetHistory(null);
+    setAbyssalChecks({});
     setMarketOrders(null);
     setContracts(null);
     setExpandedContractId(null);
@@ -594,19 +650,61 @@ function CharacterDetail({
     });
   }
 
+  function csvFilename(suffix: string): string {
+    return `${character.name.replace(/\s+/g, "_")}_${suffix}.csv`;
+  }
+
   function exportSkillsCsv() {
-    const rows = [["Group", "Skill", "Rank", "Level", "Skillpoints"]];
-    for (const s of visibleSkills) {
-      rows.push([s.group_name, s.name, String(s.rank), String(s.trained_level), String(s.skillpoints)]);
-    }
-    const csv = rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\r\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${character.name.replace(/\s+/g, "_")}_skills.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const csv = toCsv(visibleSkills, [
+      { header: "Group", value: (s) => s.group_name },
+      { header: "Skill", value: (s) => s.name },
+      { header: "Rank", value: (s) => s.rank },
+      { header: "Level", value: (s) => s.trained_level },
+      { header: "Skillpoints", value: (s) => s.skillpoints },
+    ]);
+    downloadCsv(csvFilename("skills"), csv);
+  }
+
+  function exportAssetsCsv() {
+    const csv = toCsv(filteredAssets, [
+      { header: "Item", value: (a) => a.type_name },
+      { header: "Group", value: (a) => a.group_name },
+      { header: "Quantity", value: (a) => a.quantity },
+      { header: "Value", value: (a) => (assetPrices.get(a.type_id) ?? 0) * a.quantity },
+      { header: "Location", value: (a) => a.location_name },
+      { header: "Region", value: (a) => a.region_name },
+      { header: "Flag", value: (a) => a.location_flag },
+    ]);
+    downloadCsv(csvFilename("assets"), csv);
+  }
+
+  function exportWalletCsv() {
+    if (!walletJournal) return;
+    const csv = toCsv(walletJournal.entries, [
+      { header: "Date", value: (e) => e.date },
+      { header: "Type", value: (e) => e.ref_type },
+      { header: "Description", value: (e) => e.description },
+      { header: "Amount", value: (e) => e.amount },
+      { header: "Balance", value: (e) => e.balance ?? "" },
+      { header: "From", value: (e) => e.first_party_name ?? "" },
+      { header: "To", value: (e) => e.second_party_name ?? "" },
+    ]);
+    downloadCsv(csvFilename("wallet_journal"), csv);
+  }
+
+  function exportTransactionsCsv() {
+    if (!transactions) return;
+    const csv = toCsv(transactions.entries, [
+      { header: "Date", value: (t) => t.date },
+      { header: "Side", value: (t) => (t.is_buy ? "Buy" : "Sell") },
+      { header: "Item", value: (t) => t.type_name },
+      { header: "Quantity", value: (t) => t.quantity },
+      { header: "Unit Price", value: (t) => t.unit_price },
+      { header: "Total", value: (t) => t.quantity * t.unit_price },
+      { header: "Location", value: (t) => t.location_name },
+      { header: "With", value: (t) => t.client_name },
+    ]);
+    downloadCsv(csvFilename("transactions"), csv);
   }
 
   const filteredAssets =
@@ -622,6 +720,24 @@ function CharacterDetail({
       else next.add(name);
       return next;
     });
+  }
+
+  /** On demand only - there's no cheap way to know in advance which assets
+   * are mutated, so this checks one specific item's real item_id against
+   * ESI when clicked, rather than eagerly checking the whole asset list. */
+  async function handleCheckAbyssal(itemId: number, typeId: number) {
+    setAbyssalChecks((prev) => ({ ...prev, [itemId]: "checking" }));
+    try {
+      const result = await checkAbyssalValue(typeId, itemId);
+      setAbyssalChecks((prev) => ({ ...prev, [itemId]: result ?? "none" }));
+    } catch (err) {
+      reportError(`Failed to check abyssal value: ${String(err)}`);
+      setAbyssalChecks((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+    }
   }
   const activeKillLogList = killLogTab === "kills" ? kills : losses;
 
@@ -1057,10 +1173,19 @@ function CharacterDetail({
           else assetGroups.set(key, [a]);
         }
         const sortedAssetGroups = Array.from(assetGroups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        const totalAssetValue = cappedAssets.reduce((sum, a) => sum + (assetPrices.get(a.type_id) ?? 0) * a.quantity, 0);
         return (
           <>
             <div className="detail-panel-header">
-              <p className="eyebrow">Assets{assets ? ` (${fmtCount(assets.entries.length)})` : ""}</p>
+              <p className="eyebrow">
+                Assets{assets ? ` (${fmtCount(assets.entries.length)})` : ""}
+                {assetPrices.size > 0 && (
+                  <span className="asset-total-value" title="EVE-wide average price x quantity - a rough guide, not a guaranteed sell price.">
+                    · {formatIsk(totalAssetValue)}
+                  </span>
+                )}
+              </p>
+              {assetHistory && <AssetValueSparkline points={assetHistory} />}
               <div className="detail-search">
                 <Search size={13} strokeWidth={2} />
                 <input
@@ -1103,12 +1228,16 @@ function CharacterDetail({
                     <button type="button" className="skill-action-btn" onClick={() => setExpandedAssetGroups(new Set())}>
                       Collapse All
                     </button>
+                    <button type="button" className="skill-action-btn" onClick={exportAssetsCsv}>
+                      Export CSV
+                    </button>
                   </div>
                 </div>
                 <div className="skill-groups">
                   {sortedAssetGroups.map(([groupName, groupAssets]) => {
                     const collapsed = !expandedAssetGroups.has(groupName);
                     const totalQty = groupAssets.reduce((sum, a) => sum + a.quantity, 0);
+                    const groupValue = groupAssets.reduce((sum, a) => sum + (assetPrices.get(a.type_id) ?? 0) * a.quantity, 0);
                     return (
                       <div key={groupName} className="skill-group">
                         <button type="button" className="skill-group-header" onClick={() => toggleAssetGroup(groupName)}>
@@ -1116,6 +1245,7 @@ function CharacterDetail({
                           <span className="skill-group-name">{groupName}</span>
                           <span className="skill-group-count">
                             {fmtCount(groupAssets.length)} items · {fmtCount(totalQty)} qty
+                            {groupValue > 0 ? ` · ${formatIsk(groupValue)}` : ""}
                           </span>
                         </button>
                         {!collapsed && (
@@ -1125,6 +1255,7 @@ function CharacterDetail({
                                 <tr>
                                   <th>Item</th>
                                   <th className="data-table-numeric">Qty</th>
+                                  <th className="data-table-numeric">Value</th>
                                   <th>Location</th>
                                   <th>Flag</th>
                                 </tr>
@@ -1139,6 +1270,38 @@ function CharacterDetail({
                                       </span>
                                     </td>
                                     <td className="data-table-numeric">{fmtCount(a.quantity)}</td>
+                                    <td className="data-table-numeric">
+                                      {assetPrices.has(a.type_id) ? formatIsk((assetPrices.get(a.type_id) ?? 0) * a.quantity) : "—"}
+                                      {(() => {
+                                        const check = abyssalChecks[a.item_id];
+                                        if (check === "checking") {
+                                          return <span className="asset-abyssal-status">Checking...</span>;
+                                        }
+                                        if (check === "none") {
+                                          return <span className="asset-abyssal-status">Not mutated</span>;
+                                        }
+                                        if (check) {
+                                          return (
+                                            <span
+                                              className="asset-abyssal-status asset-abyssal-value"
+                                              title="Estimate via MutaMarket (community-run, machine-learning model - not a guaranteed sell price)"
+                                            >
+                                              Abyssal: {check.estimated_value != null ? formatIsk(check.estimated_value) : "no estimate"}
+                                            </span>
+                                          );
+                                        }
+                                        return (
+                                          <button
+                                            type="button"
+                                            className="asset-abyssal-check-btn"
+                                            onClick={() => handleCheckAbyssal(a.item_id, a.type_id)}
+                                            title="Check if this is a mutated (abyssal) item and estimate its real value via MutaMarket"
+                                          >
+                                            <Sparkles size={11} strokeWidth={2} />
+                                          </button>
+                                        );
+                                      })()}
+                                    </td>
                                     <td>{a.location_name}</td>
                                     <td>{a.location_flag}</td>
                                   </tr>
@@ -1275,16 +1438,39 @@ function CharacterDetail({
                           ) : contractItems[c.contract_id].length === 0 ? (
                             <p className="detail-empty">No items listed for this contract.</p>
                           ) : (
-                            <ul className="contract-items-list">
-                              {contractItems[c.contract_id].map((item, i) => (
-                                <li key={i}>
-                                  <img className="asset-item-icon" src={typeIconUrl(item.type_id, 32, item.type_name)} alt="" />
-                                  {item.type_name}
-                                  {item.quantity > 1 ? ` x${item.quantity.toLocaleString()}` : ""}
-                                  {!item.is_included ? " (requested)" : ""}
-                                </li>
-                              ))}
-                            </ul>
+                            <>
+                              <ul className="contract-items-list">
+                                {contractItems[c.contract_id].map((item, i) => (
+                                  <li key={i}>
+                                    <img className="asset-item-icon" src={typeIconUrl(item.type_id, 32, item.type_name)} alt="" />
+                                    {item.type_name}
+                                    {item.quantity > 1 ? ` x${item.quantity.toLocaleString()}` : ""}
+                                    {!item.is_included ? " (requested)" : ""}
+                                  </li>
+                                ))}
+                              </ul>
+                              {c.contract_type === "item_exchange" &&
+                                assetPrices.size > 0 &&
+                                (() => {
+                                  const itemsValue = contractItems[c.contract_id]
+                                    .filter((item) => item.is_included)
+                                    .reduce((sum, item) => sum + (assetPrices.get(item.type_id) ?? 0) * item.quantity, 0);
+                                  const price = c.price ?? 0;
+                                  const delta = itemsValue - price;
+                                  return (
+                                    <p
+                                      className="contract-value-delta"
+                                      title="Included items priced at EVE-wide average - a rough guide, not a guaranteed sell price. Requested items (what you'd hand over) aren't counted."
+                                    >
+                                      Included items worth ~{formatIsk(itemsValue)} vs. asking {formatIsk(price)} -{" "}
+                                      <span className={delta >= 0 ? "wallet-amount-positive" : "wallet-amount-negative"}>
+                                        {delta >= 0 ? "+" : ""}
+                                        {formatIsk(delta)} {delta >= 0 ? "under market" : "over market"}
+                                      </span>
+                                    </p>
+                                  );
+                                })()}
+                            </>
                           )}
                         </td>
                       </tr>
@@ -1346,6 +1532,11 @@ function CharacterDetail({
                 <p className="eyebrow">ISK Balance</p>
                 <h2>{overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}</h2>
               </div>
+              {walletJournal && walletJournal.entries.length > 0 && (
+                <button type="button" className="skill-action-btn" onClick={exportWalletCsv}>
+                  Export CSV
+                </button>
+              )}
             </div>
             {!walletJournal ? (
               <p className="detail-empty">Loading wallet journal...</p>
@@ -1401,7 +1592,14 @@ function CharacterDetail({
         ) : transactions.entries.length === 0 ? (
           <p className="detail-empty">No recent transactions.</p>
         ) : (
-          <div className="data-table-wrap">
+          <>
+            <div className="detail-panel-header">
+              <p className="eyebrow">Transactions ({fmtCount(transactions.entries.length)})</p>
+              <button type="button" className="skill-action-btn" onClick={exportTransactionsCsv}>
+                Export CSV
+              </button>
+            </div>
+            <div className="data-table-wrap">
             <table className="data-table">
               <thead>
                 <tr>
@@ -1442,7 +1640,8 @@ function CharacterDetail({
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         );
 
       case "mail": {

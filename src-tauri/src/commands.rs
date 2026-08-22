@@ -1,4 +1,4 @@
-use crate::{auth, characters, config, esi, fittings, intel_feed, kills, map, market, news, pi, route, scout, skillplans, wars, wormholes};
+use crate::{abyssal, asset_history, auth, characters, combat_overlay, config, esi, fittings, intel_feed, kills, map, market, multibox, news, pi, price_widget, route, scout, settings_sync, skillplans, wars, wormholes};
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -186,6 +186,32 @@ pub async fn get_character_medals(state: State<'_, AppState>, id: i64) -> Result
 pub async fn get_character_loyalty(state: State<'_, AppState>, id: i64) -> Result<esi::CharacterLoyalty, String> {
     let config = config::load()?;
     esi::fetch_character_loyalty(&state.http_client, &config, id).await
+}
+
+#[tauri::command]
+pub async fn get_character_mining_ledger(state: State<'_, AppState>, id: i64) -> Result<esi::CharacterMiningLedger, String> {
+    let config = config::load()?;
+    esi::fetch_character_mining_ledger(&state.http_client, &config, id).await
+}
+
+#[tauri::command]
+pub async fn get_loyalty_store_offers(state: State<'_, AppState>, corporation_id: i64) -> Result<Vec<esi::LoyaltyStoreOffer>, String> {
+    esi::fetch_loyalty_store_offers(&state.http_client, corporation_id).await
+}
+
+#[tauri::command]
+pub async fn check_abyssal_value(state: State<'_, AppState>, type_id: i64, item_id: i64) -> Result<Option<abyssal::AbyssalValueResult>, String> {
+    abyssal::check_abyssal_value(&state.http_client, type_id, item_id).await
+}
+
+#[tauri::command]
+pub fn record_asset_snapshot(app: AppHandle, character_id: i64, total_value: f64) -> Result<(), String> {
+    asset_history::record_snapshot(&app, character_id, total_value)
+}
+
+#[tauri::command]
+pub fn get_asset_history(app: AppHandle, character_id: i64) -> Result<Vec<asset_history::AssetSnapshot>, String> {
+    asset_history::get_history(&app, character_id)
 }
 
 #[tauri::command]
@@ -666,6 +692,15 @@ pub async fn search_systems_live(
 }
 
 #[tauri::command]
+pub async fn get_system_positions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+) -> Result<Vec<map::SystemPosition>, String> {
+    map::get_system_positions(app, &state.http_client, ids).await
+}
+
+#[tauri::command]
 pub async fn plan_gate_check(
     state: State<'_, AppState>,
     waypoints: Vec<i64>,
@@ -683,6 +718,54 @@ pub async fn get_gate_activity(state: State<'_, AppState>, system_ids: Vec<i64>)
 #[tauri::command]
 pub async fn get_system_gates(state: State<'_, AppState>, system_id: i64) -> Result<Vec<route::GateSummary>, String> {
     Ok(route::fetch_system_gate_summaries(&state.http_client, system_id).await)
+}
+
+#[tauri::command]
+pub async fn get_item_categories(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<market::CategorySummary>, String> {
+    market::get_item_categories(app, &state.http_client).await
+}
+
+#[tauri::command]
+pub async fn get_category_groups(app: AppHandle, state: State<'_, AppState>, category_id: i64) -> Result<Vec<market::GroupSummary>, String> {
+    market::get_category_groups(app, &state.http_client, category_id).await
+}
+
+#[tauri::command]
+pub async fn get_group_items(app: AppHandle, state: State<'_, AppState>, group_id: i64) -> Result<Vec<market::TypeSummary>, String> {
+    market::get_group_items(app, &state.http_client, group_id).await
+}
+
+#[tauri::command]
+pub async fn get_item_detail(app: AppHandle, state: State<'_, AppState>, type_id: i64) -> Result<market::ItemDetail, String> {
+    market::get_item_detail(app, &state.http_client, type_id).await
+}
+
+#[tauri::command]
+pub async fn get_ship_stats(app: AppHandle, state: State<'_, AppState>, type_id: i64) -> Result<market::ShipStats, String> {
+    market::get_ship_stats(app, &state.http_client, type_id).await
+}
+
+#[tauri::command]
+pub async fn get_jump_drive_info(app: AppHandle, state: State<'_, AppState>, type_id: i64) -> Result<Option<market::JumpDriveInfo>, String> {
+    market::get_jump_drive_info(app, &state.http_client, type_id).await
+}
+
+#[tauri::command]
+pub async fn get_item_resource_costs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    type_ids: Vec<i64>,
+) -> Result<HashMap<i64, market::ItemResourceCost>, String> {
+    market::get_item_resource_costs(app, &state.http_client, type_ids).await
+}
+
+#[tauri::command]
+pub async fn get_skill_requirements_bulk(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    type_ids: Vec<i64>,
+) -> Result<HashMap<i64, Vec<market::SkillRequirement>>, String> {
+    market::get_skill_requirements_bulk(app, &state.http_client, type_ids).await
 }
 
 #[tauri::command]
@@ -741,6 +824,11 @@ pub async fn get_market_group_types(
     market_group_id: i64,
 ) -> Result<Vec<market::TypeSummary>, String> {
     market::get_market_group_types(app, &state.http_client, market_group_id).await
+}
+
+#[tauri::command]
+pub async fn resolve_type_ids_by_name(app: AppHandle, state: State<'_, AppState>, names: Vec<String>) -> Result<HashMap<String, i64>, String> {
+    market::resolve_type_ids_by_name(app, &state.http_client, names).await
 }
 
 #[tauri::command]
@@ -985,4 +1073,150 @@ pub async fn find_chain_route(
     destination_system_id: i64,
 ) -> Result<Vec<wormholes::RouteStep>, String> {
     wormholes::find_chain_route(app, state.http_client.clone(), chain_id, origin_system_id, destination_system_id).await
+}
+
+#[tauri::command]
+pub fn get_multibox_clients() -> Vec<multibox::MultiboxClient> {
+    multibox::enumerate_eve_clients()
+}
+
+#[tauri::command]
+pub fn is_multibox_overlay_open() -> bool {
+    multibox::is_overlay_open()
+}
+
+#[tauri::command]
+pub fn open_multibox_overlay(app: AppHandle) {
+    let settings = multibox::load_settings(&app);
+    multibox::open_overlay(app, settings);
+}
+
+#[tauri::command]
+pub fn close_multibox_overlay() {
+    multibox::close_overlay();
+}
+
+#[tauri::command]
+pub fn get_multibox_settings(app: AppHandle) -> multibox::MultiboxSettings {
+    multibox::load_settings(&app)
+}
+
+#[tauri::command]
+pub fn set_multibox_settings(app: AppHandle, settings: multibox::MultiboxSettings) -> Result<(), String> {
+    multibox::update_settings(&app, settings)
+}
+
+#[tauri::command]
+pub fn list_multibox_profiles(app: AppHandle) -> Vec<multibox::MultiboxProfile> {
+    multibox::list_profiles(&app)
+}
+
+#[tauri::command]
+pub fn save_multibox_profile(app: AppHandle, name: String, settings: multibox::MultiboxSettings) -> Result<(), String> {
+    multibox::save_profile(&app, name, settings)
+}
+
+#[tauri::command]
+pub fn delete_multibox_profile(app: AppHandle, name: String) -> Result<(), String> {
+    multibox::delete_profile(&app, &name)
+}
+
+#[tauri::command]
+pub fn is_price_widget_open() -> bool {
+    price_widget::is_widget_open()
+}
+
+#[tauri::command]
+pub fn open_price_widget(app: AppHandle, state: State<'_, AppState>, region_id: i64) {
+    price_widget::open_widget(app, state.http_client.clone(), region_id);
+}
+
+#[tauri::command]
+pub fn close_price_widget() {
+    price_widget::close_widget();
+}
+
+#[tauri::command]
+pub fn is_combat_overlay_open() -> bool {
+    combat_overlay::is_widget_open()
+}
+
+#[tauri::command]
+pub fn open_combat_overlay() {
+    combat_overlay::open_widget();
+}
+
+#[tauri::command]
+pub fn close_combat_overlay() {
+    combat_overlay::close_widget();
+}
+
+#[tauri::command]
+pub fn get_default_eve_settings_path() -> Option<String> {
+    settings_sync::default_eve_settings_path().map(|p| p.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn list_eve_settings_servers(base_path: String) -> Result<Vec<settings_sync::EveServerFolder>, String> {
+    settings_sync::list_servers(&base_path)
+}
+
+#[tauri::command]
+pub fn list_eve_settings_profiles(server_path: String) -> Result<Vec<settings_sync::EveSettingsProfile>, String> {
+    settings_sync::list_profiles(&server_path)
+}
+
+#[tauri::command]
+pub fn list_eve_settings_files(profile_path: String) -> Result<Vec<settings_sync::EveSettingsFile>, String> {
+    settings_sync::list_settings_files(&profile_path)
+}
+
+#[tauri::command]
+pub fn sync_eve_settings_file(app: AppHandle, source_path: String, dest_paths: Vec<String>) -> Result<Vec<settings_sync::SyncResult>, String> {
+    settings_sync::sync_settings_file(&app, &source_path, dest_paths)
+}
+
+#[tauri::command]
+pub fn list_settings_backups(app: AppHandle) -> Vec<settings_sync::BackupEntry> {
+    settings_sync::list_backups(&app)
+}
+
+#[tauri::command]
+pub fn create_settings_file_backup(app: AppHandle, source_path: String, display_name: Option<String>) -> Result<settings_sync::BackupEntry, String> {
+    settings_sync::create_file_backup(&app, &source_path, display_name)
+}
+
+#[tauri::command]
+pub fn create_settings_profile_backup(app: AppHandle, profile_path: String, display_name: Option<String>) -> Result<settings_sync::BackupEntry, String> {
+    settings_sync::create_profile_backup(&app, &profile_path, display_name)
+}
+
+#[tauri::command]
+pub fn restore_settings_backup(app: AppHandle, backup_id: String) -> Result<(), String> {
+    settings_sync::restore_backup(&app, &backup_id)
+}
+
+#[tauri::command]
+pub fn delete_settings_backup(app: AppHandle, backup_id: String) -> Result<(), String> {
+    settings_sync::delete_backup(&app, &backup_id)
+}
+
+#[tauri::command]
+pub fn create_eve_settings_profile(server_path: String, name: String) -> Result<settings_sync::EveSettingsProfile, String> {
+    settings_sync::create_profile(&server_path, &name)
+}
+
+#[tauri::command]
+pub fn rename_eve_settings_profile(profile_path: String, new_name: String) -> Result<settings_sync::EveSettingsProfile, String> {
+    settings_sync::rename_profile(&profile_path, &new_name)
+}
+
+#[tauri::command]
+pub fn duplicate_eve_settings_profile(profile_path: String, new_name: String) -> Result<settings_sync::EveSettingsProfile, String> {
+    settings_sync::duplicate_profile(&profile_path, &new_name)
+}
+
+#[tauri::command]
+pub fn delete_eve_settings_profile(profile_path: String) -> Result<(), String> {
+    settings_sync::delete_profile(&profile_path)
 }

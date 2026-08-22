@@ -297,6 +297,7 @@ export function getCharacterMedals(id: number): Promise<CharacterMedals> {
 }
 
 export interface LoyaltyEntry {
+  corporation_id: number;
   corporation_name: string;
   loyalty_points: number;
 }
@@ -308,6 +309,26 @@ export interface CharacterLoyalty {
 
 export function getCharacterLoyalty(id: number): Promise<CharacterLoyalty> {
   return invoke("get_character_loyalty", { id });
+}
+
+export interface MiningLedgerEntry {
+  date: string;
+  solar_system_id: number;
+  solar_system_name: string;
+  type_id: number;
+  type_name: string;
+  quantity: number;
+}
+
+export interface CharacterMiningLedger {
+  entries: MiningLedgerEntry[];
+  needs_reauth: boolean;
+}
+
+/** Up to 90 days of mining history, aggregated by ESI per (date, system,
+ * ore/ice type). */
+export function getCharacterMiningLedger(id: number): Promise<CharacterMiningLedger> {
+  return invoke("get_character_mining_ledger", { id });
 }
 
 export interface AssetEntry {

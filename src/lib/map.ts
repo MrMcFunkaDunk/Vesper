@@ -184,3 +184,18 @@ export interface JumpHistoryPoint {
 export function getSystemJumpHistory(systemId: number): Promise<JumpHistoryPoint[]> {
   return invoke("get_system_jump_history", { systemId });
 }
+
+export interface SystemPosition {
+  system_id: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Real 3D positions (meters) for a batch of systems - distinct from
+ * MapSystem's x/y, which are the flattened DOTLAN-style map projection used
+ * for on-screen layout, not real distances. Used by the Capital Route
+ * planner's light-year jump math. */
+export function getSystemPositions(ids: number[]): Promise<SystemPosition[]> {
+  return invoke("get_system_positions", { ids });
+}

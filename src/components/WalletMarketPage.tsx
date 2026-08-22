@@ -9,6 +9,7 @@ import {
   type CharacterTransactions,
   type CharacterWalletJournal,
   type SessionCharacter,
+  type TransactionEntry,
 } from "../lib/eve";
 import { getPublicContracts, type PublicContractEntry } from "../lib/market";
 import { getMapData, type MapData } from "../lib/map";
@@ -16,17 +17,23 @@ import { formatIsk, typeIconUrl } from "../lib/format";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 import MarketBrowser, { type MarketItemRef } from "./MarketBrowser";
+import ItemDatabase from "./ItemDatabase";
 import Appraisal from "./Appraisal";
 import Screener from "./Screener";
+import LpStorePanel from "./LpStorePanel";
 import InsuranceCalculator from "./InsuranceCalculator";
 import MineralTicker from "./MineralTicker";
+import HelpBadge from "./HelpBadge";
+import { HELP_CONTENT } from "../lib/helpContent";
 
-type WalletMarketTab = "browser" | "appraisal" | "screener" | "contracts" | "insurance" | "wallet" | "transactions" | "orders";
+type WalletMarketTab = "browser" | "itemdb" | "appraisal" | "screener" | "lpstore" | "contracts" | "insurance" | "wallet" | "transactions" | "orders";
 
 const TABS: { id: WalletMarketTab; label: string }[] = [
   { id: "browser", label: "Market Browser" },
+  { id: "itemdb", label: "Item Database" },
   { id: "appraisal", label: "Appraisal" },
   { id: "screener", label: "Screener" },
+  { id: "lpstore", label: "LP Store" },
   { id: "contracts", label: "Contracts" },
   { id: "insurance", label: "Insurance" },
   { id: "orders", label: "Orders" },
@@ -57,6 +64,10 @@ interface WalletMarketPageProps {
   /** An item to jump straight into the Market Browser on, e.g. from clicking an item on a kill's fit. */
   initialMarketItem?: MarketItemRef | null;
   onConsumeInitialMarketItem?: () => void;
+  /** Item Database's "Fit This Ship" button jumps to the Fittings & Fleets
+   * builder with this ship pre-selected - a cross-page hop, so it's a
+   * callback up to App.tsx rather than local state. */
+  onFitShip: (shipTypeId: number) => void;
 }
 
 function fmtDate(value: string | null): string {
@@ -71,11 +82,72 @@ function reauthNotice(label: string) {
   return <p className="detail-empty">Sign in again to unlock {label} for this character.</p>;
 }
 
+interface RealizedPnl {
+  realizedProfit: number;
+  matchedBuyCost: number;
+  matchedSellRevenue: number;
+  /** Sold quantity with no matching buy in the visible transaction
+   * history (e.g. mined, manufactured, or bought before history starts) -
+   * tracked separately rather than assumed to be pure profit, since its
+   * real cost basis is unknown. */
+  unmatchedSellQuantity: number;
+  unmatchedSellValue: number;
+}
+
+/** FIFO-matches every buy against later sells of the same item, oldest
+ * buy consumed first - the standard cost-basis method, and the only one
+ * that doesn't need to know which literal unit was sold. Entirely derived
+ * from the transaction list already being fetched for the table below;
+ * no new backend call. */
+function computeRealizedPnl(entries: TransactionEntry[]): RealizedPnl {
+  const byType = new Map<number, TransactionEntry[]>();
+  for (const t of entries) {
+    const list = byType.get(t.type_id);
+    if (list) list.push(t);
+    else byType.set(t.type_id, [t]);
+  }
+
+  let realizedProfit = 0;
+  let matchedBuyCost = 0;
+  let matchedSellRevenue = 0;
+  let unmatchedSellQuantity = 0;
+  let unmatchedSellValue = 0;
+
+  for (const list of byType.values()) {
+    const sorted = [...list].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const lots: { qty: number; price: number }[] = [];
+    for (const t of sorted) {
+      if (t.is_buy) {
+        lots.push({ qty: t.quantity, price: t.unit_price });
+        continue;
+      }
+      let remaining = t.quantity;
+      while (remaining > 0 && lots.length > 0) {
+        const lot = lots[0];
+        const consumed = Math.min(lot.qty, remaining);
+        realizedProfit += (t.unit_price - lot.price) * consumed;
+        matchedBuyCost += lot.price * consumed;
+        matchedSellRevenue += t.unit_price * consumed;
+        lot.qty -= consumed;
+        remaining -= consumed;
+        if (lot.qty === 0) lots.shift();
+      }
+      if (remaining > 0) {
+        unmatchedSellQuantity += remaining;
+        unmatchedSellValue += remaining * t.unit_price;
+      }
+    }
+  }
+
+  return { realizedProfit, matchedBuyCost, matchedSellRevenue, unmatchedSellQuantity, unmatchedSellValue };
+}
+
 function WalletMarketPage({
   characters,
   initialCharacterId,
   initialMarketItem,
   onConsumeInitialMarketItem,
+  onFitShip,
 }: WalletMarketPageProps) {
   const [tab, setTab] = useState<WalletMarketTab>("browser");
   const [selectedId, setSelectedId] = useState<number | null>(initialCharacterId ?? characters[0]?.id ?? null);
@@ -95,7 +167,12 @@ function WalletMarketPage({
   const [contractTypeFilter, setContractTypeFilter] = useState<ContractTypeFilter>("all");
   const [contractQuery, setContractQuery] = useState("");
 
+  const realizedPnl = useMemo(() => (transactions ? computeRealizedPnl(transactions.entries) : null), [transactions]);
+
   const characterScoped = tab === "wallet" || tab === "transactions" || tab === "orders";
+  // LP Store also needs a selected character (for its LP balances) but not
+  // the wallet/orders/transactions bundle characterScoped's effect fetches.
+  const showCharacterStrip = characterScoped || tab === "lpstore";
 
   useEffect(() => {
     if (!characterScoped || selectedId == null) return;
@@ -139,7 +216,10 @@ function WalletMarketPage({
       <div className="wallet-market-page">
         <div className="wallet-market-header">
           <p className="eyebrow">Wallet & Market</p>
-          <h2>{TABS.find((t) => t.id === tab)!.label}</h2>
+          <div className="dashboard-header-title-row">
+            <h2>{TABS.find((t) => t.id === tab)!.label}</h2>
+            <HelpBadge content={HELP_CONTENT[`wallet.${tab}`] ?? HELP_CONTENT.wallet} />
+          </div>
         </div>
 
         <MineralTicker />
@@ -157,7 +237,7 @@ function WalletMarketPage({
           ))}
         </div>
 
-        {characterScoped && (
+        {showCharacterStrip && (
           <CharacterSelectorStrip characters={characters} selectedId={selectedId} onSelect={setSelectedId} />
         )}
 
@@ -167,10 +247,14 @@ function WalletMarketPage({
             initialItem={initialMarketItem}
             onConsumeInitialItem={onConsumeInitialMarketItem}
           />
+        ) : tab === "itemdb" ? (
+          <ItemDatabase onSelectShip={onFitShip} />
         ) : tab === "appraisal" ? (
           <Appraisal />
         ) : tab === "screener" ? (
           <Screener />
+        ) : tab === "lpstore" ? (
+          <LpStorePanel characterId={selectedId} />
         ) : tab === "contracts" ? (
           <div className="wallet-market-body">
             <div className="contracts-toolbar">
@@ -369,7 +453,35 @@ function WalletMarketPage({
             ) : transactions.entries.length === 0 ? (
               <p className="detail-empty">No recent transactions.</p>
             ) : (
-              <div className="data-table-wrap">
+              <>
+                {realizedPnl && (
+                  <div className="market-browser-stats">
+                    <div className="market-stat-card" title="FIFO-matched: each sale is matched against the oldest still-unsold buy of that item.">
+                      <span className="market-stat-label">Realized P&amp;L</span>
+                      <span className={`market-stat-value ${realizedPnl.realizedProfit >= 0 ? "wallet-amount-positive" : "wallet-amount-negative"}`}>
+                        {formatIsk(realizedPnl.realizedProfit)}
+                      </span>
+                    </div>
+                    <div className="market-stat-card">
+                      <span className="market-stat-label">Matched Buy Cost</span>
+                      <span className="market-stat-value">{formatIsk(realizedPnl.matchedBuyCost)}</span>
+                    </div>
+                    <div className="market-stat-card">
+                      <span className="market-stat-label">Matched Sell Revenue</span>
+                      <span className="market-stat-value">{formatIsk(realizedPnl.matchedSellRevenue)}</span>
+                    </div>
+                    {realizedPnl.unmatchedSellQuantity > 0 && (
+                      <div
+                        className="market-stat-card"
+                        title="Sold with no matching buy in this transaction history - likely mined, manufactured, looted, or bought before this history started. Not counted in Realized P&L since its real cost is unknown."
+                      >
+                        <span className="market-stat-label">Unmatched Sells</span>
+                        <span className="market-stat-value">{formatIsk(realizedPnl.unmatchedSellValue)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="data-table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -408,7 +520,8 @@ function WalletMarketPage({
                     ))}
                   </tbody>
                 </table>
-              </div>
+                </div>
+              </>
             )}
           </div>
         )}
