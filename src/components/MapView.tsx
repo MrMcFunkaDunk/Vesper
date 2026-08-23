@@ -674,18 +674,6 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       ctx.arc(sx, sy, glowRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
-
-      ctx.strokeStyle = `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha, 0.08, 1)})`;
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.arc(sx, sy, dotRadius * 2.6 + intensity * 4, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.strokeStyle = `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.55, 0.04, 0.6)})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(sx, sy, dotRadius * 3.8 + intensity * 6, 0, Math.PI * 2);
-      ctx.stroke();
     }
 
     const visible: MapSystem[] = [];
