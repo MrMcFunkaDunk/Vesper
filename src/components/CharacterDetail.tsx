@@ -69,8 +69,9 @@ import {
   standingClass,
 } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { useSortableRows } from "../hooks/useSortableRows";
+import { useSortableRows, useTextFilter, useSelectFilter } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
+import TableFilterBar from "./TableFilterBar";
 import { BASE_ATTRIBUTE_VALUE } from "../lib/skillTraining";
 import { getCachedOverview, setCachedOverview, isTransientServerError } from "../lib/overviewCache";
 import KillFeedTable from "./KillFeedTable";
@@ -322,7 +323,10 @@ function CharacterDetail({
     corporation_name: (l) => l.corporation_name,
     loyalty_points: (l) => l.loyalty_points,
   });
-  const sortedMarketOrders = useSortableRows(marketOrders?.entries ?? [], {
+  const marketOrdersText = useTextFilter(marketOrders?.entries ?? [], (o) => [o.type_name, o.location_name]);
+  const marketOrdersSide = useSelectFilter(marketOrdersText.filtered, (o) => (o.is_buy_order ? "Buy" : "Sell"));
+  const marketOrdersStatus = useSelectFilter(marketOrdersSide.filtered, (o) => o.status);
+  const sortedMarketOrders = useSortableRows(marketOrdersStatus.filtered, {
     type_name: (o) => o.type_name,
     side: (o) => (o.is_buy_order ? "Buy" : "Sell"),
     status: (o) => o.status,
@@ -331,7 +335,10 @@ function CharacterDetail({
     location_name: (o) => o.location_name,
     issued: (o) => new Date(o.issued).getTime(),
   });
-  const sortedContracts = useSortableRows(contracts?.entries ?? [], {
+  const contractsText = useTextFilter(contracts?.entries ?? [], (c) => [c.title, c.issuer_name, c.assignee_name]);
+  const contractsType = useSelectFilter(contractsText.filtered, (c) => c.contract_type);
+  const contractsStatus = useSelectFilter(contractsType.filtered, (c) => c.status);
+  const sortedContracts = useSortableRows(contractsStatus.filtered, {
     title: (c) => c.title || "",
     contract_type: (c) => c.contract_type,
     status: (c) => c.status,
@@ -350,14 +357,18 @@ function CharacterDetail({
     station_name: (j) => j.station_name,
     end_date: (j) => new Date(j.end_date).getTime(),
   });
-  const sortedWalletJournal = useSortableRows(walletJournal?.entries.slice(0, 1000) ?? [], {
+  const walletJournalText = useTextFilter(walletJournal?.entries.slice(0, 1000) ?? [], (e) => [e.description, e.ref_type, e.first_party_name, e.second_party_name]);
+  const walletJournalType = useSelectFilter(walletJournalText.filtered, (e) => e.ref_type.replace(/_/g, " "));
+  const sortedWalletJournal = useSortableRows(walletJournalType.filtered, {
     date: (e) => new Date(e.date).getTime(),
     ref_type: (e) => e.ref_type,
     description: (e) => e.description,
     amount: (e) => e.amount,
     balance: (e) => e.balance ?? 0,
   }, "date");
-  const sortedTransactions = useSortableRows(transactions?.entries ?? [], {
+  const transactionsText = useTextFilter(transactions?.entries ?? [], (t) => [t.type_name, t.location_name, t.client_name]);
+  const transactionsSide = useSelectFilter(transactionsText.filtered, (t) => (t.is_buy ? "Buy" : "Sell"));
+  const sortedTransactions = useSortableRows(transactionsSide.filtered, {
     date: (t) => new Date(t.date).getTime(),
     side: (t) => (t.is_buy ? "Buy" : "Sell"),
     type_name: (t) => t.type_name,
@@ -1406,6 +1417,20 @@ function CharacterDetail({
         ) : marketOrders.entries.length === 0 ? (
           <p className="detail-empty">No market orders found.</p>
         ) : (
+          <>
+            <TableFilterBar
+              searchQuery={marketOrdersText.query}
+              onSearchChange={marketOrdersText.setQuery}
+              searchPlaceholder="Search item or location..."
+              selects={[
+                { label: "Sides", value: marketOrdersSide.value, options: marketOrdersSide.options, onChange: marketOrdersSide.setValue },
+                { label: "Statuses", value: marketOrdersStatus.value, options: marketOrdersStatus.options, onChange: marketOrdersStatus.setValue },
+              ]}
+              resultCount={`${fmtCount(sortedMarketOrders.rows.length)} of ${fmtCount(marketOrders.entries.length)}`}
+            />
+            {sortedMarketOrders.rows.length === 0 ? (
+              <p className="detail-empty">No market orders match the current filters.</p>
+            ) : (
           <div className="data-table-wrap">
             <table className="data-table">
               <thead>
@@ -1447,6 +1472,8 @@ function CharacterDetail({
               </tbody>
             </table>
           </div>
+            )}
+          </>
         );
 
       case "contracts": {
@@ -1471,6 +1498,20 @@ function CharacterDetail({
         ) : contracts.entries.length === 0 ? (
           <p className="detail-empty">No contracts found.</p>
         ) : (
+          <>
+            <TableFilterBar
+              searchQuery={contractsText.query}
+              onSearchChange={contractsText.setQuery}
+              searchPlaceholder="Search title, issuer, or assignee..."
+              selects={[
+                { label: "Types", value: contractsType.value, options: contractsType.options, onChange: contractsType.setValue },
+                { label: "Statuses", value: contractsStatus.value, options: contractsStatus.options, onChange: contractsStatus.setValue },
+              ]}
+              resultCount={`${fmtCount(sortedContracts.rows.length)} of ${fmtCount(contracts.entries.length)}`}
+            />
+            {sortedContracts.rows.length === 0 ? (
+              <p className="detail-empty">No contracts match the current filters.</p>
+            ) : (
           <div className="data-table-wrap">
             <table className="data-table">
               <thead>
@@ -1553,6 +1594,8 @@ function CharacterDetail({
               </tbody>
             </table>
           </div>
+            )}
+          </>
         );
       }
 
@@ -1618,6 +1661,17 @@ function CharacterDetail({
             ) : walletJournal.entries.length === 0 ? (
               <p className="detail-empty">No wallet activity found.</p>
             ) : (
+              <>
+                <TableFilterBar
+                  searchQuery={walletJournalText.query}
+                  onSearchChange={walletJournalText.setQuery}
+                  searchPlaceholder="Search description or party..."
+                  selects={[{ label: "Types", value: walletJournalType.value, options: walletJournalType.options, onChange: walletJournalType.setValue }]}
+                  resultCount={`${fmtCount(sortedWalletJournal.rows.length)} of ${fmtCount(walletJournal.entries.length)}`}
+                />
+                {sortedWalletJournal.rows.length === 0 ? (
+                  <p className="detail-empty">No journal entries match the current filters.</p>
+                ) : (
               <div className="data-table-wrap">
                 <table className="data-table">
                   <thead>
@@ -1650,6 +1704,8 @@ function CharacterDetail({
                   </tbody>
                 </table>
               </div>
+                )}
+              </>
             )}
             {walletJournal && walletJournal.entries.length > 1000 && (
               <p className="detail-empty">Showing the most recent 1,000 of {fmtCount(walletJournal.entries.length)} entries.</p>
@@ -1672,6 +1728,16 @@ function CharacterDetail({
                 Export CSV
               </button>
             </div>
+            <TableFilterBar
+              searchQuery={transactionsText.query}
+              onSearchChange={transactionsText.setQuery}
+              searchPlaceholder="Search item, location, or client..."
+              selects={[{ label: "Sides", value: transactionsSide.value, options: transactionsSide.options, onChange: transactionsSide.setValue }]}
+              resultCount={`${fmtCount(sortedTransactions.rows.length)} of ${fmtCount(transactions.entries.length)}`}
+            />
+            {sortedTransactions.rows.length === 0 ? (
+              <p className="detail-empty">No transactions match the current filters.</p>
+            ) : (
             <div className="data-table-wrap">
             <table className="data-table">
               <thead>
@@ -1714,6 +1780,7 @@ function CharacterDetail({
               </tbody>
             </table>
             </div>
+            )}
           </>
         );
 

@@ -9,8 +9,9 @@ import {
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { formatTimeElapsedFull, formatTimeRemainingFull, formatEveDateTime } from "../lib/format";
 import { typeIconUrl } from "../lib/format";
-import { useSortableRows } from "../hooks/useSortableRows";
+import { useSortableRows, useTextFilter, useSelectFilter } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
+import TableFilterBar from "./TableFilterBar";
 
 type ColonyStatus = "active" | "idle" | "no_extractors";
 
@@ -126,7 +127,11 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
     };
   }, [characters, reportError]);
 
-  const sorted = useSortableRows(colonies ?? [], {
+  const colonyText = useTextFilter(colonies ?? [], (r) => [r.characterName, r.planet.planet_name, r.planet.solar_system_name]);
+  const colonyCharacter = useSelectFilter(colonyText.filtered, (r) => r.characterName);
+  const colonyType = useSelectFilter(colonyCharacter.filtered, (r) => r.planet.planet_type);
+  const colonyStatus = useSelectFilter(colonyType.filtered, (r) => STATUS_LABEL[r.status]);
+  const sorted = useSortableRows(colonyStatus.filtered, {
     characterName: (r) => r.characterName,
     planetName: (r) => r.planet.planet_name,
     solarSystemName: (r) => r.planet.solar_system_name,
@@ -187,6 +192,21 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
               </div>
             </div>
 
+            <TableFilterBar
+              searchQuery={colonyText.query}
+              onSearchChange={colonyText.setQuery}
+              searchPlaceholder="Search character, planet, or system..."
+              selects={[
+                { label: "Characters", value: colonyCharacter.value, options: colonyCharacter.options, onChange: colonyCharacter.setValue },
+                { label: "Planet Types", value: colonyType.value, options: colonyType.options, onChange: colonyType.setValue },
+                { label: "Statuses", value: colonyStatus.value, options: colonyStatus.options, onChange: colonyStatus.setValue },
+              ]}
+              resultCount={`${sorted.rows.length} of ${colonies.length}`}
+            />
+
+            {sorted.rows.length === 0 ? (
+              <p className="detail-empty">No colonies match the current filters.</p>
+            ) : (
             <div className="data-table-wrap">
               <table className="data-table">
                 <thead>
@@ -290,6 +310,7 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
                 </tbody>
               </table>
             </div>
+            )}
           </>
         )
       )}

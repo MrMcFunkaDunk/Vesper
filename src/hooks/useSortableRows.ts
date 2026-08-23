@@ -59,3 +59,32 @@ export function useTextFilter<T>(rows: T[], fields: (row: T) => (string | number
 
   return { query, setQuery, filtered };
 }
+
+/**
+ * A single-value dropdown filter over one column - "All" plus every distinct
+ * value actually present in the current rows (so the option list never goes
+ * stale or offers a choice that would return nothing), sorted for a stable
+ * order. Chain several of these plus useTextFilter for a full filter bar;
+ * each one filters whatever the previous one already narrowed down to, so
+ * a picked value that's no longer reachable just quietly stops matching
+ * rather than needing to be reset by hand.
+ */
+export function useSelectFilter<T>(rows: T[], accessor: (row: T) => string | null | undefined) {
+  const [value, setValue] = useState<string>("");
+
+  const options = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const v = accessor(row);
+      if (v) seen.add(v);
+    }
+    return Array.from(seen).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  }, [rows, accessor]);
+
+  const filtered = useMemo(() => {
+    if (!value) return rows;
+    return rows.filter((row) => accessor(row) === value);
+  }, [rows, accessor, value]);
+
+  return { value, setValue, options, filtered };
+}
