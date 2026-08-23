@@ -1979,6 +1979,33 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   vector-effect: non-scaling-stroke;
 }
 
+.table-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.table-filter-search {
+  flex: 1;
+  min-width: 160px;
+  max-width: 320px;
+}
+
+.table-filter-bar select {
+  padding: 5px 28px 5px 10px;
+  font-size: 13.5px;
+}
+
+.table-filter-count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-family: var(--font-label);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
 .detail-search {
   display: flex;
   align-items: center;
@@ -11903,7 +11930,9 @@ label.settings-sync-file-row {
   position: absolute;
   top: calc(100% + 8px);
   z-index: 200;
-  width: 320px;
+  width: 420px;
+  max-height: 75vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -11972,6 +12001,10 @@ label.settings-sync-file-row {
   font-size: 13px;
   line-height: 1.45;
   color: var(--text-secondary);
+}
+
+.help-badge-popover-body + .help-badge-popover-body {
+  margin-top: 8px;
 }
 
 /* Multiboxing tab */

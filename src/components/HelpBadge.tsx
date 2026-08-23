@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import type { HelpContent } from "../lib/helpContent";
 
+/** A field is either one paragraph or several - always render as a list of <p>s. */
+function paragraphs(value: string | string[]) {
+  const list = Array.isArray(value) ? value : [value];
+  return list.map((p, i) => <p key={i} className="help-badge-popover-body">{p}</p>);
+}
+
 interface HelpBadgeProps {
   content: HelpContent;
   /** Popover opens to the right by default (top bar usage); pages with less
@@ -55,15 +61,15 @@ function HelpBadge({ content, align = "right" }: HelpBadgeProps) {
           </div>
           <div className="help-badge-popover-section">
             <p className="help-badge-popover-label">What it does</p>
-            <p className="help-badge-popover-body">{content.what}</p>
+            {paragraphs(content.what)}
           </div>
           <div className="help-badge-popover-section">
             <p className="help-badge-popover-label">How to use it</p>
-            <p className="help-badge-popover-body">{content.how}</p>
+            {paragraphs(content.how)}
           </div>
           <div className="help-badge-popover-section">
             <p className="help-badge-popover-label">What you'll get</p>
-            <p className="help-badge-popover-body">{content.gives}</p>
+            {paragraphs(content.gives)}
           </div>
         </div>
       )}
