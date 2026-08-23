@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import {
   getCorporationKills,
@@ -59,8 +59,7 @@ interface CorporationKillboardProps {
   onSelectCorporation: (corporation: CorporationSummary) => void;
   onSelectAlliance: (alliance: AllianceSummary) => void;
   onSelectItem: (item: MarketItemRef) => void;
-  rootLabel: string;
-  onGoHome: () => void;
+  breadcrumb: ReactNode;
   onGoToMap: () => void;
 }
 
@@ -73,8 +72,7 @@ function CorporationKillboard({
   onSelectCorporation,
   onSelectAlliance,
   onSelectItem,
-  rootLabel,
-  onGoHome,
+  breadcrumb,
   onGoToMap,
 }: CorporationKillboardProps) {
   const [profile, setProfile] = useState<CorporationProfile | null>(null);
@@ -187,23 +185,7 @@ function CorporationKillboard({
   return (
     <main className="main main-kills">
       <div className="kills-page">
-        <div className="kills-header kills-header-breadcrumb">
-          <p className="eyebrow">Kills & Intel</p>
-          <h2
-            className="kills-breadcrumb-link"
-            role="button"
-            tabIndex={0}
-            onClick={onGoHome}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onGoHome();
-              }
-            }}
-          >
-            {rootLabel}
-          </h2>
-        </div>
+        {breadcrumb}
 
         <div className="kills-nav-buttons">
           <button type="button" className="detail-back" onClick={onBack}>

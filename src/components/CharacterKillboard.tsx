@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import {
   getCharacterProfile,
@@ -113,8 +113,8 @@ interface CharacterKillboardProps {
   onSelectCorporation: (corporation: CorporationSummary) => void;
   onSelectAlliance: (alliance: AllianceSummary) => void;
   onSelectItem: (item: MarketItemRef) => void;
-  rootLabel: string;
-  onGoHome: () => void;
+  breadcrumb: ReactNode;
+  onLabelReady?: (label: string) => void;
   onGoToMap: () => void;
 }
 
@@ -127,8 +127,8 @@ function CharacterKillboard({
   onSelectCorporation,
   onSelectAlliance,
   onSelectItem,
-  rootLabel,
-  onGoHome,
+  breadcrumb,
+  onLabelReady,
   onGoToMap,
 }: CharacterKillboardProps) {
   const [profile, setProfile] = useState<CharacterProfile | null>(null);
@@ -165,7 +165,10 @@ function CharacterKillboard({
     setPage(1);
 
     getCharacterProfile(characterId)
-      .then(setProfile)
+      .then((p) => {
+        setProfile(p);
+        onLabelReady?.(p.character_name);
+      })
       .catch((err) => reportError(`Failed to load character profile: ${String(err)}`));
 
     getCharacterStats(characterId)
@@ -268,23 +271,7 @@ function CharacterKillboard({
   return (
     <main className="main main-kills">
       <div className="kills-page">
-        <div className="kills-header kills-header-breadcrumb">
-          <p className="eyebrow">Kills & Intel</p>
-          <h2
-            className="kills-breadcrumb-link"
-            role="button"
-            tabIndex={0}
-            onClick={onGoHome}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onGoHome();
-              }
-            }}
-          >
-            {rootLabel}
-          </h2>
-        </div>
+        {breadcrumb}
 
         <div className="kills-nav-buttons">
           <button type="button" className="detail-back" onClick={onBack}>

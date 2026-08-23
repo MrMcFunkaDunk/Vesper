@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowLeft, Copy, Check } from "lucide-react";
 import { getKillDetail, type KillDetail, type SlotGroup, type TrackedEntry } from "../lib/kills";
 import { getMarketPrices } from "../lib/market";
@@ -19,8 +19,8 @@ interface KillDetailViewProps {
   onSelectSystem: (system: SystemSummary) => void;
   onSelectCorporation: (corporation: CorporationSummary) => void;
   onSelectAlliance: (alliance: AllianceSummary) => void;
-  rootLabel: string;
-  onGoHome: () => void;
+  breadcrumb: ReactNode;
+  onLabelReady?: (label: string) => void;
   onGoToMap: () => void;
   onSelectItem: (item: MarketItemRef) => void;
 }
@@ -73,8 +73,8 @@ function KillDetailView({
   onSelectSystem,
   onSelectCorporation,
   onSelectAlliance,
-  rootLabel,
-  onGoHome,
+  breadcrumb,
+  onLabelReady,
   onGoToMap,
   onSelectItem,
 }: KillDetailViewProps) {
@@ -86,7 +86,10 @@ function KillDetailView({
   useEffect(() => {
     setDetail(null);
     getKillDetail(killmailId)
-      .then(setDetail)
+      .then((d) => {
+        setDetail(d);
+        onLabelReady?.(`${d.ship_type_name} (${d.victim_character_name ?? "Unknown"})`);
+      })
       .catch((err) => reportError(`Failed to load killmail detail: ${String(err)}`));
   }, [killmailId]);
 
@@ -141,23 +144,7 @@ function KillDetailView({
   return (
     <main className="main main-detail">
       <div className="detail">
-        <div className="kills-header kills-header-breadcrumb">
-          <p className="eyebrow">Kills & Intel</p>
-          <h2
-            className="kills-breadcrumb-link"
-            role="button"
-            tabIndex={0}
-            onClick={onGoHome}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onGoHome();
-              }
-            }}
-          >
-            {rootLabel}
-          </h2>
-        </div>
+        {breadcrumb}
 
         <div className="kills-nav-buttons">
           <button type="button" className="detail-back" onClick={onBack}>

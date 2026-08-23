@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { getSystemKillsHistory } from "../lib/kills";
 import { getMapData, type MapData } from "../lib/map";
@@ -30,8 +30,7 @@ interface SystemKillboardProps {
   onSelectRegion: (region: RegionSummary) => void;
   onSelectCorporation: (corporation: CorporationSummary) => void;
   onSelectAlliance: (alliance: AllianceSummary) => void;
-  rootLabel: string;
-  onGoHome: () => void;
+  breadcrumb: ReactNode;
   onGoToMap: () => void;
 }
 
@@ -45,8 +44,7 @@ function SystemKillboard({
   onSelectRegion,
   onSelectCorporation,
   onSelectAlliance,
-  rootLabel,
-  onGoHome,
+  breadcrumb,
   onGoToMap,
 }: SystemKillboardProps) {
   const [mapData, setMapData] = useState<MapData | null>(null);
@@ -80,23 +78,7 @@ function SystemKillboard({
   return (
     <main className="main main-kills">
       <div className="kills-page">
-        <div className="kills-header kills-header-breadcrumb">
-          <p className="eyebrow">Kills & Intel</p>
-          <h2
-            className="kills-breadcrumb-link"
-            role="button"
-            tabIndex={0}
-            onClick={onGoHome}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onGoHome();
-              }
-            }}
-          >
-            {rootLabel}
-          </h2>
-        </div>
+        {breadcrumb}
 
         <div className="kills-nav-buttons">
           <button type="button" className="detail-back" onClick={onBack}>

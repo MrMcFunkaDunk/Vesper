@@ -241,7 +241,90 @@ function KillsIntel({
     setStack([{ type: "feed" }]);
   }
 
+  function jumpTo(index: number) {
+    setStack((s) => s.slice(0, index + 1));
+  }
+
   const tabLabel = TABS.find((t) => t.id === tab)!.label;
+
+  // Character and kill-detail views only carry an id in the stack, not a
+  // display name - the leaf views themselves resolve that via their own
+  // profile/detail fetch, so they report it back here once known via
+  // onLabelReady. Cached by key rather than re-derived, since a name
+  // resolved while a view was current needs to stay available for the
+  // breadcrumb after the user has navigated past it.
+  const [labelCache, setLabelCache] = useState<Record<string, string>>({});
+
+  function reportLabel(key: string, label: string) {
+    setLabelCache((c) => (c[key] === label ? c : { ...c, [key]: label }));
+  }
+
+  function describeView(view: KillsView): string {
+    switch (view.type) {
+      case "feed":
+        return tabLabel;
+      case "killDetail":
+        return labelCache[`kill:${view.killmailId}`] ?? "Kill Detail";
+      case "character":
+        return labelCache[`character:${view.characterId}`] ?? "Character";
+      case "system":
+        return view.system.name;
+      case "constellation":
+        return view.constellation.name;
+      case "region":
+        return view.region.name;
+      case "corporation":
+        return view.corporation.name;
+      case "alliance":
+        return view.alliance.name;
+    }
+  }
+
+  const breadcrumb = (
+    <div className="kills-header kills-header-breadcrumb">
+      <p className="eyebrow kills-breadcrumb-trail">
+        <span
+          className="kills-breadcrumb-crumb"
+          role="button"
+          tabIndex={0}
+          onClick={goHome}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              goHome();
+            }
+          }}
+        >
+          Kills &amp; Intel
+        </span>
+        {stack.slice(0, -1).map((view, i) => (
+          <span key={i}>
+            <span className="kills-breadcrumb-sep">/</span>
+            <span
+              className="kills-breadcrumb-crumb"
+              role="button"
+              tabIndex={0}
+              onClick={() => jumpTo(i)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  jumpTo(i);
+                }
+              }}
+            >
+              {describeView(view)}
+            </span>
+          </span>
+        ))}
+      </p>
+      <h2>{describeView(current)}</h2>
+    </div>
+  );
+
+  function reportCurrentLabel(label: string) {
+    if (current.type === "character") reportLabel(`character:${current.characterId}`, label);
+    else if (current.type === "killDetail") reportLabel(`kill:${current.killmailId}`, label);
+  }
 
   if (current.type === "killDetail") {
     return (
@@ -252,8 +335,8 @@ function KillsIntel({
         onSelectSystem={pushSystem}
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
-        rootLabel={tabLabel}
-        onGoHome={goHome}
+        breadcrumb={breadcrumb}
+        onLabelReady={reportCurrentLabel}
         onGoToMap={onGoToMap}
         onSelectItem={onSelectItem}
       />
@@ -271,8 +354,8 @@ function KillsIntel({
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
         onSelectItem={onSelectItem}
-        rootLabel={tabLabel}
-        onGoHome={goHome}
+        breadcrumb={breadcrumb}
+        onLabelReady={reportCurrentLabel}
         onGoToMap={onGoToMap}
       />
     );
@@ -290,8 +373,7 @@ function KillsIntel({
         onSelectRegion={pushRegion}
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
-        rootLabel={tabLabel}
-        onGoHome={goHome}
+        breadcrumb={breadcrumb}
         onGoToMap={onGoToMap}
       />
     );
@@ -308,8 +390,7 @@ function KillsIntel({
         onSelectRegion={pushRegion}
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
-        rootLabel={tabLabel}
-        onGoHome={goHome}
+        breadcrumb={breadcrumb}
         onGoToMap={onGoToMap}
       />
     );
@@ -326,8 +407,7 @@ function KillsIntel({
         onSelectConstellation={pushConstellation}
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
-        rootLabel={tabLabel}
-        onGoHome={goHome}
+        breadcrumb={breadcrumb}
         onGoToMap={onGoToMap}
       />
     );
@@ -344,8 +424,7 @@ function KillsIntel({
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
         onSelectItem={onSelectItem}
-        rootLabel={tabLabel}
-        onGoHome={goHome}
+        breadcrumb={breadcrumb}
         onGoToMap={onGoToMap}
       />
     );
@@ -362,8 +441,7 @@ function KillsIntel({
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
         onSelectItem={onSelectItem}
-        rootLabel={tabLabel}
-        onGoHome={goHome}
+        breadcrumb={breadcrumb}
         onGoToMap={onGoToMap}
       />
     );
