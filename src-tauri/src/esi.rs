@@ -490,7 +490,7 @@ pub(crate) struct StructureInfo {
 /// forgets everything on every restart and re-fights the same 403 forever.
 fn structure_cache_path() -> Option<PathBuf> {
     let base = dirs::data_local_dir()?;
-    let dir = base.join("com.barrymillard.eveonlinecompanion");
+    let dir = base.join("com.vesper.eveonlinecompanionapp");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("structure_names_cache.json"))
 }

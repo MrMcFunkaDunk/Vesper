@@ -52,7 +52,7 @@ fn load_or_create_master_key() -> Result<[u8; 32], String> {
 
 fn tokens_dir() -> Result<PathBuf, String> {
     let base = dirs::data_local_dir().ok_or("could not resolve local app data directory")?;
-    let dir = base.join("com.barrymillard.eveonlinecompanion").join("tokens");
+    let dir = base.join("com.vesper.eveonlinecompanionapp").join("tokens");
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create token storage directory: {e}"))?;
     Ok(dir)
 }
