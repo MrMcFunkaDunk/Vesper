@@ -135,29 +135,29 @@ export function formatSecurity(value: number): string {
   return (Math.round(value * 10) / 10).toFixed(1);
 }
 
-/** EVE's real per-0.1-step security status colors (1.0 down to 0.0 and
- * below) - the same gradient the game's own UI uses, not just a 3-band
- * high/low/null approximation. Keyed by integer tenths to avoid any
- * floating-point equality risk. */
+/** Per-0.1-step security status colors (1.0 down to 0.0 and below), not
+ * just a 3-band high/low/null approximation. Based on RIFT's own map
+ * security colors (verified against its source, SecurityColors.kt) rather
+ * than EVE's real client palette - preferred for reading clearly against
+ * this app's own dark UI, where EVE's real (very dark, low-saturation)
+ * 0.1/0.0 colors nearly disappear. The 1.0-0.4 steps use RIFT's values
+ * as-is; 0.2, 0.1, and the null-sec color are brightened further and
+ * spread further apart in hue than RIFT's own choices, since those three
+ * specifically read as near-identical dark reds otherwise. Keyed by
+ * integer tenths to avoid any floating-point equality risk. */
 const SECURITY_COLOR_BY_TENTH: Record<number, string> = {
-  10: "#053FD3",
-  9: "#13C5EC",
-  8: "#13EC9D",
-  7: "#13EC28",
-  6: "#73EC13",
-  5: "#FFDF00",
-  4: "#ECAB13",
-  3: "#EC8513",
-  2: "#EC5F13",
-  1: "#EC3913",
+  10: "#2C75E1",
+  9: "#399AEB",
+  8: "#4ECEF8",
+  7: "#60DBA3",
+  6: "#71E754",
+  5: "#F5FF83",
+  4: "#DC6C06",
+  3: "#CE440F",
+  2: "#E51A26",
+  1: "#E5264F",
 };
-/** EVE's own client uses a near-black maroon (#500000) here, matching the
- * real game's "danger" framing - but against this app's own dark UI that
- * reads as almost invisible rather than as a warning, so this brightens it
- * while keeping it read as "more extreme than lowsec's orange-red" (tenth
- * 1's #EC3913), continuing the same saturated palette as the rest of the
- * scale above. */
-const SECURITY_COLOR_MIN = "#EC1313";
+const SECURITY_COLOR_MIN = "#C23D8A";
 
 /** Coarse 3-tier band, kept only for things like the Tracked Systems chip
  * background tint where a flat high/low/null tone (matching the other
