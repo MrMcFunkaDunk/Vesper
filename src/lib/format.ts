@@ -151,7 +151,13 @@ const SECURITY_COLOR_BY_TENTH: Record<number, string> = {
   2: "#EC5F13",
   1: "#EC3913",
 };
-const SECURITY_COLOR_MIN = "#500000";
+/** EVE's own client uses a near-black maroon (#500000) here, matching the
+ * real game's "danger" framing - but against this app's own dark UI that
+ * reads as almost invisible rather than as a warning, so this brightens it
+ * while keeping it read as "more extreme than lowsec's orange-red" (tenth
+ * 1's #EC3913), continuing the same saturated palette as the rest of the
+ * scale above. */
+const SECURITY_COLOR_MIN = "#EC1313";
 
 /** Coarse 3-tier band, kept only for things like the Tracked Systems chip
  * background tint where a flat high/low/null tone (matching the other
