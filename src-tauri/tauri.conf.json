@@ -15,7 +15,8 @@
         "title": "VΞSPER — Capsuleer Operations System",
         "width": 800,
         "height": 600,
-        "zoomHotkeysEnabled": true
+        "zoomHotkeysEnabled": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-background-timer-throttling"
       }
     ],
     "security": {

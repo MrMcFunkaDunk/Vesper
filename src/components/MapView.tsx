@@ -1023,27 +1023,38 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     });
   }
 
+  // Driven by setInterval rather than a self-rescheduling requestAnimationFrame:
+  // Chromium (and WebView2, which VESPER's whole UI runs on) throttles a
+  // recursive rAF loop down to near-zero the moment the window loses OS
+  // focus, even while it stays fully visible - exactly the situation VESPER
+  // is normally used in, sitting on a second monitor next to the actual EVE
+  // client. That made the pulse silently stall until the next click or
+  // mousemove (each of which calls requestDraw() for one single fresh
+  // frame, which looks like "it only updates when I touch it" - a real bug
+  // report, not a misreading of intended behavior). setInterval keeps
+  // running at its configured rate regardless of focus, since Chromium only
+  // throttles it for a fully hidden/backgrounded tab, which never applies
+  // to a single-window desktop app.
   function ensureAnimating() {
     if (animFrameRef.current !== null) return;
-    function tick() {
+    animFrameRef.current = window.setInterval(() => {
       const now = Date.now();
       draw();
-      // Keeps ticking every frame as long as some system is actively
-      // pulsing (a kill within the last PULSE_RECENCY_MS) - stops (falls
-      // back to on-demand redraws) once that goes quiet, so an empty or
-      // merely-still-warm map isn't burning frames for nothing. Older,
-      // non-pulsing heat still renders (draw() reads it fine on any
-      // triggered redraw), it just doesn't need a continuous animation
-      // loop to look right.
-      const stillAnimating = hasRecentHeat(heatMapRef.current, now);
-      animFrameRef.current = stillAnimating ? requestAnimationFrame(tick) : null;
-    }
-    animFrameRef.current = requestAnimationFrame(tick);
+      // Stops (falls back to on-demand redraws) once nothing's actively
+      // pulsing, so an empty or merely-still-warm map isn't burning cycles
+      // for nothing. Older, non-pulsing heat still renders fine on any
+      // triggered redraw - it just doesn't need a continuous loop to look
+      // right.
+      if (!hasRecentHeat(heatMapRef.current, now)) {
+        window.clearInterval(animFrameRef.current!);
+        animFrameRef.current = null;
+      }
+    }, 50);
   }
 
   useEffect(() => {
     return () => {
-      if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
+      if (animFrameRef.current !== null) window.clearInterval(animFrameRef.current);
     };
   }, []);
 
