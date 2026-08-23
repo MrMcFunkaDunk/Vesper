@@ -10,7 +10,7 @@ import { useMapDisplayPrefs } from "../hooks/useMapDisplayPrefs";
 import { RADIUS_OPTIONS } from "./TopBar";
 import type { KillEntry } from "../lib/kills";
 import type { SystemSummary } from "./SystemKillboard";
-import type { SessionCharacter } from "../lib/eve";
+import { getCharacterLocation, type SessionCharacter } from "../lib/eve";
 
 const TICKER_LIMIT = 60;
 /** The nearby feed is a short-lived spotlight, not a growing log - capped
@@ -144,6 +144,52 @@ function drawPortrait(ctx: CanvasRenderingContext2D, cx: number, cy: number, rad
   ctx.strokeStyle = "#e6ecf5";
   ctx.lineWidth = 1.5;
   ctx.stroke();
+}
+
+/** "Ellebitte Viliana" -> "EV" - falls back to the first two letters of a
+ * one-word name. Used on the home-base house marker instead of a portrait,
+ * since a home marker's whole point is "which system", not "which face". */
+function characterInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** A little house pin marking a character's home-base system, with their
+ * initials in the body instead of a portrait - a home marker only needs to
+ * say "whose home is this", not "what do they look like" (drawPortrait's
+ * job now belongs to the live current-location pins instead). Styled as a
+ * dark HUD panel with the app's own cyan accent outline, matching every
+ * other selection/highlight ring on the map, instead of a literal
+ * skeuomorphic gold cottage that would look imported from another app. */
+function drawHomeMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, initials: string) {
+  const bodyWidth = radius * 1.7;
+  const bodyHeight = radius * 1.3;
+  const bodyTop = cy - radius * 0.15;
+  const accent = "#6fc3d9";
+
+  ctx.beginPath();
+  ctx.moveTo(cx - bodyWidth / 2 - radius * 0.15, bodyTop);
+  ctx.lineTo(cx, bodyTop - radius * 0.9);
+  ctx.lineTo(cx + bodyWidth / 2 + radius * 0.15, bodyTop);
+  ctx.closePath();
+  ctx.fillStyle = "#1a1c21";
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.rect(cx - bodyWidth / 2, bodyTop, bodyWidth, bodyHeight);
+  ctx.fillStyle = "#131418";
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = accent;
+  ctx.font = `700 ${Math.max(8, radius * 0.9)}px Inter, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(initials, cx, bodyTop + bodyHeight / 2 + radius * 0.05);
 }
 
 /** Precomputes each system's map-key icon row once per map data load,
@@ -385,7 +431,7 @@ interface HoverInfo {
   clientY: number;
 }
 
-interface HomePin {
+interface CharacterPin {
   character: SessionCharacter;
   image: HTMLImageElement | null;
 }
@@ -409,7 +455,8 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const tickerHoveredIdRef = useRef<number | null>(null);
   const currentSystemIdRef = useRef<number | null>(null);
   const showServiceIconsRef = useRef(true);
-  const homePinsBySystemRef = useRef<Map<number, HomePin[]>>(new Map());
+  const homePinsBySystemRef = useRef<Map<number, CharacterPin[]>>(new Map());
+  const locationPinsBySystemRef = useRef<Map<number, CharacterPin[]>>(new Map());
   const structuresBySystemRef = useRef<Map<number, PlayerStructureInfo[]>>(new Map());
   const heatMapRef = useRef<Map<number, SystemHeat>>(new Map());
   const animFrameRef = useRef<number | null>(null);
@@ -474,7 +521,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     getCharacterHomeSystems(characters.map((c) => c.id))
       .then((results) => {
         if (cancelled) return;
-        const bySystem = new Map<number, HomePin[]>();
+        const bySystem = new Map<number, CharacterPin[]>();
         for (const result of results) {
           if (result.system_id == null) continue;
           const character = characters.find((c) => c.id === result.character_id);
@@ -486,21 +533,66 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         homePinsBySystemRef.current = bySystem;
         setHomeSystemCount(bySystem.size);
         requestDraw();
-
-        // Preloaded here rather than at render time - each redraws once it
-        // finishes loading instead of the whole map waiting on every portrait.
-        for (const pins of bySystem.values()) {
-          for (const pin of pins) {
-            const img = new Image();
-            img.onload = () => requestDraw();
-            img.src = pin.character.portrait_url;
-            pin.image = img;
-          }
-        }
       })
       .catch((err) => reportError(`Failed to load character home systems: ${String(err)}`));
     return () => {
       cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characters.map((c) => c.id).join(",")]);
+
+  // Live current-location pins (portraits) - separate from the home-base
+  // markers above (house icons), and polled continuously since a character
+  // actually moves around while playing, unlike their home system. Only
+  // system-level granularity is needed (which station/structure within a
+  // system isn't shown), matching what getCharacterLocation already returns.
+  useEffect(() => {
+    if (characters.length === 0) return;
+    let cancelled = false;
+
+    async function poll() {
+      const bySystem = new Map<number, CharacterPin[]>();
+      await Promise.all(
+        characters.map(async (character) => {
+          try {
+            const loc = await getCharacterLocation(character.id);
+            if (loc.needs_reauth || loc.solar_system_id == null) return;
+            const list = bySystem.get(loc.solar_system_id) ?? [];
+            list.push({ character, image: null });
+            bySystem.set(loc.solar_system_id, list);
+          } catch {
+            // Best-effort - one character's failed location fetch shouldn't blank the rest.
+          }
+        }),
+      );
+      if (cancelled) return;
+      // Portraits carry over from the previous pass by URL rather than
+      // reloading every poll - only a character whose system actually
+      // changed (or is new) needs a fresh Image.
+      const previous = locationPinsBySystemRef.current;
+      for (const [systemId, pins] of bySystem) {
+        const previousPins = previous.get(systemId);
+        for (const pin of pins) {
+          const existing = previousPins?.find((p) => p.character.id === pin.character.id);
+          if (existing?.image) {
+            pin.image = existing.image;
+            continue;
+          }
+          const img = new Image();
+          img.onload = () => requestDraw();
+          img.src = pin.character.portrait_url;
+          pin.image = img;
+        }
+      }
+      locationPinsBySystemRef.current = bySystem;
+      requestDraw();
+    }
+
+    poll();
+    const interval = setInterval(poll, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characters.map((c) => c.id).join(",")]);
@@ -770,18 +862,34 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         drawPin(ctx, sx, sy - dotRadius * 2.2 - 2, 6, "#ffffff");
       }
 
-      // Home-base portrait pins - always drawn (not gated by zoom) so you
-      // can spot at a glance where every logged-in character actually lives,
-      // offset to the dot's upper-right so they don't collide with the
-      // current-location/selected pins above it. Grows sharply with zoom
-      // (see portraitRadiusForZoom) so a face is actually recognizable once
-      // you're zoomed in, not just a tiny dot forever.
+      // Home-base house markers - always drawn (not gated by zoom) so you
+      // can spot at a glance where every logged-in character's home is,
+      // offset to the dot's upper-right. Initials instead of a portrait -
+      // a home marker's job is "whose home is this", not "what do they
+      // look like" (that's the live location pins below). Grows sharply
+      // with zoom (see portraitRadiusForZoom) so it's not just a tiny
+      // mark forever once you're zoomed in.
       const homePins = homePinsBySystemRef.current.get(system.id);
       if (homePins && homePins.length > 0) {
+        const markerRadius = portraitRadiusForZoom(zoomRatio);
+        let px = sx + dotRadius + markerRadius + 3;
+        const py = sy - dotRadius - markerRadius - 3;
+        for (const pin of homePins) {
+          drawHomeMarker(ctx, px, py, markerRadius, characterInitials(pin.character.name));
+          px += markerRadius * 2 + 3;
+        }
+      }
+
+      // Live current-location portrait pins - where each logged-in
+      // character actually is right now, offset to the dot's lower-right
+      // so they never collide with the home markers above it (a character
+      // sitting at home shows both, right next to each other).
+      const locationPins = locationPinsBySystemRef.current.get(system.id);
+      if (locationPins && locationPins.length > 0) {
         const portraitRadius = portraitRadiusForZoom(zoomRatio);
         let px = sx + dotRadius + portraitRadius + 3;
-        const py = sy - dotRadius - portraitRadius - 3;
-        for (const pin of homePins) {
+        const py = sy + dotRadius + portraitRadius + 3;
+        for (const pin of locationPins) {
           drawPortrait(ctx, px, py, portraitRadius, pin.image);
           px += portraitRadius * 2 + 3;
         }
