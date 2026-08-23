@@ -8,6 +8,7 @@ mod config;
 mod esi;
 mod fittings;
 mod intel_feed;
+mod kill_history;
 mod kills;
 mod map;
 mod market;
@@ -38,11 +39,14 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(commands::AppState { http_client })
         .setup(|app| {
             let handle = app.handle().clone();
             let client = handle.state::<commands::AppState>().http_client.clone();
-            tauri::async_runtime::spawn(map::run_jump_history_sampler(handle, client));
+            tauri::async_runtime::spawn(map::run_jump_history_sampler(handle.clone(), client.clone()));
+            tauri::async_runtime::spawn(kill_history::run_kill_history_recorder(handle, client));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -111,6 +115,10 @@ pub fn run() {
             commands::get_region_kills_history,
             commands::get_kill_detail,
             commands::get_recent_activity_kills,
+            commands::query_kill_reports,
+            commands::get_kill_top_stats,
+            commands::start_kill_history_backfill,
+            commands::get_kill_history_backfill_progress,
             commands::poll_recent_activity_kills,
             commands::poll_tracked_system_kills,
             commands::get_character_profile,

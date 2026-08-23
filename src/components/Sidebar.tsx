@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import type { LucideIcon } from "lucide-react";
 import {
   LayoutDashboard,
@@ -167,6 +168,13 @@ interface ContextMenuState {
 function Sidebar({ activeId, onSelect }: SidebarProps) {
   const { colors, setColor, resetColor } = useColorOverrides("vesper.colors.sidebar");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
 
   const defaultIds = NAV_ITEMS.map((item) => item.id);
   const { order, setOrder } = useNavOrder(defaultIds);
@@ -219,7 +227,7 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
           );
         })}
       </nav>
-      <div className="sidebar-footer">v1.0.0</div>
+      <div className="sidebar-footer">{version && `v${version}`}</div>
       {contextMenu && (
         <ColorPickerMenu
           x={contextMenu.x}

@@ -18,9 +18,9 @@ export const HELP_CONTENT: Record<string, HelpContent> = {
   },
   kills: {
     title: "Kills & Intel",
-    what: "Live and historical killmail data from zKillboard - a recent-activity feed plus full killboard lookups for any character, corporation, alliance, system, or region.",
-    how: "Search a name at the top to open its killboard, or browse Recent Kills / Tracked Systems in the feed below. Use the security-band filters (highsec/lowsec/nullsec/wormhole) and the NPC toggle to narrow what shows.",
-    gives: "Situational awareness on where fights are happening right now, and a deep-dive killboard for anyone you're checking up on.",
+    what: "Live and historical killmail data from zKillboard - a recent-activity feed, battle clustering, zKillboard-style Kill Reports filters (Top Kills, Capitals, Structures, Abyssal, Awox, Ganked, Solo, and more), an hourly Top Stats leaderboard, and full killboard lookups for any character, corporation, alliance, system, or region.",
+    how: "Search a name at the top to open its killboard, or browse the tabs below: Tracked Systems / Most Recent Kills / Battles for the live feed, Kill Reports to filter by kill type, and Top Stats for who's been killing (and dying) the most in the last hour. Kill Reports and Top Stats both run off VESPER's own local kill history, which fills in more completely the longer the app stays open.",
+    gives: "Situational awareness on where fights are happening right now, a deep-dive killboard for anyone you're checking up on, and the same kind of classification/leaderboard views zKillboard itself offers.",
   },
   map: {
     title: "Map",

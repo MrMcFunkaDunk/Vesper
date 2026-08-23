@@ -4,6 +4,7 @@ import TopBar from "./components/TopBar";
 import MainContent from "./components/MainContent";
 import Dashboard from "./components/Dashboard";
 import ProximityFlashOverlay from "./components/ProximityFlashOverlay";
+import UpdateBanner from "./components/UpdateBanner";
 
 // Every other page is lazy-loaded - each one only needs its (often
 // substantial, e.g. React Flow for the wormhole finder) code once the user
@@ -173,6 +174,7 @@ function App() {
       <SkillQueueWatchEffect characters={session.characters} />
       <div className="shell">
         <ProximityFlashOverlay />
+        <UpdateBanner />
         <Sidebar activeId={activeId} onSelect={handleSelectNav} />
         <TopBar title={active.label} activeId={activeId} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
         <Suspense fallback={<div className="app-loading">Loading...</div>}>

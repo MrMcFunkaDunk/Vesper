@@ -3,6 +3,9 @@ import { Search, Swords } from "lucide-react";
 import TrackedSystemsFeed from "./TrackedSystemsFeed";
 import RecentKillsFeed from "./RecentKillsFeed";
 import BattleReportsFeed from "./BattleReportsFeed";
+import KillReportsFeed from "./KillReportsFeed";
+import TopKillStatsFeed from "./TopKillStatsFeed";
+import KillHistoryBackfillBar from "./KillHistoryBackfillBar";
 import KillDetailView from "./KillDetailView";
 import CharacterKillboard from "./CharacterKillboard";
 import SystemKillboard, { type SystemSummary } from "./SystemKillboard";
@@ -15,7 +18,7 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { searchCharacter, searchCharactersLive, searchEntitiesLive, type CharacterMatch, type EntityMatch } from "../lib/kills";
 import type { MarketItemRef } from "./MarketBrowser";
 
-type KillsTab = "tracked" | "recent" | "battles";
+type KillsTab = "tracked" | "recent" | "battles" | "reports" | "topstats";
 
 interface SearchSuggestion {
   kind: "character" | "corporation" | "alliance";
@@ -27,6 +30,8 @@ const TABS: { id: KillsTab; label: string }[] = [
   { id: "tracked", label: "Tracked Systems" },
   { id: "recent", label: "Most Recent Kills" },
   { id: "battles", label: "Battles" },
+  { id: "reports", label: "Kill Reports" },
+  { id: "topstats", label: "Top Stats" },
 ];
 
 type KillsView =
@@ -375,7 +380,7 @@ function KillsIntel({
 
         <div className="kills-header">
           <p className="eyebrow">Kills & Intel</p>
-          <h2>{tab === "tracked" ? "Tracked Systems" : tab === "recent" ? "Most Recent Kills" : "Battles"}</h2>
+          <h2>{tabLabel}</h2>
         </div>
 
         <form className="kills-character-search-form" onSubmit={handleSearchCharacter}>
@@ -455,7 +460,7 @@ function KillsIntel({
             onSelectCorporation={pushCorporation}
             onSelectAlliance={pushAlliance}
           />
-        ) : (
+        ) : tab === "battles" ? (
           <BattleReportsFeed
             onSelectKill={pushKillDetail}
             onSelectCharacter={pushCharacter}
@@ -463,6 +468,22 @@ function KillsIntel({
             onSelectCorporation={pushCorporation}
             onSelectAlliance={pushAlliance}
           />
+        ) : tab === "reports" ? (
+          <>
+            <KillHistoryBackfillBar />
+            <KillReportsFeed
+              onSelectKill={pushKillDetail}
+              onSelectCharacter={pushCharacter}
+              onSelectSystem={pushSystem}
+              onSelectCorporation={pushCorporation}
+              onSelectAlliance={pushAlliance}
+            />
+          </>
+        ) : (
+          <>
+            <KillHistoryBackfillBar />
+            <TopKillStatsFeed onSelectCharacter={pushCharacter} onSelectCorporation={pushCorporation} onSelectAlliance={pushAlliance} />
+          </>
         )}
       </div>
     </main>

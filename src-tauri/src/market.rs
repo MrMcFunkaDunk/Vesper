@@ -1165,6 +1165,53 @@ pub async fn get_jump_drive_info(app: tauri::AppHandle, client: &reqwest::Client
 }
 
 #[derive(Serialize, Clone)]
+pub struct ShipClassification {
+    pub group_id: i64,
+    pub group_name: String,
+    pub category_id: i64,
+}
+
+/// Group/category for a batch of type ids, straight from the local SDE
+/// cache (types.group_id joined against item_groups) - no live ESI call
+/// needed, unlike route.rs's per-kill gate-camp classification. Used by
+/// the kill history recorder to classify ships as capitals/structures for
+/// every kill in the live stream, where a live call per hull would be far
+/// too slow for a continuously-running background task.
+pub async fn get_ship_classifications(
+    app: tauri::AppHandle,
+    client: &reqwest::Client,
+    type_ids: Vec<i64>,
+) -> Result<HashMap<i64, ShipClassification>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<HashMap<i64, ShipClassification>, String> {
+        let mut results = HashMap::new();
+        if type_ids.is_empty() {
+            return Ok(results);
+        }
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open market database: {e}"))?;
+        let placeholders = vec!["?"; type_ids.len()].join(",");
+        let sql = format!(
+            "SELECT t.id, t.group_id, g.name, g.category_id \
+             FROM types t JOIN item_groups g ON g.id = t.group_id \
+             WHERE t.id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("failed to query ship classifications: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(type_ids.iter()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?))
+            })
+            .map_err(|e| format!("failed to query ship classifications: {e}"))?;
+        for row in rows {
+            let (type_id, group_id, group_name, category_id) = row.map_err(|e| format!("failed to read ship classification row: {e}"))?;
+            results.insert(type_id, ShipClassification { group_id, group_name, category_id });
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("ship classification task failed: {e}"))?
+}
+
+#[derive(Serialize, Clone)]
 pub struct SkillRequirement {
     pub skill_type_id: i64,
     pub skill_name: String,

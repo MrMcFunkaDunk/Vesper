@@ -1,4 +1,4 @@
-use crate::{abyssal, asset_history, auth, characters, combat_overlay, config, esi, fittings, intel_feed, kills, map, market, multibox, news, pi, price_widget, route, scout, settings_sync, skillplans, wars, wormholes};
+use crate::{abyssal, asset_history, auth, characters, combat_overlay, config, esi, fittings, intel_feed, kill_history, kills, map, market, multibox, news, pi, price_widget, route, scout, settings_sync, skillplans, wars, wormholes};
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -495,6 +495,31 @@ pub async fn get_kill_detail(state: State<'_, AppState>, killmail_id: i64) -> Re
 #[tauri::command]
 pub async fn get_recent_activity_kills(state: State<'_, AppState>) -> Result<Vec<kills::KillEntry>, String> {
     kills::fetch_recent_activity(&state.http_client).await
+}
+
+#[tauri::command]
+pub async fn query_kill_reports(app: AppHandle, category: String) -> Result<Vec<kills::KillEntry>, String> {
+    kill_history::query_kill_reports(app, category).await
+}
+
+#[tauri::command]
+pub async fn get_kill_top_stats(app: AppHandle, window_minutes: i64) -> Result<kill_history::TopStatsResult, String> {
+    kill_history::get_top_stats(app, window_minutes).await
+}
+
+/// Kicks off the one-time recent-history backfill in the background and
+/// returns immediately - a no-op if one is already running. Progress is
+/// polled separately via get_kill_history_backfill_progress.
+#[tauri::command]
+pub async fn start_kill_history_backfill(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let client = state.http_client.clone();
+    tauri::async_runtime::spawn(kill_history::start_backfill(app, client));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_kill_history_backfill_progress() -> Result<Option<kill_history::BackfillProgress>, String> {
+    Ok(kill_history::get_backfill_progress())
 }
 
 #[tauri::command]

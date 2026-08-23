@@ -810,6 +810,44 @@ pub async fn get_system_positions(app: tauri::AppHandle, client: &reqwest::Clien
     .map_err(|e| format!("system positions task failed: {e}"))?
 }
 
+#[derive(Serialize, Clone)]
+pub struct SystemRegionSecurity {
+    pub system_id: i64,
+    pub region_id: i64,
+    pub security: f64,
+}
+
+/// Region id + security status for a batch of systems, straight from the
+/// local SDE cache - no ESI call needed, unlike kills::fetch_system_info
+/// (which resolves region by name, not id, via a live system -> constellation
+/// -> region chain). Used by the kill history recorder, which runs
+/// continuously and needs this classification for every kill without
+/// depending on network calls or ESI rate limits.
+pub async fn get_systems_region_security(app: tauri::AppHandle, client: &reqwest::Client, ids: Vec<i64>) -> Result<Vec<SystemRegionSecurity>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SystemRegionSecurity>, String> {
+        let mut results = Vec::new();
+        if ids.is_empty() {
+            return Ok(results);
+        }
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open map database: {e}"))?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("SELECT id, region_id, security FROM systems WHERE id IN ({placeholders})");
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("failed to query system region/security: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+                Ok(SystemRegionSecurity { system_id: row.get(0)?, region_id: row.get(1)?, security: row.get(2)? })
+            })
+            .map_err(|e| format!("failed to query system region/security: {e}"))?;
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read system region/security row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("system region/security task failed: {e}"))?
+}
+
 /// Breadth-first search outward from originId over the jump graph for the
 /// nearest system matching `predicate` (a security-band check) - used for
 /// the System Stats popup's "nearest 0.0" / "nearest lowsec" routes, the

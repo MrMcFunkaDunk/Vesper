@@ -54,6 +54,25 @@ export interface KillEntry {
   final_blow_corporation_name: string | null;
   final_blow_alliance_id: number | null;
   final_blow_alliance_name: string | null;
+  victim_faction_id: number | null;
+  victim_faction_name: string | null;
+  awox: boolean;
+  war_id: number | null;
+  attackers: KillAttacker[];
+}
+
+export interface KillAttacker {
+  character_id: number | null;
+  character_name: string | null;
+  corporation_id: number | null;
+  corporation_name: string | null;
+  alliance_id: number | null;
+  alliance_name: string | null;
+  faction_id: number | null;
+  faction_name: string | null;
+  ship_type_id: number | null;
+  ship_type_name: string | null;
+  final_blow: boolean;
 }
 
 export type SlotGroup = "high" | "mid" | "low" | "rig" | "drone" | "cargo" | "other";
@@ -155,6 +174,80 @@ export function getRecentKills(systemIds: number[]): Promise<KillEntry[]> {
 
 export function getRecentActivityKills(): Promise<KillEntry[]> {
   return invoke("get_recent_activity_kills");
+}
+
+/** The zKillboard-style "Kill Reports" filters, backed by VESPER's own
+ * locally-recorded kill history (see kill_history.rs) rather than the live
+ * feed alone - "ganked" in particular only exists because of this local
+ * history, since it's a retroactive check against a later kill. */
+export type KillReportCategory =
+  | "top_kills"
+  | "big_kills"
+  | "capitals"
+  | "structures"
+  | "abyssal"
+  | "abyssal_pvp"
+  | "awox"
+  | "ganked"
+  | "solo";
+
+export function queryKillReports(category: KillReportCategory): Promise<KillEntry[]> {
+  return invoke("query_kill_reports", { category });
+}
+
+export interface RankingEntry {
+  id: number;
+  name: string;
+  count: number;
+}
+
+export interface KillTopStats {
+  total_kills: number;
+  killer_characters: RankingEntry[];
+  killer_corporations: RankingEntry[];
+  killer_alliances: RankingEntry[];
+  killer_factions: RankingEntry[];
+  killer_ships: RankingEntry[];
+  killer_groups: RankingEntry[];
+  loser_characters: RankingEntry[];
+  loser_corporations: RankingEntry[];
+  loser_alliances: RankingEntry[];
+  loser_factions: RankingEntry[];
+  loser_ships: RankingEntry[];
+  loser_groups: RankingEntry[];
+  top_systems: RankingEntry[];
+  top_regions: RankingEntry[];
+}
+
+/** Top characters/corporations/alliances/factions/ships/groups on both the
+ * killing and losing side, plus top systems/regions, over a rolling window -
+ * VESPER's equivalent of zKillboard's "Top Killers in the Last Hour" page.
+ * Only reflects kills VESPER's own history recorder has actually seen, so
+ * it fills in more completely the longer the app has been running. */
+export function getKillTopStats(windowMinutes: number): Promise<KillTopStats> {
+  return invoke("get_kill_top_stats", { windowMinutes });
+}
+
+export interface KillHistoryBackfillProgress {
+  running: boolean;
+  days_total: number;
+  days_done: number;
+  kills_recorded: number;
+  current_date: string;
+  error: string | null;
+  done: boolean;
+}
+
+/** Backfills the last 30 days of kill history from zKillboard's own bulk
+ * daily dumps, so Kill Reports/Top Stats have a rolling 30-day window
+ * immediately instead of waiting a real month for the live recorder to
+ * accumulate it. Runs in the background - a no-op if already running. */
+export function startKillHistoryBackfill(): Promise<void> {
+  return invoke("start_kill_history_backfill");
+}
+
+export function getKillHistoryBackfillProgress(): Promise<KillHistoryBackfillProgress | null> {
+  return invoke("get_kill_history_backfill_progress");
 }
 
 export function getKillDetail(killmailId: number): Promise<KillDetail> {

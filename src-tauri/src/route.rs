@@ -110,7 +110,8 @@ pub async fn plan_gate_check(
 //   361        Mobile Warp Disruptor (an anchored bubble, not a ship)
 const SMART_BOMB_GROUP: i64 = 72;
 const INTERDICTOR_GROUPS: [i64; 2] = [541, 894];
-const CAPITAL_GROUPS: [i64; 7] = [30, 485, 4594, 547, 659, 1538, 5120];
+/// Also reused by kill_history.rs's "Capitals" kill-report filter.
+pub(crate) const CAPITAL_GROUPS: [i64; 7] = [30, 485, 4594, 547, 659, 1538, 5120];
 const CITADEL_GROUP: i64 = 1657;
 const MOBILE_BUBBLE_GROUP: i64 = 361;
 

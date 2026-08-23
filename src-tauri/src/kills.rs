@@ -103,8 +103,19 @@ struct ZkbKillmail {
     #[serde(default)]
     attackers: Vec<ZkbAttacker>,
     victim: ZkbVictim,
+    /// None for a raw ESI-shaped killmail with no zKillboard enrichment at
+    /// all - true for the live killmail.stream feed, but NOT true for
+    /// zKillboard's own bulk daily history dumps (verified live: their
+    /// r2z2.zkillboard.com/history/raw/ endpoint carries zero "zkb" keys
+    /// anywhere in a full day's file), which the kill history backfill
+    /// computes value/npc/solo/awox for itself instead.
     #[serde(default)]
-    zkb: ZkbMeta,
+    zkb: Option<ZkbMeta>,
+    /// Only present when the kill happened in the context of a declared
+    /// war - ESI's own killmail field, passed straight through by
+    /// killmail.stream, not a zKillboard invention.
+    #[serde(default)]
+    war_id: Option<i64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -113,6 +124,8 @@ struct ZkbAttacker {
     corporation_id: Option<i64>,
     #[serde(default)]
     alliance_id: Option<i64>,
+    #[serde(default)]
+    faction_id: Option<i64>,
     ship_type_id: Option<i64>,
     #[serde(default)]
     weapon_type_id: Option<i64>,
@@ -134,6 +147,8 @@ struct ZkbVictim {
     character_id: Option<i64>,
     corporation_id: Option<i64>,
     alliance_id: Option<i64>,
+    #[serde(default)]
+    faction_id: Option<i64>,
     ship_type_id: i64,
     #[serde(default)]
     damage_taken: i64,
@@ -166,6 +181,12 @@ struct ZkbMeta {
     npc: bool,
     #[serde(default)]
     solo: bool,
+    /// zKillboard computes this synchronously per-killmail (unlike
+    /// "ganked", which needs a later, retroactive cross-kill check) - see
+    /// the verified isAwox() logic this mirrors: true when the same
+    /// character/corp appears as both victim and final-blow attacker.
+    #[serde(default)]
+    awox: bool,
     #[serde(default)]
     hash: String,
     #[serde(default)]
@@ -227,6 +248,48 @@ pub struct KillEntry {
     pub final_blow_corporation_name: Option<String>,
     pub final_blow_alliance_id: Option<i64>,
     pub final_blow_alliance_name: Option<String>,
+    pub victim_faction_id: Option<i64>,
+    pub victim_faction_name: Option<String>,
+    pub awox: bool,
+    /// False for a kill sourced from zKillboard's bulk daily history dumps
+    /// (used for the kill history backfill), which carry raw ESI killmail
+    /// data only - no zkb block at all, so total_value/npc/solo/awox above
+    /// are all just defaults and need computing separately. True for
+    /// anything sourced from the live killmail.stream feed, where zkb is
+    /// always present.
+    pub zkb_provided: bool,
+    pub war_id: Option<i64>,
+    /// The full attacker list (not just final blow) - used by the kill
+    /// history recorder for gank correlation and killer-side leaderboard
+    /// aggregation. Empty on paths that don't need it.
+    pub attackers: Vec<KillAttacker>,
+    /// The victim's fitted/cargo items - only populated alongside the full
+    /// attacker list, used by the kill history recorder to compute an
+    /// approximate total_value for backfilled kills that have no zkb-
+    /// provided value at all.
+    pub items: Vec<KillmailItem>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct KillmailItem {
+    pub item_type_id: i64,
+    pub quantity_destroyed: i64,
+    pub quantity_dropped: i64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct KillAttacker {
+    pub character_id: Option<i64>,
+    pub character_name: Option<String>,
+    pub corporation_id: Option<i64>,
+    pub corporation_name: Option<String>,
+    pub alliance_id: Option<i64>,
+    pub alliance_name: Option<String>,
+    pub faction_id: Option<i64>,
+    pub faction_name: Option<String>,
+    pub ship_type_id: Option<i64>,
+    pub ship_type_name: Option<String>,
+    pub final_blow: bool,
 }
 
 /// Kills for one watched system, most recent first, capped so a busy hub
@@ -268,7 +331,7 @@ pub async fn fetch_recent_kills(client: &reqwest::Client, system_ids: &[i64]) ->
             raw.extend(kills);
         }
     }
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 async fn fetch_system_kills_page(client: &reqwest::Client, system_id: i64, page: i64) -> Result<Vec<ZkbKillmail>, String> {
@@ -296,7 +359,7 @@ async fn fetch_system_kills_page(client: &reqwest::Client, system_id: i64, page:
 /// history rather than stopping after the first ~25 rows.
 pub async fn fetch_system_kills_history(client: &reqwest::Client, system_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_system_kills_page(client, system_id, page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 fn now_unix() -> i64 {
@@ -378,7 +441,8 @@ pub async fn fetch_system_kill_history_48h(client: &reqwest::Client, system_id: 
                 hit_cutoff = true;
                 continue;
             }
-            points.push(KillHistoryPoint { time: kill.killmail_time, npc: kill.zkb.npc, ship_type_id: kill.victim.ship_type_id });
+            let npc = kill.zkb.as_ref().map(|z| z.npc).unwrap_or(false);
+            points.push(KillHistoryPoint { time: kill.killmail_time, npc, ship_type_id: kill.victim.ship_type_id });
         }
         if hit_cutoff || page_len < 200 {
             break;
@@ -429,13 +493,13 @@ async fn fetch_area_kills(client: &reqwest::Client, modifier: &str, id: i64) -> 
 /// for a constellation's killboard page.
 pub async fn fetch_constellation_kills(client: &reqwest::Client, constellation_id: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills(client, "constellationID", constellation_id).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// Same as fetch_constellation_kills, scoped to a whole region.
 pub async fn fetch_region_kills(client: &reqwest::Client, region_id: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills(client, "regionID", region_id).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// A constellation's own killboard history, one real zKillboard page at a
@@ -445,13 +509,13 @@ pub async fn fetch_region_kills(client: &reqwest::Client, region_id: i64) -> Res
 /// fetch_system_kills_history.
 pub async fn fetch_constellation_kills_history(client: &reqwest::Client, constellation_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills_kind(client, "kills", "constellationID", constellation_id, page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// Same as fetch_constellation_kills_history, scoped to a whole region.
 pub async fn fetch_region_kills_history(client: &reqwest::Client, region_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills_kind(client, "kills", "regionID", region_id, page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// Same shape again, scoped to a corporation, one zKillboard page (200
@@ -461,13 +525,13 @@ pub async fn fetch_region_kills_history(client: &reqwest::Client, region_id: i64
 /// fetch, not the capped area feed above.
 pub async fn fetch_corporation_kills(client: &reqwest::Client, corporation_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills_kind(client, "kills", "corporationID", corporation_id, page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// Same shape again, scoped to an alliance.
 pub async fn fetch_alliance_kills(client: &reqwest::Client, alliance_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills_kind(client, "kills", "allianceID", alliance_id, page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// A corporation's own losses (its members as victims) - zKillboard exposes
@@ -478,13 +542,13 @@ pub async fn fetch_alliance_kills(client: &reqwest::Client, alliance_id: i64, pa
 /// already relies on for characters.
 pub async fn fetch_corporation_losses(client: &reqwest::Client, corporation_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills_kind(client, "losses", "corporationID", corporation_id, page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// Same as fetch_corporation_losses, scoped to an alliance.
 pub async fn fetch_alliance_losses(client: &reqwest::Client, alliance_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills_kind(client, "losses", "allianceID", alliance_id, page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// Kills at one specific location (stargate/station/structure item id) -
@@ -494,7 +558,7 @@ pub async fn fetch_alliance_losses(client: &reqwest::Client, alliance_id: i64, p
 /// is needed here at all, unlike the single-killmail nearest-gate lookup.
 pub async fn fetch_location_kills(client: &reqwest::Client, location_id: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_area_kills(client, "locationID", location_id).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// A trimmed-down view of a killmail with exactly what gate-camp analysis
@@ -557,13 +621,13 @@ async fn fetch_character_kills_raw(client: &reqwest::Client, character_id: i64, 
 /// real problem here the way it was for the "Most Recent Kills" feed.
 pub async fn fetch_character_kills(client: &reqwest::Client, character_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_character_kills_raw(client, character_id, "kills", page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// Same as fetch_character_kills but for the character's own losses.
 pub async fn fetch_character_losses(client: &reqwest::Client, character_id: i64, page: i64) -> Result<Vec<KillEntry>, String> {
     let raw = fetch_character_kills_raw(client, character_id, "losses", page).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 #[derive(Deserialize)]
@@ -1405,7 +1469,7 @@ pub async fn fetch_recent_activity(client: &reqwest::Client) -> Result<Vec<KillE
     raw.sort_by(|a, b| b.killmail_time.cmp(&a.killmail_time));
     raw.truncate(RECENT_ACTIVITY_LIMIT);
 
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 const KILLMAIL_STREAM_BASE: &str = "https://killmail.stream";
@@ -1465,7 +1529,7 @@ async fn poll_live_kills(client: &reqwest::Client, queue_id: &str) -> Result<Vec
 /// One long-poll cycle of the live, unfiltered New Eden kill stream.
 pub async fn poll_recent_activity(client: &reqwest::Client) -> Result<Vec<KillEntry>, String> {
     let raw = poll_live_kills(client, &RECENT_ACTIVITY_QUEUE_ID).await?;
-    Ok(enrich_kills(client, raw).await)
+    Ok(enrich_kills(client, raw, false).await)
 }
 
 /// One long-poll cycle of the same live stream, filtered to the watched
@@ -1475,13 +1539,42 @@ pub async fn poll_recent_activity(client: &reqwest::Client) -> Result<Vec<KillEn
 pub async fn poll_tracked_systems(client: &reqwest::Client, system_ids: &[i64]) -> Result<Vec<KillEntry>, String> {
     let raw = poll_live_kills(client, TRACKED_SYSTEMS_QUEUE_ID).await?;
     let matching: Vec<ZkbKillmail> = raw.into_iter().filter(|k| system_ids.contains(&k.solar_system_id)).collect();
-    Ok(enrich_kills(client, matching).await)
+    Ok(enrich_kills(client, matching, false).await)
+}
+
+/// Fixed (not per-launch-random) so the kill history recorder resumes its
+/// queue position across app restarts instead of losing the backlog built
+/// up while the app was closed - unlike RECENT_ACTIVITY_QUEUE_ID, catching
+/// up on a gap is exactly what a persistent history store should do.
+const KILL_HISTORY_QUEUE_ID: &str = "vesper-capsuleer-ops-history-v1";
+
+/// One long-poll cycle of the live, unfiltered New Eden kill stream, fully
+/// enriched (full attacker list included) for the kill history recorder.
+/// A distinct queueID from every other consumer of this stream.
+pub async fn poll_kill_history(client: &reqwest::Client) -> Result<Vec<KillEntry>, String> {
+    let raw = poll_live_kills(client, KILL_HISTORY_QUEUE_ID).await?;
+    Ok(enrich_kills(client, raw, true).await)
+}
+
+/// Parses a batch of raw killmail JSON values (from zKillboard's bulk daily
+/// history dump, not the live stream) and runs them through the same
+/// enrichment/name-resolution pipeline as the live recorder - full
+/// attacker list included, same as poll_kill_history. Entries that fail to
+/// parse are skipped rather than failing the whole batch, same reasoning
+/// as poll_live_kills (a bulk dump can contain occasional malformed rows).
+pub async fn enrich_raw_killmail_batch(client: &reqwest::Client, raw_json: Vec<serde_json::Value>) -> Vec<KillEntry> {
+    let raw: Vec<ZkbKillmail> = raw_json.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect();
+    enrich_kills(client, raw, true).await
 }
 
 /// Sorts newest-first, resolves system security/region for every unique
 /// system involved, then resolves every victim/ship/system/final-blow-
 /// attacker name in a single batched ESI call before building KillEntry.
-async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>) -> Vec<KillEntry> {
+/// `include_full_attackers` gates resolving (and returning) every
+/// attacker's name/faction/ship, not just the final blow - skipped by
+/// default since a single blob-fleet kill can carry 1000+ attackers, and
+/// only the kill history recorder actually needs the full list.
+async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>, include_full_attackers: bool) -> Vec<KillEntry> {
     raw.sort_by(|a, b| b.killmail_time.cmp(&a.killmail_time));
 
     {
@@ -1514,7 +1607,28 @@ async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>) -> Ve
         if let Some(id) = kill.victim.alliance_id {
             lookup_ids.push(id);
         }
-        if let Some(final_blow) = kill.attackers.iter().find(|a| a.final_blow) {
+        if let Some(id) = kill.victim.faction_id {
+            lookup_ids.push(id);
+        }
+        if include_full_attackers {
+            for attacker in &kill.attackers {
+                if let Some(id) = attacker.character_id {
+                    lookup_ids.push(id);
+                }
+                if let Some(id) = attacker.corporation_id {
+                    lookup_ids.push(id);
+                }
+                if let Some(id) = attacker.alliance_id {
+                    lookup_ids.push(id);
+                }
+                if let Some(id) = attacker.faction_id {
+                    lookup_ids.push(id);
+                }
+                if let Some(id) = attacker.ship_type_id {
+                    lookup_ids.push(id);
+                }
+            }
+        } else if let Some(final_blow) = kill.attackers.iter().find(|a| a.final_blow) {
             if let Some(id) = final_blow.character_id {
                 lookup_ids.push(id);
             }
@@ -1532,6 +1646,41 @@ async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>) -> Ve
         .map(|kill| {
             let final_blow = kill.attackers.iter().find(|a| a.final_blow);
             let info = system_info.get(&kill.solar_system_id);
+            let zkb_provided = kill.zkb.is_some();
+            let zkb = kill.zkb.clone().unwrap_or_default();
+            let items = if include_full_attackers {
+                kill.victim
+                    .items
+                    .iter()
+                    .map(|i| KillmailItem {
+                        item_type_id: i.item_type_id,
+                        quantity_destroyed: i.quantity_destroyed,
+                        quantity_dropped: i.quantity_dropped,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let attackers = if include_full_attackers {
+                kill.attackers
+                    .iter()
+                    .map(|a| KillAttacker {
+                        character_id: a.character_id,
+                        character_name: a.character_id.and_then(|id| names.get(&id).cloned()),
+                        corporation_id: a.corporation_id,
+                        corporation_name: a.corporation_id.and_then(|id| names.get(&id).cloned()),
+                        alliance_id: a.alliance_id,
+                        alliance_name: a.alliance_id.and_then(|id| names.get(&id).cloned()),
+                        faction_id: a.faction_id,
+                        faction_name: a.faction_id.and_then(|id| names.get(&id).cloned()),
+                        ship_type_id: a.ship_type_id,
+                        ship_type_name: a.ship_type_id.and_then(|id| names.get(&id).cloned()),
+                        final_blow: a.final_blow,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             KillEntry {
                 killmail_id: kill.killmail_id,
                 time: kill.killmail_time,
@@ -1539,21 +1688,27 @@ async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>) -> Ve
                 system_name: names.get(&kill.solar_system_id).cloned().unwrap_or_default(),
                 system_security: info.map(|i| i.security_status),
                 region_name: info.map(|i| i.region_name.clone()),
-                location_id: kill.zkb.location_id,
+                location_id: zkb.location_id,
                 victim_character_id: kill.victim.character_id,
                 victim_character_name: kill.victim.character_id.and_then(|id| names.get(&id).cloned()),
                 victim_corporation_id: kill.victim.corporation_id,
                 victim_corporation_name: kill.victim.corporation_id.and_then(|id| names.get(&id).cloned()),
                 victim_alliance_id: kill.victim.alliance_id,
                 victim_alliance_name: kill.victim.alliance_id.and_then(|id| names.get(&id).cloned()),
+                victim_faction_id: kill.victim.faction_id,
+                victim_faction_name: kill.victim.faction_id.and_then(|id| names.get(&id).cloned()),
                 ship_type_id: kill.victim.ship_type_id,
                 ship_type_name: names
                     .get(&kill.victim.ship_type_id)
                     .cloned()
                     .unwrap_or_else(|| format!("Type #{}", kill.victim.ship_type_id)),
-                total_value: kill.zkb.total_value,
-                npc: kill.zkb.npc,
-                solo: kill.zkb.solo,
+                total_value: zkb.total_value,
+                npc: zkb.npc,
+                solo: zkb.solo,
+                awox: zkb.awox,
+                zkb_provided,
+                war_id: kill.war_id,
+                items,
                 attacker_count: kill.attackers.len(),
                 final_blow_character_id: final_blow.and_then(|a| a.character_id),
                 final_blow_character_name: final_blow
@@ -1567,6 +1722,7 @@ async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>) -> Ve
                 final_blow_alliance_name: final_blow
                     .and_then(|a| a.alliance_id)
                     .and_then(|id| names.get(&id).cloned()),
+                attackers,
             }
         })
         .collect()
@@ -1793,6 +1949,7 @@ pub async fn fetch_kill_detail(client: &reqwest::Client, killmail_id: i64) -> Re
         })
         .collect();
 
+    let zkb = kill.zkb.clone().unwrap_or_default();
     Ok(KillDetail {
         killmail_id: kill.killmail_id,
         time: kill.killmail_time,
@@ -1814,14 +1971,14 @@ pub async fn fetch_kill_detail(client: &reqwest::Client, killmail_id: i64) -> Re
             .get(&kill.victim.ship_type_id)
             .cloned()
             .unwrap_or_else(|| format!("Type #{}", kill.victim.ship_type_id)),
-        total_value: kill.zkb.total_value,
-        destroyed_value: kill.zkb.destroyed_value,
-        dropped_value: kill.zkb.dropped_value,
-        npc: kill.zkb.npc,
-        solo: kill.zkb.solo,
-        points: kill.zkb.points,
+        total_value: zkb.total_value,
+        destroyed_value: zkb.destroyed_value,
+        dropped_value: zkb.dropped_value,
+        npc: zkb.npc,
+        solo: zkb.solo,
+        points: zkb.points,
         damage_taken: kill.victim.damage_taken,
-        hash: kill.zkb.hash,
+        hash: zkb.hash,
         insurance,
         items,
         attackers,
