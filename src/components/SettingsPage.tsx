@@ -1,5 +1,10 @@
-import { useState } from "react";
-import { Volume2, VolumeX, RefreshCw, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Volume2, VolumeX, RefreshCw, ShieldCheck, FolderOpen, ExternalLink, Download } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
+import { appLocalDataDir } from "@tauri-apps/api/path";
+import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { check, type Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { playProximityAlert } from "../lib/sound";
 import { useSoundEnabled } from "../hooks/useSoundEnabled";
 import { useNotificationPreferences } from "../hooks/useNotificationPreferences";
@@ -47,7 +52,55 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
   const [resyncing, setResyncing] = useState(false);
   const [resyncDone, setResyncDone] = useState(false);
   const [expandedCharacterId, setExpandedCharacterId] = useState<number | null>(null);
+  const [version, setVersion] = useState("");
+  const [updateCheck, setUpdateCheck] = useState<"idle" | "checking" | "up-to-date" | "error">("idle");
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [installingUpdate, setInstallingUpdate] = useState(false);
   const reportError = useErrorReporter();
+
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => {});
+  }, []);
+
+  async function handleCheckForUpdates() {
+    setUpdateCheck("checking");
+    setAvailableUpdate(null);
+    try {
+      const result = await check();
+      if (result) {
+        setAvailableUpdate(result);
+        setUpdateCheck("idle");
+      } else {
+        setUpdateCheck("up-to-date");
+      }
+    } catch (err) {
+      setUpdateCheck("error");
+      reportError(`Failed to check for updates: ${String(err)}`);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (!availableUpdate) return;
+    setInstallingUpdate(true);
+    try {
+      await availableUpdate.downloadAndInstall();
+      await relaunch();
+    } catch (err) {
+      setInstallingUpdate(false);
+      reportError(`Failed to install the update: ${String(err)}`);
+    }
+  }
+
+  async function handleOpenDataFolder() {
+    try {
+      const dir = await appLocalDataDir();
+      await openPath(dir);
+    } catch (err) {
+      reportError(`Failed to open the data folder: ${String(err)}`);
+    }
+  }
 
   function handleTestSound() {
     playProximityAlert();
@@ -273,6 +326,46 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
             <RefreshCw size={13} strokeWidth={2} className={resyncing ? "market-resync-spin" : undefined} />
             {resyncing ? "Re-syncing..." : resyncDone ? "Done!" : "Re-sync Market & Industry Data"}
           </button>
+        </div>
+
+        <div className="settings-section">
+          <h3>About</h3>
+          <p className="settings-section-hint">
+            VESPER {version && `v${version}`} - checks for a new release on launch, but never installs anything
+            without you clicking first.
+          </p>
+          <div className="settings-section-row">
+            <button type="button" className="kills-sync-btn" onClick={handleCheckForUpdates} disabled={updateCheck === "checking"}>
+              <Download size={13} strokeWidth={2} />
+              {updateCheck === "checking" ? "Checking..." : "Check for Updates"}
+            </button>
+            {updateCheck === "up-to-date" && <span className="settings-inline-label">You're on the latest version.</span>}
+            {updateCheck === "error" && <span className="settings-permission-denied">Couldn't reach the update server.</span>}
+          </div>
+          {availableUpdate && (
+            <div className="settings-section-row">
+              <span className="settings-inline-label">
+                v{availableUpdate.version} is available (you're on {availableUpdate.currentVersion}).
+              </span>
+              <button type="button" className="kills-sync-btn" onClick={handleInstallUpdate} disabled={installingUpdate}>
+                {installingUpdate ? "Installing..." : "Update & Restart"}
+              </button>
+            </div>
+          )}
+          <div className="settings-section-row">
+            <button type="button" className="detail-back" onClick={handleOpenDataFolder}>
+              <FolderOpen size={13} strokeWidth={2} />
+              Open Data Folder
+            </button>
+            <button type="button" className="detail-back" onClick={() => openUrl("https://github.com/MrMcFunkaDunk/Vesper/issues")}>
+              <ExternalLink size={13} strokeWidth={2} />
+              Report an Issue
+            </button>
+            <button type="button" className="detail-back" onClick={() => openUrl("https://github.com/MrMcFunkaDunk/Vesper/discussions")}>
+              <ExternalLink size={13} strokeWidth={2} />
+              Discussions
+            </button>
+          </div>
         </div>
           </>
         )}
