@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Crosshair, MapPin, BarChart3 } from "lucide-react";
+import { Search, X, Crosshair, MapPin, BarChart3, RefreshCw } from "lucide-react";
 import SystemStatsPanel from "./SystemStatsPanel";
 import { getMapData, getCharacterHomeSystems, getPlayerStructures, type MapData, type MapSystem, type PlayerStructureInfo } from "../lib/map";
 import { useErrorReporter } from "../hooks/useErrorReporter";
@@ -1035,6 +1035,17 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   // running at its configured rate regardless of focus, since Chromium only
   // throttles it for a fully hidden/backgrounded tab, which never applies
   // to a single-window desktop app.
+  //
+  // Ticks at 150ms (not every frame) deliberately - the pulse itself is a
+  // slow ~1.9s sine breathe (see pulseWave), so this is already more
+  // samples than the eye can tell apart from 60fps, and the lighter tick
+  // rate matters for a second reason beyond CPU use: EVE Online itself is
+  // usually the actual foreground app VESPER sits behind, and a real,
+  // demanding 3D game competing for the same CPU cores can starve a
+  // background process of scheduled time regardless of any of Chromium's
+  // own throttling settings - that's a step below anything a browser flag
+  // can fix. A cheaper, less frequent tick is simply more likely to still
+  // get a CPU slice under that kind of real contention than a 20fps one.
   function ensureAnimating() {
     if (animFrameRef.current !== null) return;
     animFrameRef.current = window.setInterval(() => {
@@ -1049,7 +1060,19 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         window.clearInterval(animFrameRef.current!);
         animFrameRef.current = null;
       }
-    }, 50);
+    }, 150);
+  }
+
+  /** Recomputes heat/top-activity off the current kill list and forces one
+   * fresh draw - the single source of truth for "make the map correct and
+   * pulsing right now", reused by the mount effect, the periodic refresh,
+   * regaining window focus/visibility, and the manual resync button below. */
+  function resync() {
+    const now = Date.now();
+    heatMapRef.current = computeSystemHeat(kills, now);
+    if (hasRecentHeat(heatMapRef.current, now)) ensureAnimating();
+    setTopActivity(computeTopActivity(kills, now));
+    requestDraw();
   }
 
   useEffect(() => {
@@ -1059,21 +1082,30 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   }, []);
 
   useEffect(() => {
-    const now = Date.now();
-    heatMapRef.current = computeSystemHeat(kills, now);
-    if (hasRecentHeat(heatMapRef.current, now)) ensureAnimating();
-    setTopActivity(computeTopActivity(kills, now));
-    requestDraw();
+    resync();
     // Also refreshed on a timer so the heat rings and top-active panel keep
     // decaying smoothly even when the feed goes quiet for a while.
-    const interval = setInterval(() => {
-      const refreshedNow = Date.now();
-      heatMapRef.current = computeSystemHeat(kills, refreshedNow);
-      if (hasRecentHeat(heatMapRef.current, refreshedNow)) ensureAnimating();
-      setTopActivity(computeTopActivity(kills, refreshedNow));
-      requestDraw();
-    }, HEAT_REFRESH_MS);
+    const interval = setInterval(resync, HEAT_REFRESH_MS);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kills]);
+
+  // Belt-and-braces beyond the setInterval fix above: if the window's real
+  // OS focus (or visibility) was lost long enough that anything did still
+  // end up stalling - e.g. genuine CPU contention with EVE itself running
+  // as the actual foreground game, not just Chromium's own throttling
+  // policy - getting focus/visibility back forces an immediate resync
+  // rather than waiting on the next mousemove or the periodic timer.
+  useEffect(() => {
+    function handleVisible() {
+      if (document.visibilityState === "visible") resync();
+    }
+    window.addEventListener("focus", resync);
+    document.addEventListener("visibilitychange", handleVisible);
+    return () => {
+      window.removeEventListener("focus", resync);
+      document.removeEventListener("visibilitychange", handleVisible);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kills]);
 
@@ -1611,6 +1643,14 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                 title="Toggle the station-service key icons shown under system names"
               >
                 Icons
+              </button>
+              <button
+                type="button"
+                className="map-icons-toggle"
+                onClick={resync}
+                title="Force the heat map and pulse to refresh right now, in case they've gone stale"
+              >
+                <RefreshCw size={12} strokeWidth={2} />
               </button>
             </div>
 
