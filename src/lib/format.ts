@@ -62,6 +62,23 @@ export function formatTimeRemainingFull(iso: string): string {
   return parts.join(" ");
 }
 
+/** Inverse of formatTimeRemainingFull - how long ago a past timestamp
+ * passed, in the same "32d 22h 41m" shape, for "idle for..." style
+ * displays (a stopped PI extractor, an expired something). */
+export function formatTimeElapsedFull(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (diffMs <= 0) return "0m";
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (days > 0 || hours > 0) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
 /** "Mon 30 Nov 18:43 EVE" - EVE time is always UTC, matching EveMon's queue-footer style. */
 export function formatEveDateTime(iso: string): string {
   const d = new Date(iso);

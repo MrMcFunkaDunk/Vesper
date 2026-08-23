@@ -7,7 +7,7 @@ import {
   type PlanetPin,
 } from "../lib/eve";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { formatRelativeTime, formatTimeRemainingFull, formatEveDateTime } from "../lib/format";
+import { formatTimeElapsedFull, formatTimeRemainingFull, formatEveDateTime } from "../lib/format";
 import { typeIconUrl } from "../lib/format";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
@@ -198,6 +198,7 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
                     <SortableTh label="Level" sortKey="upgradeLevel" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} numeric />
                     <SortableTh label="Status" sortKey="status" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
                     <SortableTh label="Extractors" sortKey="earliestExpiry" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
+                    <th>Pins</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -224,13 +225,32 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
                           {row.earliestExpiry == null
                             ? "—"
                             : row.status === "idle"
-                              ? `Expired ${formatRelativeTime(row.earliestExpiry)}`
+                              ? `Idle for ${formatTimeElapsedFull(row.earliestExpiry)}`
                               : `${formatTimeRemainingFull(row.earliestExpiry)} left`}
+                        </td>
+                        <td>
+                          {row.pins && (
+                            <div className="pi-colony-pin-strip">
+                              {row.pins.map((pin) => {
+                                const idle = pin.is_extractor && pin.expiry_time != null && new Date(pin.expiry_time).getTime() <= Date.now();
+                                const running = pin.is_extractor && pin.expiry_time != null && !idle;
+                                return (
+                                  <img
+                                    key={pin.pin_id}
+                                    className={`pi-colony-pin-strip-icon${idle ? " pi-colony-pin-strip-icon-idle" : running ? " pi-colony-pin-strip-icon-running" : ""}`}
+                                    src={typeIconUrl(pin.type_id)}
+                                    alt=""
+                                    title={`${pin.type_name}${idle ? " - idle" : ""}`}
+                                  />
+                                );
+                              })}
+                            </div>
+                          )}
                         </td>
                       </tr>
                       {expandedKey === row.key && (
                         <tr className="contract-items-row">
-                          <td colSpan={7}>
+                          <td colSpan={8}>
                             {row.pins == null || row.pins.length === 0 ? (
                               <p className="detail-empty">No pins found on this colony.</p>
                             ) : (
@@ -247,9 +267,9 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
                                       <p className="pi-colony-pin-detail">Extracting: {pin.product_type_name}</p>
                                     )}
                                     {pin.expiry_time && (
-                                      <p className="pi-colony-pin-detail">
+                                      <p className={`pi-colony-pin-detail${new Date(pin.expiry_time).getTime() <= Date.now() ? " pi-colony-pin-detail-idle" : ""}`}>
                                         {new Date(pin.expiry_time).getTime() <= Date.now()
-                                          ? `Cycle ended ${formatRelativeTime(pin.expiry_time)}`
+                                          ? `Idle for ${formatTimeElapsedFull(pin.expiry_time)}`
                                           : `Cycle ends ${formatEveDateTime(pin.expiry_time)} (${formatTimeRemainingFull(pin.expiry_time)} left)`}
                                       </p>
                                     )}
