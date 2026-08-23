@@ -457,6 +457,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const showServiceIconsRef = useRef(true);
   const homePinsBySystemRef = useRef<Map<number, CharacterPin[]>>(new Map());
   const locationPinsBySystemRef = useRef<Map<number, CharacterPin[]>>(new Map());
+  /** Screen-space hit boxes for every home/location pin drawn on the current
+   * frame, rebuilt each draw pass - lets hover detection tell "over this
+   * character's marker" apart from "over the system dot" without redoing
+   * the pin layout math a second time outside the render loop. */
+  const renderedPinsRef = useRef<{ px: number; py: number; radius: number; character: SessionCharacter; kind: "home" | "location" }[]>([]);
   const structuresBySystemRef = useRef<Map<number, PlayerStructureInfo[]>>(new Map());
   const heatMapRef = useRef<Map<number, SystemHeat>>(new Map());
   const animFrameRef = useRef<number | null>(null);
@@ -476,6 +481,13 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * pinned. Cleared by clicking the same system again or clicking
    * elsewhere on the map. */
   const [pinnedHover, setPinnedHover] = useState<HoverInfo | null>(null);
+  /** A lightweight name tag shown while hovering a character's home or
+   * live-location marker directly - separate from the system tooltip above
+   * since it only needs to answer "whose pin is this", not show a
+   * killboard. Hover-only (no pinning) since there's nothing inside it to
+   * click. */
+  const [pinHover, setPinHover] = useState<{ characterName: string; kind: "home" | "location"; clientX: number; clientY: number } | null>(null);
+  const hoveredPinKeyRef = useRef<string | null>(null);
   const [topActivity, setTopActivity] = useState<{ systems: TopActivityEntry[]; regions: TopActivityEntry[] }>({
     systems: [],
     regions: [],
@@ -768,6 +780,8 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       ctx.restore();
     }
 
+    renderedPinsRef.current = [];
+
     const visible: MapSystem[] = [];
     for (const system of data.systems) {
       if (!inView(system.x, system.y)) continue;
@@ -876,6 +890,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         const py = sy - dotRadius - markerRadius - 3;
         for (const pin of homePins) {
           drawHomeMarker(ctx, px, py, markerRadius, characterInitials(pin.character.name));
+          renderedPinsRef.current.push({ px, py, radius: markerRadius, character: pin.character, kind: "home" });
           px += markerRadius * 2 + 3;
         }
       }
@@ -891,6 +906,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         const py = sy + dotRadius + portraitRadius + 3;
         for (const pin of locationPins) {
           drawPortrait(ctx, px, py, portraitRadius, pin.image);
+          renderedPinsRef.current.push({ px, py, radius: portraitRadius, character: pin.character, kind: "location" });
           px += portraitRadius * 2 + 3;
         }
       }
@@ -1086,6 +1102,20 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     });
     resizeObserver.observe(canvas);
 
+    /** Finds the home/location pin (if any) under the cursor, checked before
+     * pickSystem on every mousemove so hovering a character's marker shows
+     * their name instead of (or on top of) the system's own tooltip. */
+    function pickPin(clientX: number, clientY: number) {
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      for (const pin of renderedPinsRef.current) {
+        if (Math.hypot(pin.px - px, pin.py - py) <= pin.radius) return pin;
+      }
+      return null;
+    }
+
     function pickSystem(clientX: number, clientY: number): MapSystem | null {
       const data = dataRef.current;
       if (!canvas || !data) return null;
@@ -1189,6 +1219,10 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         setHoverInfo(null);
         requestDraw();
       }
+      if (hoveredPinKeyRef.current !== null) {
+        hoveredPinKeyRef.current = null;
+        setPinHover(null);
+      }
     }
 
     function handleMouseMove(e: MouseEvent) {
@@ -1215,7 +1249,19 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         clearHover();
         return;
       }
-      const picked = pickSystem(e.clientX, e.clientY);
+      const pin = pickPin(e.clientX, e.clientY);
+      const pinKey = pin ? `${pin.kind}:${pin.character.id}` : null;
+      if (pinKey !== hoveredPinKeyRef.current) {
+        hoveredPinKeyRef.current = pinKey;
+        setPinHover(pin ? { characterName: pin.character.name, kind: pin.kind, clientX: e.clientX, clientY: e.clientY } : null);
+      } else if (pin) {
+        setPinHover((prev) => (prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev));
+      }
+
+      // A pin sitting right next to its system's dot shouldn't also pop the
+      // system's own killboard tooltip at the same time - whichever the
+      // cursor is actually over wins, rather than layering both.
+      const picked = pin ? null : pickSystem(e.clientX, e.clientY);
       const pickedId = picked?.id ?? null;
       if (pickedId !== hoveredIdRef.current) {
         hoveredIdRef.current = pickedId;
@@ -1685,6 +1731,13 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           </div>
         </div>
       </div>
+
+      {pinHover && (
+        <div className="map-hover-tooltip map-pin-tooltip" style={{ left: pinHover.clientX + 16, top: pinHover.clientY + 16 }}>
+          <span className="map-hover-name">{pinHover.characterName}</span>
+          <span className="map-hover-kills">{pinHover.kind === "home" ? "Home base" : "Currently here"}</span>
+        </div>
+      )}
 
       {activeHover && (
         <div
