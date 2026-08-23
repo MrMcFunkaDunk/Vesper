@@ -56,6 +56,18 @@ function App() {
   const [pendingFitShipTypeId, setPendingFitShipTypeId] = useState<number | null>(null);
   const reportError = useErrorReporter();
 
+  // The Map page owns real per-session state worth keeping warm across
+  // navigation - the canvas's own zoom/pan, the heat map, and (via
+  // useRecentActivity) the live kill feed it's already streaming - none of
+  // which should have to rebuild from scratch every time the user leaves
+  // and comes back. Rendered in a persistent sibling below instead of
+  // inside the tab switch, so it mounts once on first visit and then just
+  // toggles visibility with CSS from then on.
+  const [mapVisited, setMapVisited] = useState(false);
+  useEffect(() => {
+    if (activeId === "map") setMapVisited(true);
+  }, [activeId]);
+
   useEffect(() => {
     refreshSession();
   }, []);
@@ -216,9 +228,7 @@ function App() {
             onGoToWars={handleGoToWars}
             onSelectItem={handleOpenMarketItem}
           />
-        ) : activeId === "map" ? (
-          <MapPage onSelectKill={handleOpenKillmail} onSelectSystem={handleOpenSystemKills} characters={session.characters} />
-        ) : activeId === "mail" ? (
+        ) : activeId === "map" ? null : activeId === "mail" ? (
           <MailPage characters={session.characters} initialCharacterId={session.active_character_id} />
         ) : activeId === "wallet" ? (
           <WalletMarketPage
@@ -261,6 +271,13 @@ function App() {
           <MainContent icon={active.icon} label={active.label} description={active.description} />
         )}
         </Suspense>
+        {mapVisited && (
+          <div style={{ display: activeId === "map" ? "contents" : "none" }}>
+            <Suspense fallback={<div className="app-loading">Loading...</div>}>
+              <MapPage onSelectKill={handleOpenKillmail} onSelectSystem={handleOpenSystemKills} characters={session.characters} />
+            </Suspense>
+          </div>
+        )}
       </div>
     </CharacterLocationProvider>
   );
