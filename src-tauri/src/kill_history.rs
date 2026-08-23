@@ -7,7 +7,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// zKillboard's own real region-id bands and thresholds for these
 /// classifications - verified live against their open-source repo
@@ -600,6 +600,7 @@ pub async fn run_kill_history_recorder(app: tauri::AppHandle, client: reqwest::C
     loop {
         match kills::poll_kill_history(&client).await {
             Ok(new_kills) if !new_kills.is_empty() => {
+                emit_tracked_player_events(&app, &new_kills);
                 if let Err(e) = record_kills(&app, &client, new_kills).await {
                     eprintln!("kill history record error: {e}");
                 }
@@ -609,6 +610,83 @@ pub async fn run_kill_history_recorder(app: tauri::AppHandle, client: reqwest::C
                 eprintln!("kill history poll error: {e}");
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
+struct TrackedEntityEvent {
+    tracked_entity_name: String,
+    tracked_entity_kind: crate::tracked_entities::TrackedEntityKind,
+    /// The actual character on the killmail - the tracked entity itself for
+    /// a character track, or whichever member of the tracked corp/alliance
+    /// was actually involved for a corp/alliance track.
+    subject_character_name: Option<String>,
+    event: &'static str,
+    other_name: Option<String>,
+    ship_type_name: String,
+    system_name: String,
+    total_value: f64,
+    killmail_id: i64,
+}
+
+/// Checks every kill in this poll tick against the user's tracked-entity
+/// list (characters, corporations, and alliances) and emits one event per
+/// match - the live killmail stream this recorder already consumes for
+/// every kill in New Eden is the only place that can answer "was a tracked
+/// entity involved" without a separate, redundant poll of the same
+/// firehose. Emits straight to the frontend (bell + toast + native
+/// notification, all frontend-side) rather than persisting anything
+/// server-side - this is a live alert, not history.
+fn emit_tracked_player_events(app: &tauri::AppHandle, kills: &[KillEntry]) {
+    use crate::tracked_entities::TrackedEntityKind;
+
+    let tracked = crate::tracked_entities::load_tracked_entities(app);
+    if tracked.entities.is_empty() {
+        return;
+    }
+    for kill in kills {
+        for entity in &tracked.entities {
+            let is_victim = match entity.kind {
+                TrackedEntityKind::Character => kill.victim_character_id == Some(entity.entity_id),
+                TrackedEntityKind::Corporation => kill.victim_corporation_id == Some(entity.entity_id),
+                TrackedEntityKind::Alliance => kill.victim_alliance_id == Some(entity.entity_id),
+            };
+            let attacker = kill.attackers.iter().find(|a| match entity.kind {
+                TrackedEntityKind::Character => a.character_id == Some(entity.entity_id),
+                TrackedEntityKind::Corporation => a.corporation_id == Some(entity.entity_id),
+                TrackedEntityKind::Alliance => a.alliance_id == Some(entity.entity_id),
+            });
+            if !is_victim && attacker.is_none() {
+                continue;
+            }
+            let event = if is_victim {
+                TrackedEntityEvent {
+                    tracked_entity_name: entity.entity_name.clone(),
+                    tracked_entity_kind: entity.kind,
+                    subject_character_name: kill.victim_character_name.clone(),
+                    event: "died",
+                    other_name: kill.final_blow_character_name.clone(),
+                    ship_type_name: kill.ship_type_name.clone(),
+                    system_name: kill.system_name.clone(),
+                    total_value: kill.total_value,
+                    killmail_id: kill.killmail_id,
+                }
+            } else {
+                let attacker = attacker.expect("attacker is Some in this branch");
+                TrackedEntityEvent {
+                    tracked_entity_name: entity.entity_name.clone(),
+                    tracked_entity_kind: entity.kind,
+                    subject_character_name: attacker.character_name.clone(),
+                    event: "killed",
+                    other_name: kill.victim_character_name.clone(),
+                    ship_type_name: attacker.ship_type_name.clone().unwrap_or_default(),
+                    system_name: kill.system_name.clone(),
+                    total_value: kill.total_value,
+                    killmail_id: kill.killmail_id,
+                }
+            };
+            let _ = app.emit("tracked-player-event", event);
         }
     }
 }

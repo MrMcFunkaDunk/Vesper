@@ -20,6 +20,7 @@ mod route;
 mod scout;
 mod settings_sync;
 mod skillplans;
+mod tracked_entities;
 mod wars;
 mod wormholes;
 
@@ -104,6 +105,9 @@ pub fn run() {
             commands::get_character_notifications,
             commands::get_character_planets,
             commands::get_character_planet_detail,
+            commands::get_tracked_entities,
+            commands::add_tracked_entity,
+            commands::remove_tracked_entity,
             commands::search_system,
             commands::search_character,
             commands::search_characters_live,

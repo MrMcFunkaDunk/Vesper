@@ -19,6 +19,7 @@ import { TRADE_HUB_REGIONS } from "../lib/map";
 import { NAV_ITEMS } from "./Sidebar";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import SettingsSyncPanel from "./SettingsSyncPanel";
+import TrackedEntitiesPanel from "./TrackedEntitiesPanel";
 
 interface SettingsPageProps {
   session: Session;
@@ -237,8 +238,25 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
                 />
                 hours queued
               </label>
+              <label className="settings-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={notifPrefs.trackedPlayerKills}
+                  onChange={(e) => updateNotifPrefs("trackedPlayerKills", e.target.checked)}
+                />
+                Tracked player kills/deaths (always appears in the bell + a toast regardless of this toggle)
+              </label>
             </div>
           )}
+        </div>
+
+        <div className="settings-section">
+          <h3>Tracked Players, Corporations &amp; Alliances</h3>
+          <p className="settings-section-hint">
+            Get notified the moment any of these shows up on a killmail, anywhere in New Eden - as the victim or one
+            of the attackers. The full list also lives in Kills &amp; Intel's "Tracked Players" tab.
+          </p>
+          <TrackedEntitiesPanel />
         </div>
 
         <div className="settings-section">

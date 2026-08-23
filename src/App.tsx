@@ -35,6 +35,8 @@ import { useErrorReporter } from "./hooks/useErrorReporter";
 import { CharacterLocationProvider } from "./hooks/useCharacterLocation";
 import { ChainAutoMappingEffect } from "./hooks/useChainAutoMapping";
 import { SkillQueueWatchEffect } from "./hooks/useSkillQueueWatch";
+import { TrackedEntityEventsEffect } from "./hooks/useTrackedEntityEvents";
+import ToastStack from "./components/ToastStack";
 import { useDefaultLandingTab } from "./hooks/useDefaultLandingTab";
 import { useReduceMotion } from "./hooks/useReduceMotion";
 import "./App.css";
@@ -172,9 +174,11 @@ function App() {
         characterName={session.characters.find((c) => c.id === session.active_character_id)?.name ?? null}
       />
       <SkillQueueWatchEffect characters={session.characters} />
+      <TrackedEntityEventsEffect />
       <div className="shell">
         <ProximityFlashOverlay />
         <UpdateBanner />
+        <ToastStack />
         <Sidebar activeId={activeId} onSelect={handleSelectNav} />
         <TopBar title={active.label} activeId={activeId} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
         <Suspense fallback={<div className="app-loading">Loading...</div>}>

@@ -20,6 +20,7 @@ import KillFeedTable from "./KillFeedTable";
 import EntityStatsPanel from "./EntityStatsPanel";
 import SkeletonRows from "./SkeletonRows";
 import BackToMapButton from "./BackToMapButton";
+import TrackEntityButton from "./TrackEntityButton";
 import { Pager, TopShowcase, TopListsSidebar, allianceLogoUrl, fmtNum, fmtRank, MONTH_NAMES, PAGE_SIZE } from "./killboardShared";
 import type { SystemSummary } from "./SystemKillboard";
 import type { CorporationSummary } from "./CorporationKillboard";
@@ -243,10 +244,13 @@ function AllianceKillboard({
                 <img className="detail-portrait" src={allianceLogoUrl(profile.alliance_id, 128)} alt="" />
               </div>
               <div className="detail-identity">
-                <h2>
-                  {profile.alliance_name}
-                  {profile.alliance_ticker ? ` <${profile.alliance_ticker}>` : ""}
-                </h2>
+                <div className="detail-identity-title-row">
+                  <h2>
+                    {profile.alliance_name}
+                    {profile.alliance_ticker ? ` <${profile.alliance_ticker}>` : ""}
+                  </h2>
+                  <TrackEntityButton entityId={profile.alliance_id} entityName={profile.alliance_name} kind="alliance" />
+                </div>
                 <div className="detail-stats-row">
                   {profile.executor_corporation_name && (
                     <span>

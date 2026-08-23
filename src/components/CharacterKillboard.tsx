@@ -21,6 +21,7 @@ import type { CorporationSummary } from "./CorporationKillboard";
 import type { AllianceSummary } from "./AllianceKillboard";
 import type { MarketItemRef } from "./MarketBrowser";
 import BackToMapButton from "./BackToMapButton";
+import TrackEntityButton from "./TrackEntityButton";
 
 type KillboardTab = "overview" | "kills" | "solo" | "losses" | "trophies" | "top" | "ranks" | "stats";
 
@@ -322,7 +323,10 @@ function CharacterKillboard({
                 </div>
               </div>
               <div className="detail-identity">
-                <h2>{profile.character_name}</h2>
+                <div className="detail-identity-title-row">
+                  <h2>{profile.character_name}</h2>
+                  <TrackEntityButton entityId={profile.character_id} entityName={profile.character_name} kind="character" />
+                </div>
                 <span className="detail-corp">
                   {profile.corporation_name ? (
                     <span

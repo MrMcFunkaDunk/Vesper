@@ -14,6 +14,8 @@ export interface NotificationPreferences {
   skillQueueEmpty: boolean;
   /** Hours-remaining threshold that triggers a "queue running low" warning - null disables the check entirely. */
   skillQueueLowHours: number | null;
+  /** Desktop notification when a tracked player appears as a kill's victim or attacker - the bell entry and toast fire regardless of this toggle. */
+  trackedPlayerKills: boolean;
 }
 
 const DEFAULT_PREFS: NotificationPreferences = {
@@ -22,6 +24,7 @@ const DEFAULT_PREFS: NotificationPreferences = {
   autoMapJumps: true,
   skillQueueEmpty: true,
   skillQueueLowHours: 24,
+  trackedPlayerKills: true,
 };
 
 /** Per-event desktop-notification preferences, gated behind a master

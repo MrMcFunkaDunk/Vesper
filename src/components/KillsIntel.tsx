@@ -6,6 +6,7 @@ import BattleReportsFeed from "./BattleReportsFeed";
 import KillReportsFeed from "./KillReportsFeed";
 import TopKillStatsFeed from "./TopKillStatsFeed";
 import KillHistoryBackfillBar from "./KillHistoryBackfillBar";
+import TrackedEntitiesPanel from "./TrackedEntitiesPanel";
 import KillDetailView from "./KillDetailView";
 import CharacterKillboard from "./CharacterKillboard";
 import SystemKillboard, { type SystemSummary } from "./SystemKillboard";
@@ -18,7 +19,7 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { searchCharacter, searchCharactersLive, searchEntitiesLive, type CharacterMatch, type EntityMatch } from "../lib/kills";
 import type { MarketItemRef } from "./MarketBrowser";
 
-type KillsTab = "tracked" | "recent" | "battles" | "reports" | "topstats";
+type KillsTab = "tracked" | "recent" | "battles" | "reports" | "topstats" | "trackedplayers";
 
 interface SearchSuggestion {
   kind: "character" | "corporation" | "alliance";
@@ -32,6 +33,7 @@ const TABS: { id: KillsTab; label: string }[] = [
   { id: "battles", label: "Battles" },
   { id: "reports", label: "Kill Reports" },
   { id: "topstats", label: "Top Stats" },
+  { id: "trackedplayers", label: "Tracked Players" },
 ];
 
 type KillsView =
@@ -383,6 +385,7 @@ function KillsIntel({
           <h2>{tabLabel}</h2>
         </div>
 
+        {tab !== "trackedplayers" && (
         <form className="kills-character-search-form" onSubmit={handleSearchCharacter}>
           <div className="kills-add-combobox">
             <input
@@ -430,6 +433,7 @@ function KillsIntel({
             {searchingCharacter ? "Searching..." : "Search"}
           </button>
         </form>
+        )}
 
         <div className="kills-tabs">
           {TABS.map((t) => (
@@ -479,11 +483,13 @@ function KillsIntel({
               onSelectAlliance={pushAlliance}
             />
           </>
-        ) : (
+        ) : tab === "topstats" ? (
           <>
             <KillHistoryBackfillBar />
             <TopKillStatsFeed onSelectCharacter={pushCharacter} onSelectCorporation={pushCorporation} onSelectAlliance={pushAlliance} />
           </>
+        ) : (
+          <TrackedEntitiesPanel />
         )}
       </div>
     </main>

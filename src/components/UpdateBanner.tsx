@@ -3,6 +3,7 @@ import { Download, X } from "lucide-react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { useNotificationCenter } from "../hooks/useNotificationCenter";
 
 /**
  * Checks for a new VESPER release once per app launch (silent - nothing
@@ -15,16 +16,21 @@ function UpdateBanner() {
   const [dismissed, setDismissed] = useState(false);
   const [installing, setInstalling] = useState(false);
   const reportError = useErrorReporter();
+  const { addNotification } = useNotificationCenter();
 
   useEffect(() => {
     check()
       .then((result) => {
-        if (result) setUpdate(result);
+        if (result) {
+          setUpdate(result);
+          addNotification("Vesper: New update available", `Version ${result.version} is ready (you're on ${result.currentVersion}).`);
+        }
       })
       .catch(() => {
         // No network, or the update endpoint is briefly unreachable - not
         // worth interrupting the user over, just try again next launch.
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleInstall() {

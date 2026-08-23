@@ -15,18 +15,24 @@ import { RecentActivityProvider } from "./hooks/useRecentActivity";
 import { TrackedSystemsProvider } from "./hooks/useTrackedSystemsActivity";
 import { LocationTrackingProvider } from "./hooks/useLocationTracking";
 import { NotificationCenterProvider } from "./hooks/useNotificationCenter";
+import { ToastProvider } from "./hooks/useToast";
+import { TrackedEntitiesProvider } from "./hooks/useTrackedEntities";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorReporterProvider>
       <NotificationCenterProvider>
-        <RecentActivityProvider>
-          <TrackedSystemsProvider>
-            <LocationTrackingProvider>
-              <App />
-            </LocationTrackingProvider>
-          </TrackedSystemsProvider>
-        </RecentActivityProvider>
+        <ToastProvider>
+          <TrackedEntitiesProvider>
+            <RecentActivityProvider>
+              <TrackedSystemsProvider>
+                <LocationTrackingProvider>
+                  <App />
+                </LocationTrackingProvider>
+              </TrackedSystemsProvider>
+            </RecentActivityProvider>
+          </TrackedEntitiesProvider>
+        </ToastProvider>
       </NotificationCenterProvider>
     </ErrorReporterProvider>
   </React.StrictMode>,

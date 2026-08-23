@@ -674,6 +674,77 @@ select.wh-roller-select,
   color: var(--text);
 }
 
+.toast-stack {
+  position: fixed;
+  top: 70px;
+  right: 20px;
+  z-index: 9997;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 340px;
+}
+
+.toast-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: toast-slide-in 0.2s ease-out;
+}
+
+@keyframes toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+body[data-reduce-motion="true"] .toast-card {
+  animation: none;
+}
+
+.toast-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-card-title {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toast-card-message {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.toast-card-dismiss {
+  flex-shrink: 0;
+  display: inline-flex;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.toast-card-dismiss:hover {
+  color: var(--text);
+}
+
 .proximity-flash-overlay {
   position: fixed;
   inset: 0;
@@ -1688,6 +1759,12 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   color: var(--text);
 }
 
+.detail-identity-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .detail-name-link {
   cursor: pointer;
   transition: color var(--transition-fast);
@@ -2042,6 +2119,33 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 .skill-action-btn:hover {
   border-color: var(--border-active);
   color: var(--text);
+}
+
+.track-entity-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text-secondary);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.track-entity-btn:hover {
+  border-color: var(--border-active);
+  color: var(--text);
+}
+
+.track-entity-btn-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .skill-groups {
@@ -8662,6 +8766,85 @@ body[data-reduce-motion="true"] .skeleton-row {
   gap: 8px;
   font-size: 13.5px;
   color: var(--text-secondary);
+}
+
+.tracked-players-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.tracked-entity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 18px;
+}
+
+.tracked-entity-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  transition: border-color var(--transition-fast);
+}
+
+.tracked-entity-card:hover {
+  border-color: var(--border-active);
+}
+
+.tracked-entity-card-image {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg-elevated-2);
+}
+
+.tracked-entity-card-image-square {
+  border-radius: var(--radius-sm);
+}
+
+.tracked-entity-card-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+}
+
+.tracked-entity-card-kind {
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint, var(--text-muted));
+}
+
+.tracked-entity-card-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tracked-entity-card-remove:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .settings-inline-number {

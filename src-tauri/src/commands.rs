@@ -1,4 +1,4 @@
-use crate::{abyssal, asset_history, auth, characters, combat_overlay, config, esi, fittings, intel_feed, kill_history, kills, map, market, multibox, news, pi, price_widget, route, scout, settings_sync, skillplans, wars, wormholes};
+use crate::{abyssal, asset_history, auth, characters, combat_overlay, config, esi, fittings, intel_feed, kill_history, kills, map, market, multibox, news, pi, price_widget, route, scout, settings_sync, skillplans, tracked_entities, wars, wormholes};
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -1220,6 +1220,30 @@ pub fn create_settings_file_backup(app: AppHandle, source_path: String, display_
 #[tauri::command]
 pub fn create_settings_profile_backup(app: AppHandle, profile_path: String, display_name: Option<String>) -> Result<settings_sync::BackupEntry, String> {
     settings_sync::create_profile_backup(&app, &profile_path, display_name)
+}
+
+#[tauri::command]
+pub fn get_tracked_entities(app: AppHandle) -> tracked_entities::TrackedEntitiesSettings {
+    tracked_entities::load_tracked_entities(&app)
+}
+
+#[tauri::command]
+pub fn add_tracked_entity(
+    app: AppHandle,
+    entity_id: i64,
+    entity_name: String,
+    kind: tracked_entities::TrackedEntityKind,
+) -> Result<tracked_entities::TrackedEntitiesSettings, String> {
+    tracked_entities::add_tracked_entity(&app, entity_id, entity_name, kind)
+}
+
+#[tauri::command]
+pub fn remove_tracked_entity(
+    app: AppHandle,
+    entity_id: i64,
+    kind: tracked_entities::TrackedEntityKind,
+) -> Result<tracked_entities::TrackedEntitiesSettings, String> {
+    tracked_entities::remove_tracked_entity(&app, entity_id, kind)
 }
 
 #[tauri::command]
