@@ -1232,12 +1232,16 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       if (!wasDrag) {
         // handleMouseUp is registered on window (a drag can legitimately end
         // outside the canvas), but a plain click should only be treated as a
-        // map pick if it actually landed on the canvas - otherwise clicking
-        // UI elements like the selected-system name, search box, or ticker
-        // wrongly clears/reselects a system out from under whatever else was
-        // about to handle that same click (e.g. its own onClick).
-        const rect = canvas!.getBoundingClientRect();
-        const onCanvas = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+        // map pick if it actually landed on the canvas itself - otherwise
+        // clicking UI elements like the selected-system name, search box, or
+        // the pinned tooltip's clickable killboard rows (which visually sit
+        // on top of the canvas, inside its bounding box) gets ALSO
+        // reprocessed as "clicked this system's dot again", toggling the
+        // pin off out from under the row's own onClick before it can
+        // navigate. A target check (rather than a coordinate/bounding-box
+        // check) is the only way to tell "landed on the canvas" from
+        // "landed on an overlay drawn on top of it".
+        const onCanvas = e.target === canvas;
         if (onCanvas) {
           const picked = pickSystemForClick(e.clientX, e.clientY);
           selectedIdRef.current = picked?.id ?? null;
