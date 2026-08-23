@@ -15,9 +15,34 @@ const ZKILLBOARD_BASE: &str = "https://zkillboard.com/api";
 /// lookup at all for anything the user could have actually clicked.
 static KILL_CACHE: LazyLock<Mutex<HashMap<i64, ZkbKillmail>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Process-lifetime cache for fetch_system_info's result, keyed by
+/// solar_system_id. A system's security/region never changes, so this never
+/// needs invalidating. Without it, the kill history backfill - which touches
+/// every system with a kill on a given day, easily hundreds of them for a
+/// busy day - was re-doing fetch_system_info's 3 sequential, uncached ESI
+/// calls (system -> constellation -> region) per system PER DAY of the
+/// 30-day window, making the backfill look hung on day one (confirmed live:
+/// it wasn't stuck, just serially re-fetching the same popular systems'
+/// info over and over). prime_system_info_cache lets a caller that already
+/// has this data locally (the backfill, via the already-synced map
+/// database) skip the network entirely.
+static SYSTEM_INFO_CACHE: LazyLock<Mutex<HashMap<i64, SystemInfo>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Clone)]
 pub(crate) struct SystemInfo {
     pub(crate) security_status: f64,
     pub(crate) region_name: String,
+}
+
+/// Seeds the system-info cache from an already-known-good source (the local
+/// map database) so enrich_kills's normal per-system lookups become cache
+/// hits instead of live ESI calls. Safe to call with data for systems
+/// already cached - just overwrites with the same values.
+pub(crate) fn prime_system_info_cache(entries: Vec<(i64, SystemInfo)>) {
+    let mut cache = SYSTEM_INFO_CACHE.lock().unwrap();
+    for (id, info) in entries {
+        cache.insert(id, info);
+    }
 }
 
 #[derive(Deserialize)]
@@ -41,12 +66,17 @@ struct EsiRegion {
 /// -> region). Best-effort: any failed hop just leaves the kill without this
 /// extra context rather than failing the whole feed.
 pub(crate) async fn fetch_system_info(client: &reqwest::Client, system_id: i64) -> Option<SystemInfo> {
+    if let Some(cached) = SYSTEM_INFO_CACHE.lock().unwrap().get(&system_id) {
+        return Some(cached.clone());
+    }
     let system: EsiSystem = esi::public_get(client, &format!("/universe/systems/{system_id}/")).await.ok()?;
     let constellation: EsiConstellation =
         esi::public_get(client, &format!("/universe/constellations/{}/", system.constellation_id)).await.ok()?;
     let region: EsiRegion =
         esi::public_get(client, &format!("/universe/regions/{}/", constellation.region_id)).await.ok()?;
-    Some(SystemInfo { security_status: system.security_status, region_name: region.name })
+    let info = SystemInfo { security_status: system.security_status, region_name: region.name };
+    SYSTEM_INFO_CACHE.lock().unwrap().insert(system_id, info.clone());
+    Some(info)
 }
 
 #[derive(Deserialize)]

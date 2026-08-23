@@ -855,10 +855,13 @@ pub async fn start_backfill(app: tauri::AppHandle, client: reqwest::Client) {
         }
 
         match backfill_one_day(&app, &client, &date).await {
-            Ok(count) => {
+            Ok(_count) => {
+                // kills_recorded is already updated live, per chunk, inside
+                // backfill_one_day - not added again here - so the progress
+                // bar moves during a slow day instead of only jumping once
+                // the whole day (which can be many chunks) finishes.
                 if let Some(p) = BACKFILL_PROGRESS.lock().unwrap().as_mut() {
                     p.days_done += 1;
-                    p.kills_recorded += count;
                 }
             }
             Err(e) => {
@@ -890,11 +893,35 @@ async fn backfill_one_day(app: &tauri::AppHandle, client: &reqwest::Client, date
         response.json().await.map_err(|e| format!("failed to parse history response: {e}"))?;
     let values: Vec<serde_json::Value> = raw_map.into_values().collect();
 
+    // Priming kills::fetch_system_info's cache from the local map database
+    // up front means the enrichment below (which resolves every kill's
+    // system security/region by system id) never falls through to ESI's
+    // live system->constellation->region chain for this day's kills - a
+    // single day of EVE-wide kills can span hundreds of distinct systems,
+    // and doing that chain live, uncached, one system at a time, is what
+    // was making the backfill look hung (confirmed live: several minutes
+    // per day just resolving systems, not an actual stall).
+    let mut day_system_ids: Vec<i64> = values.iter().filter_map(|v| v.get("solar_system_id").and_then(|s| s.as_i64())).collect();
+    day_system_ids.sort_unstable();
+    day_system_ids.dedup();
+    if let Ok(name_info) = map::get_systems_name_info(app, client, day_system_ids).await {
+        kills::prime_system_info_cache(
+            name_info
+                .into_iter()
+                .map(|i| (i.system_id, kills::SystemInfo { security_status: i.security_status, region_name: i.region_name }))
+                .collect(),
+        );
+    }
+
     let mut total = 0i64;
     for chunk in values.chunks(BACKFILL_CHUNK_SIZE) {
         let batch = kills::enrich_raw_killmail_batch(client, chunk.to_vec()).await;
-        total += batch.len() as i64;
+        let batch_len = batch.len() as i64;
         record_kills(app, client, batch).await?;
+        total += batch_len;
+        if let Some(p) = BACKFILL_PROGRESS.lock().unwrap().as_mut() {
+            p.kills_recorded += batch_len;
+        }
     }
     Ok(total)
 }

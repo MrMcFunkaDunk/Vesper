@@ -834,6 +834,48 @@ pub struct SystemRegionSecurity {
     pub security: f64,
 }
 
+pub(crate) struct SystemNameInfo {
+    pub(crate) system_id: i64,
+    pub(crate) security_status: f64,
+    pub(crate) region_name: String,
+}
+
+/// Same local-SDE source as get_systems_region_security, but with the
+/// region's name too - lets a caller that would otherwise use
+/// kills::fetch_system_info's live ESI system->constellation->region chain
+/// (used to build kill_history::KillEntry.region_name) skip the network
+/// entirely by priming that function's cache instead.
+pub(crate) async fn get_systems_name_info(
+    app: &tauri::AppHandle,
+    client: &reqwest::Client,
+    ids: Vec<i64>,
+) -> Result<Vec<SystemNameInfo>, String> {
+    let path = ensure_synced(app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<SystemNameInfo>, String> {
+        let mut results = Vec::new();
+        if ids.is_empty() {
+            return Ok(results);
+        }
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open map database: {e}"))?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!(
+            "SELECT s.id, s.security, r.name FROM systems s JOIN regions r ON r.id = s.region_id WHERE s.id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| format!("failed to query system name info: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+                Ok(SystemNameInfo { system_id: row.get(0)?, security_status: row.get(1)?, region_name: row.get(2)? })
+            })
+            .map_err(|e| format!("failed to query system name info: {e}"))?;
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read system name info row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("system name info task failed: {e}"))?
+}
+
 /// Region id + security status for a batch of systems, straight from the
 /// local SDE cache - no ESI call needed, unlike kills::fetch_system_info
 /// (which resolves region by name, not id, via a live system -> constellation
