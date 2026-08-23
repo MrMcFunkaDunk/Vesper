@@ -201,6 +201,7 @@ function App() {
           )
         ) : activeId === "kills" ? (
           <KillsIntel
+            characters={session.characters}
             initialKillmailId={pendingKillmailId}
             onConsumeInitialKillmail={() => setPendingKillmailId(null)}
             initialSystem={pendingSystem}

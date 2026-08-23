@@ -7,6 +7,7 @@ import KillReportsFeed from "./KillReportsFeed";
 import TopKillStatsFeed from "./TopKillStatsFeed";
 import KillHistoryBackfillBar from "./KillHistoryBackfillBar";
 import TrackedEntitiesPanel from "./TrackedEntitiesPanel";
+import ContactsDirectory from "./ContactsDirectory";
 import KillDetailView from "./KillDetailView";
 import CharacterKillboard from "./CharacterKillboard";
 import SystemKillboard, { type SystemSummary } from "./SystemKillboard";
@@ -18,8 +19,9 @@ import BackToMapButton from "./BackToMapButton";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { searchCharacter, searchCharactersLive, searchEntitiesLive, type CharacterMatch, type EntityMatch } from "../lib/kills";
 import type { MarketItemRef } from "./MarketBrowser";
+import type { SessionCharacter } from "../lib/eve";
 
-type KillsTab = "tracked" | "recent" | "battles" | "reports" | "topstats" | "trackedplayers";
+type KillsTab = "tracked" | "recent" | "battles" | "reports" | "topstats" | "trackedplayers" | "contacts";
 
 interface SearchSuggestion {
   kind: "character" | "corporation" | "alliance";
@@ -34,6 +36,7 @@ const TABS: { id: KillsTab; label: string }[] = [
   { id: "reports", label: "Kill Reports" },
   { id: "topstats", label: "Top Stats" },
   { id: "trackedplayers", label: "Tracked Players" },
+  { id: "contacts", label: "Contacts" },
 ];
 
 type KillsView =
@@ -47,6 +50,7 @@ type KillsView =
   | { type: "alliance"; alliance: AllianceSummary };
 
 interface KillsIntelProps {
+  characters: SessionCharacter[];
   /** A killmail to jump straight into, e.g. from clicking a kill in the Map's live ticker. */
   initialKillmailId?: number | null;
   onConsumeInitialKillmail?: () => void;
@@ -67,6 +71,7 @@ interface KillsIntelProps {
 }
 
 function KillsIntel({
+  characters,
   initialKillmailId,
   onConsumeInitialKillmail,
   initialSystem,
@@ -566,8 +571,15 @@ function KillsIntel({
             <KillHistoryBackfillBar />
             <TopKillStatsFeed onSelectCharacter={pushCharacter} onSelectCorporation={pushCorporation} onSelectAlliance={pushAlliance} />
           </>
-        ) : (
+        ) : tab === "trackedplayers" ? (
           <TrackedEntitiesPanel />
+        ) : (
+          <ContactsDirectory
+            characters={characters}
+            onSelectCharacter={pushCharacter}
+            onSelectCorporation={pushCorporation}
+            onSelectAlliance={pushAlliance}
+          />
         )}
       </div>
     </main>

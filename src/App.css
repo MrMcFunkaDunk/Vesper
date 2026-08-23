@@ -8818,6 +8818,12 @@ body[data-reduce-motion="true"] .skeleton-row {
   gap: 18px;
 }
 
+.contacts-directory {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
 .tracked-entity-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
