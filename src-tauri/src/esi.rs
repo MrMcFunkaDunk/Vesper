@@ -649,19 +649,31 @@ async fn fetch_alpha_skill_limits(client: &reqwest::Client) -> HashMap<i64, i64>
     merged
 }
 
-/// Determines clone state from a character's own skill list: any skill whose
-/// active level exceeds its Alpha cap proves Omega outright (Alpha physically
-/// cannot reach that level); short of that, any skill currently held below
-/// its trained level is being capped by something, and alpha status is by far
-/// the most common cause. No definitive signal either way just means unknown
-/// - deliberately not guessing further, unlike EVEMon's own fuzzier
-/// training-rate fallback which its source comments admit false-triggers.
+/// Determines clone state from a character's own skill list. Two independent
+/// signals prove Omega outright (Alpha physically cannot reach either state):
+///   1. Any skill whose active level exceeds its Alpha cap.
+///   2. Any trained skill that isn't in the Alpha-accessible list at all -
+///      verified live against the real clonestates.json data: only 175 of
+///      the game's several hundred published skills are trainable by Alpha
+///      clones under any circumstance (each with its own capped level), so
+///      training so much as level 1 of anything outside that list is just
+///      as conclusive as exceeding a cap. This is the common case for an
+///      established character - most builds touch at least one Omega-only
+///      skill long before they'd hit an Alpha cap on a shared one.
+/// Short of either, any skill currently held below its trained level is
+/// being capped by something, and alpha status is by far the most common
+/// cause. No definitive signal either way just means unknown - deliberately
+/// not guessing further, unlike EVEMon's own fuzzier training-rate fallback
+/// which its source comments admit false-triggers.
 fn detect_clone_state(skills: &[SkillItem], alpha_limits: &HashMap<i64, i64>) -> Option<&'static str> {
     for skill in skills {
-        if let Some(&limit) = alpha_limits.get(&skill.skill_id) {
-            if skill.active_skill_level as i64 > limit {
-                return Some("Omega");
+        match alpha_limits.get(&skill.skill_id) {
+            Some(&limit) => {
+                if skill.active_skill_level as i64 > limit {
+                    return Some("Omega");
+                }
             }
+            None => return Some("Omega"),
         }
     }
     if skills.iter().any(|s| s.active_skill_level < s.trained_skill_level) {

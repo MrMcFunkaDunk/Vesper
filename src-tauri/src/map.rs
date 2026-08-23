@@ -611,12 +611,29 @@ fn read_map_data(conn: &rusqlite::Connection) -> Result<MapData, String> {
     Ok(MapData { systems, jumps, regions, constellations, system_services, industry_system_ids: Vec::new() })
 }
 
+/// Serializes the check-then-import sequence in ensure_synced so only one
+/// caller at a time can discover an empty/stale cache and run the CSV
+/// download+import. Without this, two callers invoking ensure_synced
+/// concurrently on a brand-new install (e.g. location tracking and the map
+/// view both loading at startup, before map.sqlite exists) can each see an
+/// empty systems table and race to open their own write transaction on a
+/// second rusqlite::Connection. rusqlite gives every connection a 5000ms
+/// busy_timeout, so the second writer normally just waits rather than
+/// failing outright - but the real import (parsing/inserting the ~80MB
+/// celestials CSV among others) can hold the write lock past that timeout,
+/// at which point the second writer's DELETE surfaces as "database is
+/// locked" (confirmed via a standalone repro of this exact open/transact
+/// pattern). Other callers just await this lock and then see needs_sync
+/// already false, rather than duplicating the download and import.
+static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Ensures the local SQLite cache is populated, syncing it from Fuzzwork's
 /// SDE CSV exports first if empty (first run, or the app data directory was
 /// cleared). Returns the DB path once ready. Shared by get_map_data and
 /// search_systems so both benefit from the same one-time sync.
 pub(crate) async fn ensure_synced(app: &tauri::AppHandle, client: &reqwest::Client) -> Result<PathBuf, String> {
     let path = db_path(app)?;
+    let _guard = SYNC_LOCK.lock().await;
 
     let needs_sync = {
         let path = path.clone();
