@@ -24,6 +24,13 @@
   --danger: #e0685f;
   --danger-soft: rgba(224, 104, 95, 0.14);
 
+  /* Kill-row entity colors - corp/alliance/ship each get their own resting
+     color so the two are tellable apart at a glance (character names stay
+     plain --text), consistent everywhere a killmail is rendered. */
+  --kill-corp: #7fa8d9;
+  --kill-alliance: #b98ae0;
+  --kill-ship: #d98d00;
+
   /* Currency accent - ISK balances specifically, kept distinct from the blue
      app accent so money reads as money at a glance. PLEX will share this once
      it's shown anywhere. */
@@ -1772,6 +1779,7 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 
 .detail-name-link:hover {
   color: var(--accent);
+  text-decoration: underline;
 }
 
 .detail-name-link:focus-visible {
@@ -4879,6 +4887,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 
 .kills-person-clickable:hover .kills-identity-name {
   color: var(--accent);
+  text-decoration: underline;
 }
 
 .kills-person-clickable:focus-visible {
@@ -4939,7 +4948,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 }
 
 .kills-identity-corp {
-  color: var(--text-secondary);
+  color: var(--kill-corp);
   font-size: 14.5px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4947,7 +4956,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 }
 
 .kills-identity-alliance {
-  color: var(--text-muted);
+  color: var(--kill-alliance);
   font-size: 14px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4971,10 +4980,18 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 }
 
 .kills-ship {
-  color: var(--text-secondary);
+  color: var(--kill-ship);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color var(--transition-fast);
+}
+
+/* The ship cell has no click handler of its own - the whole row opens the
+   kill - so its "this is clickable" affordance comes from the row's hover
+   state rather than its own :hover. */
+.kills-row-clickable:hover .kills-ship {
+  text-decoration: underline;
 }
 
 .kills-value {
@@ -5221,13 +5238,13 @@ body[data-reduce-motion="true"] .skeleton-row {
 }
 
 .kill-attacker-corp {
-  color: var(--text-muted);
+  color: var(--kill-corp);
   font-size: 14px;
   white-space: nowrap;
 }
 
 .kill-attacker-ship {
-  color: var(--text-muted);
+  color: var(--kill-ship);
   font-size: 14.5px;
   white-space: nowrap;
 }

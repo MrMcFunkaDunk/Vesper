@@ -182,6 +182,7 @@ function KillFeedTable({
                     className="kills-system kills-system-clickable"
                     role="button"
                     tabIndex={0}
+                    style={kill.system_security != null ? { color: securityColor(kill.system_security) } : undefined}
                     onClick={(e) => handleSelectSystem(e, kill)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {

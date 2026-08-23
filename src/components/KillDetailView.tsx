@@ -215,7 +215,7 @@ function KillDetailView({
                 <span className="detail-corp">
                   {detail.victim_corporation_name && detail.victim_corporation_id ? (
                     <span
-                      className="kills-system-clickable"
+                      className="kills-identity-corp kills-system-clickable"
                       role="button"
                       tabIndex={0}
                       onClick={() => onSelectCorporation({ id: detail.victim_corporation_id!, name: detail.victim_corporation_name! })}
@@ -235,7 +235,7 @@ function KillDetailView({
                     <>
                       {" • "}
                       <span
-                        className="kills-system-clickable"
+                        className="kills-identity-alliance kills-system-clickable"
                         role="button"
                         tabIndex={0}
                         onClick={() => onSelectAlliance({ id: detail.victim_alliance_id!, name: detail.victim_alliance_name! })}
@@ -255,7 +255,7 @@ function KillDetailView({
                 </span>
                 <div className="detail-stats-row">
                   <span
-                    className="kills-system-clickable"
+                    className="kills-ship kills-system-clickable"
                     role="button"
                     tabIndex={0}
                     onClick={() => onSelectItem({ id: detail.ship_type_id, name: detail.ship_type_name })}
@@ -279,6 +279,7 @@ function KillDetailView({
                       className="kills-system-clickable"
                       role="button"
                       tabIndex={0}
+                      style={detail.system_security != null ? { color: securityColor(detail.system_security) } : undefined}
                       onClick={() =>
                         onSelectSystem({
                           id: detail.system_id,
