@@ -558,6 +558,7 @@ export function getCharacterNotifications(id: number): Promise<CharacterNotifica
 }
 
 export interface PlanetEntry {
+  planet_id: number;
   planet_name: string;
   solar_system_name: string;
   planet_type: string;
@@ -573,4 +574,34 @@ export interface CharacterPlanets {
 
 export function getCharacterPlanets(id: number): Promise<CharacterPlanets> {
   return invoke("get_character_planets", { id });
+}
+
+export interface PinContentEntry {
+  type_id: number;
+  type_name: string;
+  amount: number;
+}
+
+export interface PlanetPin {
+  pin_id: number;
+  type_id: number;
+  type_name: string;
+  is_extractor: boolean;
+  is_factory: boolean;
+  expiry_time: string | null;
+  last_cycle_start: string | null;
+  install_time: string | null;
+  product_type_id: number | null;
+  product_type_name: string | null;
+  schematic_id: number | null;
+  contents: PinContentEntry[];
+}
+
+export interface PlanetDetail {
+  pins: PlanetPin[];
+  needs_reauth: boolean;
+}
+
+export function getCharacterPlanetDetail(id: number, planetId: number): Promise<PlanetDetail> {
+  return invoke("get_character_planet_detail", { id, planetId });
 }

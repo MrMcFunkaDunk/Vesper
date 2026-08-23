@@ -371,6 +371,12 @@ pub async fn get_character_planets(state: State<'_, AppState>, id: i64) -> Resul
 }
 
 #[tauri::command]
+pub async fn get_character_planet_detail(state: State<'_, AppState>, id: i64, planet_id: i64) -> Result<esi::PlanetDetail, String> {
+    let config = config::load()?;
+    esi::fetch_character_planet_detail(&state.http_client, &config, id, planet_id).await
+}
+
+#[tauri::command]
 pub async fn search_system(state: State<'_, AppState>, name: String) -> Result<Option<kills::SystemMatch>, String> {
     kills::search_system(&state.http_client, &name).await
 }

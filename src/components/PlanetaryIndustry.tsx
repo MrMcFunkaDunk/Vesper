@@ -2,6 +2,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getPiData, type PiData, type PiMaterial, type PiSchematic } from "../lib/pi";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { typeIconUrl } from "../lib/format";
+import type { SessionCharacter } from "../lib/eve";
+import PlanetaryColonies from "./PlanetaryColonies";
+
+type PiTab = "colonies" | "reference";
 
 const TIERS = ["P0", "P1", "P2", "P3", "P4"] as const;
 const TIER_LABELS: Record<(typeof TIERS)[number], string> = {
@@ -106,7 +110,12 @@ function RecipeNode({ typeId, materialById, schematicByOutput, planetsForP0 }: R
   );
 }
 
-function PlanetaryIndustry() {
+interface PlanetaryIndustryProps {
+  characters: SessionCharacter[];
+}
+
+function PlanetaryIndustry({ characters }: PlanetaryIndustryProps) {
+  const [tab, setTab] = useState<PiTab>("colonies");
   const [data, setData] = useState<PiData | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [planTarget, setPlanTarget] = useState<number | null>(null);
@@ -292,20 +301,33 @@ function PlanetaryIndustry() {
         <div className="pi-header">
           <p className="eyebrow">Planetary Industry</p>
           <div className="pi-header-title-row">
-            <h2>Planetary Industry Visualizer</h2>
-            <label className="pi-connections-toggle">
-              <input type="checkbox" checked={drawConnections} onChange={(e) => setDrawConnections(e.target.checked)} />
-              Draw connections
-            </label>
+            <h2>{tab === "colonies" ? "Colonies" : "Planetary Industry Visualizer"}</h2>
+            {tab === "reference" && (
+              <label className="pi-connections-toggle">
+                <input type="checkbox" checked={drawConnections} onChange={(e) => setDrawConnections(e.target.checked)} />
+                Draw connections
+              </label>
+            )}
           </div>
           <p className="pi-intro">
-            Click a planet type to see which raw materials it yields, or click any material to trace its full
-            production chain back to raw resources. Recipe data is synced once from CCP's own static data export, not
-            guessed.
+            {tab === "colonies"
+              ? "Every planetary colony across your connected characters, with live extractor status - so you know at a glance which ones need restarting."
+              : "Click a planet type to see which raw materials it yields, or click any material to trace its full production chain back to raw resources. Recipe data is synced once from CCP's own static data export, not guessed."}
           </p>
         </div>
 
-        {!data ? (
+        <div className="kills-tabs">
+          <button type="button" className={`kills-tab ${tab === "colonies" ? "kills-tab-active" : ""}`} onClick={() => setTab("colonies")}>
+            Colonies
+          </button>
+          <button type="button" className={`kills-tab ${tab === "reference" ? "kills-tab-active" : ""}`} onClick={() => setTab("reference")}>
+            Materials Reference
+          </button>
+        </div>
+
+        {tab === "colonies" ? (
+          <PlanetaryColonies characters={characters} />
+        ) : !data ? (
           <p className="detail-empty">Loading Planetary Industry data...</p>
         ) : (
           <>

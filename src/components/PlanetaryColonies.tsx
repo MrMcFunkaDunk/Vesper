@@ -1,0 +1,280 @@
+import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  getCharacterPlanets,
+  getCharacterPlanetDetail,
+  type SessionCharacter,
+  type PlanetEntry,
+  type PlanetPin,
+} from "../lib/eve";
+import { useErrorReporter } from "../hooks/useErrorReporter";
+import { formatRelativeTime, formatTimeRemainingFull, formatEveDateTime } from "../lib/format";
+import { typeIconUrl } from "../lib/format";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
+
+type ColonyStatus = "active" | "idle" | "no_extractors";
+
+interface ColonyRow {
+  key: string;
+  characterId: number;
+  characterName: string;
+  portraitUrl: string;
+  planet: PlanetEntry;
+  status: ColonyStatus;
+  extractorCount: number;
+  earliestExpiry: string | null;
+  pins: PlanetPin[] | null;
+  needsReauth: boolean;
+}
+
+function computeStatus(pins: PlanetPin[]): { status: ColonyStatus; earliestExpiry: string | null; extractorCount: number } {
+  const extractors = pins.filter((p) => p.is_extractor && p.expiry_time);
+  if (extractors.length === 0) return { status: "no_extractors", earliestExpiry: null, extractorCount: 0 };
+  const earliest = extractors.reduce((min, p) => (p.expiry_time! < min ? p.expiry_time! : min), extractors[0].expiry_time!);
+  const status: ColonyStatus = new Date(earliest).getTime() <= Date.now() ? "idle" : "active";
+  return { status, earliestExpiry: earliest, extractorCount: extractors.length };
+}
+
+const STATUS_LABEL: Record<ColonyStatus, string> = {
+  active: "Active",
+  idle: "Needs Restart",
+  no_extractors: "No Extractors",
+};
+
+const STATUS_CLASS: Record<ColonyStatus, string> = {
+  active: "data-table-tag",
+  idle: "data-table-tag data-table-tag-danger",
+  no_extractors: "data-table-tag data-table-tag-neutral",
+};
+
+interface PlanetaryColoniesProps {
+  characters: SessionCharacter[];
+}
+
+function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
+  const [colonies, setColonies] = useState<ColonyRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [reauthCharacters, setReauthCharacters] = useState<Set<number>>(new Set());
+  const reportError = useErrorReporter();
+
+  useEffect(() => {
+    if (characters.length === 0) {
+      setColonies([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setColonies(null);
+
+    async function loadAll() {
+      const needsReauth = new Set<number>();
+      const rows: ColonyRow[] = [];
+
+      await Promise.all(
+        characters.map(async (character) => {
+          let list;
+          try {
+            list = await getCharacterPlanets(character.id);
+          } catch (err) {
+            reportError(`Failed to load ${character.name}'s planetary colonies: ${String(err)}`);
+            return;
+          }
+          if (list.needs_reauth) {
+            needsReauth.add(character.id);
+            return;
+          }
+          await Promise.all(
+            list.entries.map(async (planet) => {
+              const key = `${character.id}:${planet.planet_id}`;
+              try {
+                const detail = await getCharacterPlanetDetail(character.id, planet.planet_id);
+                if (detail.needs_reauth) {
+                  needsReauth.add(character.id);
+                  return;
+                }
+                const { status, earliestExpiry, extractorCount } = computeStatus(detail.pins);
+                rows.push({
+                  key,
+                  characterId: character.id,
+                  characterName: character.name,
+                  portraitUrl: character.portrait_url,
+                  planet,
+                  status,
+                  extractorCount,
+                  earliestExpiry,
+                  pins: detail.pins,
+                  needsReauth: false,
+                });
+              } catch (err) {
+                reportError(`Failed to load colony detail for ${character.name} / ${planet.planet_name}: ${String(err)}`);
+              }
+            }),
+          );
+        }),
+      );
+
+      if (cancelled) return;
+      setColonies(rows);
+      setReauthCharacters(needsReauth);
+      setLoading(false);
+    }
+
+    loadAll();
+    return () => {
+      cancelled = true;
+    };
+  }, [characters, reportError]);
+
+  const sorted = useSortableRows(colonies ?? [], {
+    characterName: (r) => r.characterName,
+    planetName: (r) => r.planet.planet_name,
+    solarSystemName: (r) => r.planet.solar_system_name,
+    planetType: (r) => r.planet.planet_type,
+    upgradeLevel: (r) => r.planet.upgrade_level,
+    status: (r) => (r.status === "idle" ? 0 : r.status === "active" ? 1 : 2),
+    earliestExpiry: (r) => (r.earliestExpiry ? new Date(r.earliestExpiry).getTime() : Number.MAX_SAFE_INTEGER),
+  }, "status", "asc");
+
+  const summary = useMemo(() => {
+    const list = colonies ?? [];
+    return {
+      total: list.length,
+      active: list.filter((c) => c.status === "active").length,
+      idle: list.filter((c) => c.status === "idle").length,
+    };
+  }, [colonies]);
+
+  if (characters.length === 0) {
+    return <p className="detail-empty">No connected characters.</p>;
+  }
+
+  return (
+    <div className="pi-colonies">
+      {reauthCharacters.size > 0 && (
+        <p className="detail-empty">
+          {Array.from(reauthCharacters)
+            .map((id) => characters.find((c) => c.id === id)?.name ?? `#${id}`)
+            .join(", ")}{" "}
+          need{reauthCharacters.size === 1 ? "s" : ""} to sign in again to unlock planetary data.
+        </p>
+      )}
+
+      {loading && !colonies ? (
+        <p className="detail-empty">Loading planetary colonies across all characters...</p>
+      ) : colonies && colonies.length === 0 ? (
+        <p className="detail-empty">No planetary colonies found on any connected character.</p>
+      ) : (
+        colonies && (
+          <>
+            <div className="market-browser-stats">
+              <div className="market-stat-card">
+                <span className="market-stat-label">Colonies</span>
+                <span className="market-stat-value">{summary.total}</span>
+              </div>
+              <div className="market-stat-card">
+                <span className="market-stat-label">Active</span>
+                <span className="market-stat-value character-stats-destroyed">{summary.active}</span>
+              </div>
+              <div
+                className="market-stat-card"
+                title="At least one extractor's current cycle has already ended - go restart it in-game."
+              >
+                <span className="market-stat-label">Needs Restart</span>
+                <span className={summary.idle > 0 ? "market-stat-value character-stats-lost" : "market-stat-value"}>
+                  {summary.idle}
+                </span>
+              </div>
+            </div>
+
+            <div className="data-table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <SortableTh label="Character" sortKey="characterName" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
+                    <SortableTh label="Planet" sortKey="planetName" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
+                    <SortableTh label="System" sortKey="solarSystemName" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
+                    <SortableTh label="Type" sortKey="planetType" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
+                    <SortableTh label="Level" sortKey="upgradeLevel" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} numeric />
+                    <SortableTh label="Status" sortKey="status" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
+                    <SortableTh label="Extractors" sortKey="earliestExpiry" activeKey={sorted.sortKey} dir={sorted.sortDir} onSort={sorted.sort} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.rows.map((row) => (
+                    <Fragment key={row.key}>
+                      <tr
+                        className="contract-row-expandable"
+                        onClick={() => setExpandedKey(expandedKey === row.key ? null : row.key)}
+                      >
+                        <td>
+                          <span className="asset-item-cell">
+                            <img className="kills-portrait" style={{ width: 24, height: 24 }} src={row.portraitUrl} alt="" />
+                            {row.characterName}
+                          </span>
+                        </td>
+                        <td>{row.planet.planet_name}</td>
+                        <td>{row.planet.solar_system_name}</td>
+                        <td>{row.planet.planet_type}</td>
+                        <td className="data-table-numeric">{row.planet.upgrade_level}</td>
+                        <td>
+                          <span className={STATUS_CLASS[row.status]}>{STATUS_LABEL[row.status]}</span>
+                        </td>
+                        <td>
+                          {row.earliestExpiry == null
+                            ? "—"
+                            : row.status === "idle"
+                              ? `Expired ${formatRelativeTime(row.earliestExpiry)}`
+                              : `${formatTimeRemainingFull(row.earliestExpiry)} left`}
+                        </td>
+                      </tr>
+                      {expandedKey === row.key && (
+                        <tr className="contract-items-row">
+                          <td colSpan={7}>
+                            {row.pins == null || row.pins.length === 0 ? (
+                              <p className="detail-empty">No pins found on this colony.</p>
+                            ) : (
+                              <div className="pi-colony-pins">
+                                {row.pins.map((pin) => (
+                                  <div key={pin.pin_id} className="pi-colony-pin-card">
+                                    <div className="pi-colony-pin-head">
+                                      <img className="pi-pill-icon" src={typeIconUrl(pin.type_id)} alt="" />
+                                      <span className="pi-colony-pin-name">{pin.type_name}</span>
+                                      {pin.is_extractor && <span className="data-table-tag data-table-tag-accent">Extractor</span>}
+                                      {pin.is_factory && <span className="data-table-tag data-table-tag-neutral">Factory</span>}
+                                    </div>
+                                    {pin.is_extractor && pin.product_type_name && (
+                                      <p className="pi-colony-pin-detail">Extracting: {pin.product_type_name}</p>
+                                    )}
+                                    {pin.expiry_time && (
+                                      <p className="pi-colony-pin-detail">
+                                        {new Date(pin.expiry_time).getTime() <= Date.now()
+                                          ? `Cycle ended ${formatRelativeTime(pin.expiry_time)}`
+                                          : `Cycle ends ${formatEveDateTime(pin.expiry_time)} (${formatTimeRemainingFull(pin.expiry_time)} left)`}
+                                      </p>
+                                    )}
+                                    {pin.contents.length > 0 && (
+                                      <p className="pi-colony-pin-detail">
+                                        Storage: {pin.contents.map((c) => `${c.type_name} x${c.amount.toLocaleString()}`).join(", ")}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
+export default PlanetaryColonies;

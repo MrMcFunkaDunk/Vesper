@@ -226,7 +226,7 @@ function App() {
         ) : activeId === "intel-check" ? (
           <IntelCheck onSelectCharacter={handleOpenCharacterKillboard} />
         ) : activeId === "planetary" ? (
-          <PlanetaryIndustry />
+          <PlanetaryIndustry characters={session.characters} />
         ) : activeId === "wars" ? (
           <main className="main">
             <WarsPage characters={session.characters} />

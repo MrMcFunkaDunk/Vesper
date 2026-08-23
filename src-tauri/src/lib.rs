@@ -103,6 +103,7 @@ pub fn run() {
             commands::get_mail_detail,
             commands::get_character_notifications,
             commands::get_character_planets,
+            commands::get_character_planet_detail,
             commands::search_system,
             commands::search_character,
             commands::search_characters_live,

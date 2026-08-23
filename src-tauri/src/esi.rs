@@ -3248,6 +3248,28 @@ pub async fn fetch_character_notifications(
 }
 
 #[derive(Deserialize)]
+struct EsiPlanetPublicInfo {
+    name: String,
+}
+
+/// /universe/names/ has no "planet" category - only the per-id
+/// /universe/planets/{id}/ endpoint exposes a planet's name.
+pub(crate) async fn resolve_planet_names(client: &reqwest::Client, planet_ids: &[i64]) -> HashMap<i64, String> {
+    let mut ids: Vec<i64> = planet_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let results = futures::future::join_all(ids.into_iter().map(|id| {
+        let client = client.clone();
+        async move {
+            let name = public_get::<EsiPlanetPublicInfo>(&client, &format!("/universe/planets/{id}/")).await.ok().map(|p| p.name);
+            (id, name)
+        }
+    }))
+    .await;
+    results.into_iter().filter_map(|(id, name)| name.map(|n| (id, n))).collect()
+}
+
+#[derive(Deserialize)]
 struct EsiPlanet {
     planet_id: i64,
     solar_system_id: i64,
@@ -3259,6 +3281,7 @@ struct EsiPlanet {
 
 #[derive(Serialize)]
 pub struct PlanetEntry {
+    pub planet_id: i64,
     pub planet_name: String,
     pub solar_system_name: String,
     pub planet_type: String,
@@ -3283,14 +3306,21 @@ pub async fn fetch_character_planets(client: &reqwest::Client, config: &SsoConfi
         Err(EsiError::Failed(e)) => return Err(e),
     };
 
-    let mut lookup_ids: Vec<i64> = raw.iter().map(|p| p.planet_id).collect();
-    lookup_ids.extend(raw.iter().map(|p| p.solar_system_id));
-    let names = resolve_names(client, lookup_ids).await;
+    // Planet ids aren't a category /universe/names/ resolves - ESI 400s the
+    // WHOLE batch call if it contains one ("failed to coerce value... into
+    // type integer" style category rejection), which was silently wiping
+    // out the solar_system_id names in the same batch too. Planets need the
+    // dedicated per-id /universe/planets/{id}/ endpoint instead.
+    let system_ids: Vec<i64> = raw.iter().map(|p| p.solar_system_id).collect();
+    let planet_ids: Vec<i64> = raw.iter().map(|p| p.planet_id).collect();
+    let (names, planet_names) =
+        futures::future::join(resolve_names(client, system_ids), resolve_planet_names(client, &planet_ids)).await;
 
     let mut entries: Vec<PlanetEntry> = raw
         .into_iter()
         .map(|p| PlanetEntry {
-            planet_name: names.get(&p.planet_id).cloned().unwrap_or_else(|| format!("Planet #{}", p.planet_id)),
+            planet_id: p.planet_id,
+            planet_name: planet_names.get(&p.planet_id).cloned().unwrap_or_else(|| format!("Planet #{}", p.planet_id)),
             solar_system_name: names
                 .get(&p.solar_system_id)
                 .cloned()
@@ -3303,6 +3333,135 @@ pub async fn fetch_character_planets(client: &reqwest::Client, config: &SsoConfi
         .collect();
     entries.sort_by(|a, b| a.solar_system_name.cmp(&b.solar_system_name));
     Ok(CharacterPlanets { entries, needs_reauth: false })
+}
+
+#[derive(Deserialize)]
+struct EsiExtractorDetails {
+    product_type_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct EsiFactoryDetails {
+    schematic_id: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct EsiPinContent {
+    type_id: i64,
+    amount: i64,
+}
+
+#[derive(Deserialize)]
+struct EsiPin {
+    pin_id: i64,
+    type_id: i64,
+    schematic_id: Option<i64>,
+    install_time: Option<String>,
+    expiry_time: Option<String>,
+    last_cycle_start: Option<String>,
+    contents: Option<Vec<EsiPinContent>>,
+    extractor_details: Option<EsiExtractorDetails>,
+    factory_details: Option<EsiFactoryDetails>,
+}
+
+#[derive(Deserialize)]
+struct EsiPlanetDetail {
+    pins: Vec<EsiPin>,
+}
+
+#[derive(Serialize)]
+pub struct PinContentEntry {
+    pub type_id: i64,
+    pub type_name: String,
+    pub amount: i64,
+}
+
+#[derive(Serialize)]
+pub struct PlanetPin {
+    pub pin_id: i64,
+    pub type_id: i64,
+    pub type_name: String,
+    pub is_extractor: bool,
+    pub is_factory: bool,
+    /// When this extractor's current cycle stops producing - the ESI signal
+    /// this whole endpoint exists for. Absent on non-extractor pins.
+    pub expiry_time: Option<String>,
+    pub last_cycle_start: Option<String>,
+    pub install_time: Option<String>,
+    pub product_type_id: Option<i64>,
+    pub product_type_name: Option<String>,
+    pub schematic_id: Option<i64>,
+    pub contents: Vec<PinContentEntry>,
+}
+
+#[derive(Serialize, Default)]
+pub struct PlanetDetail {
+    pub pins: Vec<PlanetPin>,
+    pub needs_reauth: bool,
+}
+
+/// Pin-level detail for one colony - the only ESI call that exposes an
+/// extractor's expiry_time, which is the real "does this need restarting"
+/// signal (the list endpoint used by fetch_character_planets only has
+/// upgrade_level/num_pins, nothing about extractor state).
+pub async fn fetch_character_planet_detail(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+    planet_id: i64,
+) -> Result<PlanetDetail, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(PlanetDetail { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get::<EsiPlanetDetail>(
+        client,
+        &access_token,
+        &format!("/characters/{character_id}/planets/{planet_id}/"),
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(PlanetDetail { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+
+    let mut lookup_ids: Vec<i64> = raw.pins.iter().map(|p| p.type_id).collect();
+    lookup_ids.extend(raw.pins.iter().filter_map(|p| p.extractor_details.as_ref().and_then(|e| e.product_type_id)));
+    lookup_ids.extend(raw.pins.iter().flat_map(|p| p.contents.iter().flatten().map(|c| c.type_id)));
+    let names = resolve_names(client, lookup_ids).await;
+
+    let pins = raw
+        .pins
+        .into_iter()
+        .map(|p| {
+            let product_type_id = p.extractor_details.as_ref().and_then(|e| e.product_type_id);
+            PlanetPin {
+                pin_id: p.pin_id,
+                type_id: p.type_id,
+                type_name: names.get(&p.type_id).cloned().unwrap_or_else(|| format!("Pin #{}", p.type_id)),
+                is_extractor: p.extractor_details.is_some(),
+                is_factory: p.factory_details.is_some(),
+                expiry_time: p.expiry_time,
+                last_cycle_start: p.last_cycle_start,
+                install_time: p.install_time,
+                product_type_id,
+                product_type_name: product_type_id.and_then(|id| names.get(&id).cloned()),
+                schematic_id: p.schematic_id.or_else(|| p.factory_details.as_ref().and_then(|f| f.schematic_id)),
+                contents: p
+                    .contents
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| PinContentEntry {
+                        type_id: c.type_id,
+                        type_name: names.get(&c.type_id).cloned().unwrap_or_else(|| format!("Item #{}", c.type_id)),
+                        amount: c.amount,
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
+    Ok(PlanetDetail { pins, needs_reauth: false })
 }
 
 /// Same contract as authorized_get, but for the one write call this app

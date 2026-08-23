@@ -8260,6 +8260,48 @@ body[data-reduce-motion="true"] .skeleton-row {
   border-left: 1px solid var(--border);
 }
 
+.pi-colonies {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pi-colony-pins {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.pi-colony-pin-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pi-colony-pin-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pi-colony-pin-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pi-colony-pin-detail {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
 @media (max-width: 1400px) {
   .pi-grid {
     grid-template-columns: repeat(3, minmax(160px, 1fr));
