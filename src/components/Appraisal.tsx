@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
 import { getMapData, regionHubColor, regionLabelWithHub, type MapData } from "../lib/map";
 import { searchMarketTypes, getRegionMarketOrders, type MarketOrder } from "../lib/market";
 import { formatIsk, typeIconUrl } from "../lib/format";
@@ -119,6 +121,14 @@ function Appraisal() {
   const [otherRegionTouched, setOtherRegionTouched] = useState(false);
   const [text, setText] = useState("");
   const [rows, setRows] = useState<AppraisalRow[] | null>(null);
+  const sortedRows = useSortableRows(rows ?? [], {
+    name: (r) => r.name,
+    quantity: (r) => r.quantity,
+    sellUnit: (r) => r.sellUnit ?? 0,
+    buyUnit: (r) => r.buyUnit ?? 0,
+    sellTotal: (r) => r.sellTotal,
+    buyTotal: (r) => r.buyTotal,
+  });
   const [appraising, setAppraising] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -312,17 +322,17 @@ function Appraisal() {
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Item</th>
-                        <th className="data-table-numeric">Qty</th>
-                        <th className="data-table-numeric">Sell Unit</th>
-                        <th className="data-table-numeric">Buy Unit</th>
-                        <th className="data-table-numeric">Sell Total</th>
+                        <SortableTh label="Item" sortKey="name" activeKey={sortedRows.sortKey} dir={sortedRows.sortDir} onSort={sortedRows.sort} />
+                        <SortableTh label="Qty" sortKey="quantity" activeKey={sortedRows.sortKey} dir={sortedRows.sortDir} onSort={sortedRows.sort} numeric />
+                        <SortableTh label="Sell Unit" sortKey="sellUnit" activeKey={sortedRows.sortKey} dir={sortedRows.sortDir} onSort={sortedRows.sort} numeric />
+                        <SortableTh label="Buy Unit" sortKey="buyUnit" activeKey={sortedRows.sortKey} dir={sortedRows.sortDir} onSort={sortedRows.sort} numeric />
+                        <SortableTh label="Sell Total" sortKey="sellTotal" activeKey={sortedRows.sortKey} dir={sortedRows.sortDir} onSort={sortedRows.sort} numeric />
                         <th className="data-table-numeric">Split</th>
-                        <th className="data-table-numeric">Buy Total</th>
+                        <SortableTh label="Buy Total" sortKey="buyTotal" activeKey={sortedRows.sortKey} dir={sortedRows.sortDir} onSort={sortedRows.sort} numeric />
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r, i) => (
+                      {sortedRows.rows.map((r, i) => (
                         <tr key={i}>
                           <td>
                             <span className="asset-item-cell">

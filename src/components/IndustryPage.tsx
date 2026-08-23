@@ -37,6 +37,8 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useIndustryDefaults } from "../hooks/useIndustryDefaults";
 import HelpBadge from "./HelpBadge";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
 import { HELP_CONTENT } from "../lib/helpContent";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 
@@ -1600,6 +1602,11 @@ function MiningLedgerTab({ characters }: { characters: SessionCharacter[] }) {
   const totalValue = grouped.reduce((sum, g) => sum + g.value, 0);
   const distinctDays = ledger ? new Set(ledger.entries.map((e) => e.date)).size : 0;
   const iskPerDay = distinctDays > 0 ? totalValue / distinctDays : 0;
+  const sortedGrouped = useSortableRows(grouped, {
+    typeName: (g) => g.typeName,
+    quantity: (g) => g.quantity,
+    value: (g) => g.value,
+  }, "value");
 
   return (
     <div className="industry-production">
@@ -1636,13 +1643,13 @@ function MiningLedgerTab({ characters }: { characters: SessionCharacter[] }) {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Ore / Ice</th>
-                  <th className="data-table-numeric">Quantity</th>
-                  <th className="data-table-numeric">Est. Value</th>
+                  <SortableTh label="Ore / Ice" sortKey="typeName" activeKey={sortedGrouped.sortKey} dir={sortedGrouped.sortDir} onSort={sortedGrouped.sort} />
+                  <SortableTh label="Quantity" sortKey="quantity" activeKey={sortedGrouped.sortKey} dir={sortedGrouped.sortDir} onSort={sortedGrouped.sort} numeric />
+                  <SortableTh label="Est. Value" sortKey="value" activeKey={sortedGrouped.sortKey} dir={sortedGrouped.sortDir} onSort={sortedGrouped.sort} numeric />
                 </tr>
               </thead>
               <tbody>
-                {grouped.map((g) => (
+                {sortedGrouped.rows.map((g) => (
                   <tr key={g.typeId}>
                     <td>
                       <span className="asset-item-cell">

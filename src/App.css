@@ -718,6 +718,149 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   position: relative;
 }
 
+.notification-bell {
+  position: relative;
+}
+
+.notification-bell-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.notification-bell-trigger:hover {
+  background: var(--bg-elevated-2);
+  border-color: var(--border-active);
+  color: var(--text);
+}
+
+.notification-bell-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.notification-bell-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-height: 420px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.notification-bell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.notification-bell-mark-all {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+.notification-bell-mark-all:hover {
+  text-decoration: underline;
+}
+
+.notification-bell-empty {
+  padding: 16px 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.notification-bell-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.notification-bell-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notification-bell-item:hover {
+  background: var(--bg-elevated-2);
+}
+
+.notification-bell-item-unread {
+  background: var(--accent-soft);
+}
+
+.notification-bell-item-unread:hover {
+  background: var(--accent-soft);
+  filter: brightness(1.15);
+}
+
+.notification-bell-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.notification-bell-item-message {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.notification-bell-item-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .account-trigger {
   display: flex;
   align-items: center;
@@ -2817,6 +2960,37 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
      header/data drift seen on the Ranks and Stats tables. */
   text-align: right !important;
   font-variant-numeric: tabular-nums;
+}
+
+.data-table-th-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.data-table-th-sortable:hover {
+  color: var(--text);
+}
+
+.data-table-sort-caret {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 9px;
+  letter-spacing: -1px;
+  color: var(--text-faint, var(--text-muted));
+  opacity: 0.6;
+}
+
+.data-table-sort-caret-active {
+  opacity: 1;
+  color: var(--accent);
+  letter-spacing: normal;
+}
+
+.data-table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .data-table-tag {

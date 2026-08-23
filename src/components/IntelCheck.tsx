@@ -6,6 +6,8 @@ import { listIntelChannels, pollIntelChannel, type IntelChannelInfo, type IntelL
 import { resolveTypeIdsByName } from "../lib/market";
 import { useIntelChannel } from "../hooks/useIntelChannel";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
 import { formatIsk, typeIconUrl } from "../lib/format";
 
 interface IntelCheckProps {
@@ -182,6 +184,10 @@ function IntelCheck({ onSelectCharacter }: IntelCheckProps) {
 
   const [dscanText, setDscanText] = useState("");
   const [dscanGroups, setDscanGroups] = useState<DScanGroup[] | null>(null);
+  const sortedDscanGroups = useSortableRows(dscanGroups ?? [], {
+    typeName: (g) => g.typeName,
+    count: (g) => g.count,
+  }, "count");
   const [dscanAnalyzing, setDscanAnalyzing] = useState(false);
 
   async function handleAnalyzeDScan() {
@@ -561,12 +567,12 @@ function IntelCheck({ onSelectCharacter }: IntelCheckProps) {
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Type</th>
-                        <th className="data-table-numeric">Count</th>
+                        <SortableTh label="Type" sortKey="typeName" activeKey={sortedDscanGroups.sortKey} dir={sortedDscanGroups.sortDir} onSort={sortedDscanGroups.sort} />
+                        <SortableTh label="Count" sortKey="count" activeKey={sortedDscanGroups.sortKey} dir={sortedDscanGroups.sortDir} onSort={sortedDscanGroups.sort} numeric />
                       </tr>
                     </thead>
                     <tbody>
-                      {dscanGroups.map((g) => (
+                      {sortedDscanGroups.rows.map((g) => (
                         <tr key={g.typeName}>
                           <td>
                             <span className="asset-item-cell">

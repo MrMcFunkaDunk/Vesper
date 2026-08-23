@@ -4,6 +4,8 @@ import { getMapData, type MapData } from "../lib/map";
 import { getMarketGroups, getMarketGroupTypes, getRegionMarketOrders, type MarketGroupNode, type TypeSummary } from "../lib/market";
 import { formatIsk } from "../lib/format";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
 
 /** Caps how many items in a category get scanned per run - a big leaf
  * category can hold hundreds of types, and each one costs a live ESI order
@@ -48,6 +50,23 @@ function Screener() {
   const [scannedCount, setScannedCount] = useState(0);
   const [results, setResults] = useState<Opportunity[] | null>(null);
   const [haulingResults, setHaulingResults] = useState<HaulingOpportunity[] | null>(null);
+  const sortedResults = useSortableRows(results ?? [], {
+    name: (o) => o.name,
+    bestBuy: (o) => o.bestBuy,
+    bestSell: (o) => o.bestSell,
+    marginPct: (o) => o.marginPct,
+    sellVolume: (o) => o.sellVolume,
+  }, "marginPct");
+  const sortedHaulingResults = useSortableRows(haulingResults ?? [], {
+    name: (o) => o.name,
+    sourceBuyPrice: (o) => o.sourceBuyPrice,
+    sourceAvailable: (o) => o.sourceAvailable,
+    destSellPrice: (o) => o.destSellPrice,
+    destBuyPrice: (o) => o.destBuyPrice,
+    profitPerUnit: (o) => o.profitPerUnit,
+    volume: (o) => o.volume,
+    profitPerM3: (o) => o.profitPerM3 ?? 0,
+  }, "profitPerUnit");
 
   useEffect(() => {
     getMapData().then(setMapData).catch(() => {});
@@ -271,15 +290,15 @@ function Screener() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Item</th>
-                    <th className="data-table-numeric">Buy at</th>
-                    <th className="data-table-numeric">Sell at</th>
-                    <th className="data-table-numeric">Margin</th>
-                    <th className="data-table-numeric">Sell Volume</th>
+                    <SortableTh label="Item" sortKey="name" activeKey={sortedResults.sortKey} dir={sortedResults.sortDir} onSort={sortedResults.sort} />
+                    <SortableTh label="Buy at" sortKey="bestBuy" activeKey={sortedResults.sortKey} dir={sortedResults.sortDir} onSort={sortedResults.sort} numeric />
+                    <SortableTh label="Sell at" sortKey="bestSell" activeKey={sortedResults.sortKey} dir={sortedResults.sortDir} onSort={sortedResults.sort} numeric />
+                    <SortableTh label="Margin" sortKey="marginPct" activeKey={sortedResults.sortKey} dir={sortedResults.sortDir} onSort={sortedResults.sort} numeric />
+                    <SortableTh label="Sell Volume" sortKey="sellVolume" activeKey={sortedResults.sortKey} dir={sortedResults.sortDir} onSort={sortedResults.sort} numeric />
                   </tr>
                 </thead>
                 <tbody>
-                  {results.map((o) => (
+                  {sortedResults.rows.map((o) => (
                     <tr key={o.typeId}>
                       <td>{o.name}</td>
                       <td className="data-table-numeric">{formatIsk(o.bestBuy)}</td>
@@ -310,18 +329,18 @@ function Screener() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Item</th>
-                    <th className="data-table-numeric">Buy @ Source</th>
-                    <th className="data-table-numeric">Available</th>
-                    <th className="data-table-numeric">List @ Dest</th>
-                    <th className="data-table-numeric">Instant Sell @ Dest</th>
-                    <th className="data-table-numeric">Profit/Unit</th>
-                    <th className="data-table-numeric">m³</th>
-                    <th className="data-table-numeric">Profit/m³</th>
+                    <SortableTh label="Item" sortKey="name" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} />
+                    <SortableTh label="Buy @ Source" sortKey="sourceBuyPrice" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} numeric />
+                    <SortableTh label="Available" sortKey="sourceAvailable" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} numeric />
+                    <SortableTh label="List @ Dest" sortKey="destSellPrice" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} numeric />
+                    <SortableTh label="Instant Sell @ Dest" sortKey="destBuyPrice" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} numeric />
+                    <SortableTh label="Profit/Unit" sortKey="profitPerUnit" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} numeric />
+                    <SortableTh label="m³" sortKey="volume" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} numeric />
+                    <SortableTh label="Profit/m³" sortKey="profitPerM3" activeKey={sortedHaulingResults.sortKey} dir={sortedHaulingResults.sortDir} onSort={sortedHaulingResults.sort} numeric />
                   </tr>
                 </thead>
                 <tbody>
-                  {haulingResults.map((o) => (
+                  {sortedHaulingResults.rows.map((o) => (
                     <tr key={o.typeId}>
                       <td>{o.name}</td>
                       <td className="data-table-numeric">{formatIsk(o.sourceBuyPrice)}</td>

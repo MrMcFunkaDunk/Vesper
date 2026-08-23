@@ -4,6 +4,8 @@ import { getLoyaltyStoreOffers, type LoyaltyStoreOffer } from "../lib/loyalty";
 import { getMarketPrices } from "../lib/market";
 import { formatIsk, typeIconUrl } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
 
 interface LpStorePanelProps {
   characterId: number | null;
@@ -98,6 +100,14 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
     return rankedOffers.filter((o) => o.type_name.toLowerCase().includes(q));
   }, [rankedOffers, query]);
 
+  const sortedOffers = useSortableRows(filteredOffers, {
+    type_name: (o) => o.type_name,
+    lp_cost: (o) => o.lp_cost,
+    isk_cost: (o) => o.isk_cost,
+    reward_value: (o) => o.rewardValue,
+    isk_per_lp: (o) => o.iskPerLp,
+  }, "isk_per_lp");
+
   if (characterId == null) {
     return <p className="detail-empty">Pick a character to see their loyalty points and LP stores.</p>;
   }
@@ -149,16 +159,16 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Item</th>
-                  <th className="data-table-numeric">LP Cost</th>
-                  <th className="data-table-numeric">ISK Cost</th>
+                  <SortableTh label="Item" sortKey="type_name" activeKey={sortedOffers.sortKey} dir={sortedOffers.sortDir} onSort={sortedOffers.sort} />
+                  <SortableTh label="LP Cost" sortKey="lp_cost" activeKey={sortedOffers.sortKey} dir={sortedOffers.sortDir} onSort={sortedOffers.sort} numeric />
+                  <SortableTh label="ISK Cost" sortKey="isk_cost" activeKey={sortedOffers.sortKey} dir={sortedOffers.sortDir} onSort={sortedOffers.sort} numeric />
                   <th>Turn In</th>
-                  <th className="data-table-numeric">Reward Value</th>
-                  <th className="data-table-numeric">ISK / LP</th>
+                  <SortableTh label="Reward Value" sortKey="reward_value" activeKey={sortedOffers.sortKey} dir={sortedOffers.sortDir} onSort={sortedOffers.sort} numeric />
+                  <SortableTh label="ISK / LP" sortKey="isk_per_lp" activeKey={sortedOffers.sortKey} dir={sortedOffers.sortDir} onSort={sortedOffers.sort} numeric />
                 </tr>
               </thead>
               <tbody>
-                {filteredOffers.map((o) => (
+                {sortedOffers.rows.map((o) => (
                   <tr key={o.offer_id}>
                     <td>
                       <span className="asset-item-cell">

@@ -25,6 +25,8 @@ import InsuranceCalculator from "./InsuranceCalculator";
 import MineralTicker from "./MineralTicker";
 import HelpBadge from "./HelpBadge";
 import { HELP_CONTENT } from "../lib/helpContent";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
 
 type WalletMarketTab = "browser" | "itemdb" | "appraisal" | "screener" | "lpstore" | "contracts" | "insurance" | "wallet" | "transactions" | "orders";
 
@@ -211,6 +213,42 @@ function WalletMarketPage({
     });
   }, [contracts, contractTypeFilter, contractQuery]);
 
+  const sortedContracts = useSortableRows(filteredContracts?.slice(0, 500) ?? [], {
+    contract_type: (c) => c.contract_type,
+    title: (c) => c.title || "",
+    issuer_corporation_name: (c) => c.issuer_corporation_name,
+    price: (c) => (c.contract_type === "courier" ? c.reward : c.price),
+    collateral: (c) => (c.contract_type === "courier" ? c.collateral : 0),
+    volume: (c) => c.volume,
+    date_expired: (c) => new Date(c.date_expired).getTime(),
+  });
+  const sortedMarketOrders = useSortableRows(marketOrders?.entries ?? [], {
+    type_name: (o) => o.type_name,
+    side: (o) => (o.is_buy_order ? "Buy" : "Sell"),
+    status: (o) => o.status,
+    price: (o) => o.price,
+    volume_remain: (o) => o.volume_remain,
+    location_name: (o) => o.location_name,
+    issued: (o) => new Date(o.issued).getTime(),
+  });
+  const sortedWalletJournal = useSortableRows(walletJournal?.entries.slice(0, 1000) ?? [], {
+    date: (e) => new Date(e.date).getTime(),
+    ref_type: (e) => e.ref_type,
+    description: (e) => e.description,
+    amount: (e) => e.amount,
+    balance: (e) => e.balance ?? 0,
+  }, "date");
+  const sortedTransactions = useSortableRows(transactions?.entries ?? [], {
+    date: (t) => new Date(t.date).getTime(),
+    side: (t) => (t.is_buy ? "Buy" : "Sell"),
+    type_name: (t) => t.type_name,
+    quantity: (t) => t.quantity,
+    unit_price: (t) => t.unit_price,
+    total: (t) => t.quantity * t.unit_price,
+    location_name: (t) => t.location_name,
+    client_name: (t) => t.client_name,
+  }, "date");
+
   return (
     <main className="main main-wallet-market">
       <div className="wallet-market-page">
@@ -301,18 +339,18 @@ function WalletMarketPage({
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Type</th>
-                      <th>Contract</th>
-                      <th>Issuer</th>
-                      <th className="data-table-numeric">Price / Reward</th>
-                      <th className="data-table-numeric">Collateral</th>
-                      <th className="data-table-numeric">Volume</th>
+                      <SortableTh label="Type" sortKey="contract_type" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                      <SortableTh label="Contract" sortKey="title" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                      <SortableTh label="Issuer" sortKey="issuer_corporation_name" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                      <SortableTh label="Price / Reward" sortKey="price" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} numeric />
+                      <SortableTh label="Collateral" sortKey="collateral" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} numeric />
+                      <SortableTh label="Volume" sortKey="volume" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} numeric />
                       <th>Location</th>
-                      <th>Expires</th>
+                      <SortableTh label="Expires" sortKey="date_expired" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredContracts.slice(0, 500).map((c) => (
+                    {sortedContracts.rows.map((c) => (
                       <tr key={c.contract_id}>
                         <td>
                           <span className="data-table-tag data-table-tag-neutral">{contractTypeLabel(c.contract_type)}</span>
@@ -355,17 +393,17 @@ function WalletMarketPage({
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Item</th>
-                      <th>Side</th>
-                      <th>Status</th>
-                      <th className="data-table-numeric">Price</th>
-                      <th className="data-table-numeric">Remaining</th>
-                      <th>Location</th>
-                      <th>Issued</th>
+                      <SortableTh label="Item" sortKey="type_name" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                      <SortableTh label="Side" sortKey="side" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                      <SortableTh label="Status" sortKey="status" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                      <SortableTh label="Price" sortKey="price" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} numeric />
+                      <SortableTh label="Remaining" sortKey="volume_remain" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} numeric />
+                      <SortableTh label="Location" sortKey="location_name" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                      <SortableTh label="Issued" sortKey="issued" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
                     </tr>
                   </thead>
                   <tbody>
-                    {marketOrders.entries.map((o) => (
+                    {sortedMarketOrders.rows.map((o) => (
                       <tr key={o.order_id}>
                         <td>
                           <span className="asset-item-cell">
@@ -413,15 +451,15 @@ function WalletMarketPage({
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Description</th>
-                      <th className="data-table-numeric">Amount</th>
-                      <th className="data-table-numeric">Balance</th>
+                      <SortableTh label="Date" sortKey="date" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} />
+                      <SortableTh label="Type" sortKey="ref_type" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} />
+                      <SortableTh label="Description" sortKey="description" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} />
+                      <SortableTh label="Amount" sortKey="amount" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} numeric />
+                      <SortableTh label="Balance" sortKey="balance" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} numeric />
                     </tr>
                   </thead>
                   <tbody>
-                    {walletJournal.entries.slice(0, 1000).map((e) => (
+                    {sortedWalletJournal.rows.map((e) => (
                       <tr key={e.id}>
                         <td>{fmtDate(e.date)}</td>
                         <td>{e.ref_type.replace(/_/g, " ")}</td>
@@ -485,18 +523,18 @@ function WalletMarketPage({
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Side</th>
-                      <th>Item</th>
-                      <th className="data-table-numeric">Qty</th>
-                      <th className="data-table-numeric">Unit Price</th>
-                      <th className="data-table-numeric">Total</th>
-                      <th>Location</th>
-                      <th>With</th>
+                      <SortableTh label="Date" sortKey="date" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                      <SortableTh label="Side" sortKey="side" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                      <SortableTh label="Item" sortKey="type_name" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                      <SortableTh label="Qty" sortKey="quantity" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} numeric />
+                      <SortableTh label="Unit Price" sortKey="unit_price" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} numeric />
+                      <SortableTh label="Total" sortKey="total" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} numeric />
+                      <SortableTh label="Location" sortKey="location_name" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                      <SortableTh label="With" sortKey="client_name" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
                     </tr>
                   </thead>
                   <tbody>
-                    {transactions.entries.map((t) => (
+                    {sortedTransactions.rows.map((t) => (
                       <tr key={t.transaction_id}>
                         <td>{fmtDate(t.date)}</td>
                         <td>

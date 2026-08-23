@@ -69,6 +69,8 @@ import {
   standingClass,
 } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { useSortableRows } from "../hooks/useSortableRows";
+import { SortableTh } from "./SortableTh";
 import { BASE_ATTRIBUTE_VALUE } from "../lib/skillTraining";
 import { getCachedOverview, setCachedOverview, isTransientServerError } from "../lib/overviewCache";
 import KillFeedTable from "./KillFeedTable";
@@ -305,6 +307,81 @@ function CharacterDetail({
   const [kills, setKills] = useState<KillEntry[] | null>(null);
   const [losses, setLosses] = useState<KillEntry[] | null>(null);
   const reportError = useErrorReporter();
+
+  const sortedStandings = useSortableRows(standings?.entries ?? [], {
+    from_name: (s) => s.from_name,
+    from_type: (s) => s.from_type,
+    standing: (s) => s.standing,
+  }, "standing");
+  const sortedContacts = useSortableRows(contacts?.entries ?? [], {
+    contact_name: (c) => c.contact_name,
+    contact_type: (c) => c.contact_type,
+    standing: (c) => c.standing,
+  }, "standing");
+  const sortedLoyalty = useSortableRows(loyalty?.entries ?? [], {
+    corporation_name: (l) => l.corporation_name,
+    loyalty_points: (l) => l.loyalty_points,
+  });
+  const sortedMarketOrders = useSortableRows(marketOrders?.entries ?? [], {
+    type_name: (o) => o.type_name,
+    side: (o) => (o.is_buy_order ? "Buy" : "Sell"),
+    status: (o) => o.status,
+    price: (o) => o.price,
+    volume_remain: (o) => o.volume_remain,
+    location_name: (o) => o.location_name,
+    issued: (o) => new Date(o.issued).getTime(),
+  });
+  const sortedContracts = useSortableRows(contracts?.entries ?? [], {
+    title: (c) => c.title || "",
+    contract_type: (c) => c.contract_type,
+    status: (c) => c.status,
+    issuer_name: (c) => c.issuer_name,
+    assignee_name: (c) => c.assignee_name ?? "",
+    price: (c) => c.price ?? c.reward ?? 0,
+    date_issued: (c) => new Date(c.date_issued).getTime(),
+    date_expired: (c) => new Date(c.date_expired).getTime(),
+  });
+  const sortedIndustryJobs = useSortableRows(industryJobs?.entries ?? [], {
+    activity_name: (j) => j.activity_name,
+    blueprint_type_name: (j) => j.blueprint_type_name,
+    product_type_name: (j) => j.product_type_name ?? "",
+    status: (j) => j.status,
+    runs: (j) => j.runs,
+    station_name: (j) => j.station_name,
+    end_date: (j) => new Date(j.end_date).getTime(),
+  });
+  const sortedWalletJournal = useSortableRows(walletJournal?.entries.slice(0, 1000) ?? [], {
+    date: (e) => new Date(e.date).getTime(),
+    ref_type: (e) => e.ref_type,
+    description: (e) => e.description,
+    amount: (e) => e.amount,
+    balance: (e) => e.balance ?? 0,
+  }, "date");
+  const sortedTransactions = useSortableRows(transactions?.entries ?? [], {
+    date: (t) => new Date(t.date).getTime(),
+    side: (t) => (t.is_buy ? "Buy" : "Sell"),
+    type_name: (t) => t.type_name,
+    quantity: (t) => t.quantity,
+    unit_price: (t) => t.unit_price,
+    total: (t) => t.quantity * t.unit_price,
+    location_name: (t) => t.location_name,
+    client_name: (t) => t.client_name,
+  }, "date");
+  const sortedPlanets = useSortableRows(planets?.entries ?? [], {
+    planet_name: (p) => p.planet_name,
+    solar_system_name: (p) => p.solar_system_name,
+    planet_type: (p) => p.planet_type,
+    upgrade_level: (p) => p.upgrade_level,
+    num_pins: (p) => p.num_pins,
+    last_update: (p) => new Date(p.last_update).getTime(),
+  });
+  const sortedResearch = useSortableRows(research?.entries ?? [], {
+    agent_name: (r) => r.agent_name,
+    skill_name: (r) => r.skill_name,
+    points_per_day: (r) => r.points_per_day,
+    current_points: (r) => r.current_points,
+    started_at: (r) => new Date(r.started_at).getTime(),
+  });
 
   useEffect(() => {
     getMarketPrices()
@@ -1045,17 +1122,15 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Type</th>
+                  <SortableTh label="Name" sortKey="from_name" activeKey={sortedStandings.sortKey} dir={sortedStandings.sortDir} onSort={sortedStandings.sort} />
+                  <SortableTh label="Type" sortKey="from_type" activeKey={sortedStandings.sortKey} dir={sortedStandings.sortDir} onSort={sortedStandings.sort} />
                   <th>Standing</th>
-                  <th className="data-table-numeric">Value</th>
+                  <SortableTh label="Value" sortKey="standing" activeKey={sortedStandings.sortKey} dir={sortedStandings.sortDir} onSort={sortedStandings.sort} numeric />
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {[...standings.entries]
-                  .sort((a, b) => b.standing - a.standing)
-                  .map((s, i) => (
+                {sortedStandings.rows.map((s, i) => (
                     <tr key={i}>
                       <td>{s.from_name}</td>
                       <td>{s.from_type}</td>
@@ -1083,17 +1158,15 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Type</th>
+                  <SortableTh label="Name" sortKey="contact_name" activeKey={sortedContacts.sortKey} dir={sortedContacts.sortDir} onSort={sortedContacts.sort} />
+                  <SortableTh label="Type" sortKey="contact_type" activeKey={sortedContacts.sortKey} dir={sortedContacts.sortDir} onSort={sortedContacts.sort} />
                   <th>Standing</th>
-                  <th className="data-table-numeric">Value</th>
+                  <SortableTh label="Value" sortKey="standing" activeKey={sortedContacts.sortKey} dir={sortedContacts.sortDir} onSort={sortedContacts.sort} numeric />
                   <th>Flags</th>
                 </tr>
               </thead>
               <tbody>
-                {[...contacts.entries]
-                  .sort((a, b) => b.standing - a.standing)
-                  .map((c, i) => (
+                {sortedContacts.rows.map((c, i) => (
                     <tr key={i} className={`contact-row-${standingClass(c.standing).replace("standing-text-", "")}`}>
                       <td className={standingClass(c.standing)}>{c.contact_name}</td>
                       <td>{c.contact_type}</td>
@@ -1147,12 +1220,12 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Corporation</th>
-                  <th className="data-table-numeric">Loyalty Points</th>
+                  <SortableTh label="Corporation" sortKey="corporation_name" activeKey={sortedLoyalty.sortKey} dir={sortedLoyalty.sortDir} onSort={sortedLoyalty.sort} />
+                  <SortableTh label="Loyalty Points" sortKey="loyalty_points" activeKey={sortedLoyalty.sortKey} dir={sortedLoyalty.sortDir} onSort={sortedLoyalty.sort} numeric />
                 </tr>
               </thead>
               <tbody>
-                {loyalty.entries.map((l, i) => (
+                {sortedLoyalty.rows.map((l, i) => (
                   <tr key={i}>
                     <td>{l.corporation_name}</td>
                     <td className="data-table-numeric">{fmtCount(l.loyalty_points)}</td>
@@ -1337,17 +1410,17 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Item</th>
-                  <th>Side</th>
-                  <th>Status</th>
-                  <th className="data-table-numeric">Price</th>
-                  <th className="data-table-numeric">Remaining</th>
-                  <th>Location</th>
-                  <th>Issued</th>
+                  <SortableTh label="Item" sortKey="type_name" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                  <SortableTh label="Side" sortKey="side" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                  <SortableTh label="Status" sortKey="status" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                  <SortableTh label="Price" sortKey="price" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} numeric />
+                  <SortableTh label="Remaining" sortKey="volume_remain" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} numeric />
+                  <SortableTh label="Location" sortKey="location_name" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
+                  <SortableTh label="Issued" sortKey="issued" activeKey={sortedMarketOrders.sortKey} dir={sortedMarketOrders.sortDir} onSort={sortedMarketOrders.sort} />
                 </tr>
               </thead>
               <tbody>
-                {marketOrders.entries.map((o) => (
+                {sortedMarketOrders.rows.map((o) => (
                   <tr key={o.order_id}>
                     <td>
                       <span className="asset-item-cell">
@@ -1402,18 +1475,18 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Contract</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Issuer</th>
-                  <th>Assignee</th>
-                  <th className="data-table-numeric">Price</th>
-                  <th>Issued</th>
-                  <th>Expires</th>
+                  <SortableTh label="Contract" sortKey="title" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                  <SortableTh label="Type" sortKey="contract_type" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                  <SortableTh label="Status" sortKey="status" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                  <SortableTh label="Issuer" sortKey="issuer_name" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                  <SortableTh label="Assignee" sortKey="assignee_name" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                  <SortableTh label="Price" sortKey="price" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} numeric />
+                  <SortableTh label="Issued" sortKey="date_issued" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
+                  <SortableTh label="Expires" sortKey="date_expired" activeKey={sortedContracts.sortKey} dir={sortedContracts.sortDir} onSort={sortedContracts.sort} />
                 </tr>
               </thead>
               <tbody>
-                {contracts.entries.map((c) => (
+                {sortedContracts.rows.map((c) => (
                   <Fragment key={c.contract_id}>
                     <tr
                       className={canExpand(c.contract_type) ? "contract-row-expandable" : undefined}
@@ -1498,17 +1571,17 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Activity</th>
-                  <th>Blueprint</th>
-                  <th>Product</th>
-                  <th>Status</th>
-                  <th className="data-table-numeric">Runs</th>
-                  <th>Station</th>
-                  <th>Ends</th>
+                  <SortableTh label="Activity" sortKey="activity_name" activeKey={sortedIndustryJobs.sortKey} dir={sortedIndustryJobs.sortDir} onSort={sortedIndustryJobs.sort} />
+                  <SortableTh label="Blueprint" sortKey="blueprint_type_name" activeKey={sortedIndustryJobs.sortKey} dir={sortedIndustryJobs.sortDir} onSort={sortedIndustryJobs.sort} />
+                  <SortableTh label="Product" sortKey="product_type_name" activeKey={sortedIndustryJobs.sortKey} dir={sortedIndustryJobs.sortDir} onSort={sortedIndustryJobs.sort} />
+                  <SortableTh label="Status" sortKey="status" activeKey={sortedIndustryJobs.sortKey} dir={sortedIndustryJobs.sortDir} onSort={sortedIndustryJobs.sort} />
+                  <SortableTh label="Runs" sortKey="runs" activeKey={sortedIndustryJobs.sortKey} dir={sortedIndustryJobs.sortDir} onSort={sortedIndustryJobs.sort} numeric />
+                  <SortableTh label="Station" sortKey="station_name" activeKey={sortedIndustryJobs.sortKey} dir={sortedIndustryJobs.sortDir} onSort={sortedIndustryJobs.sort} />
+                  <SortableTh label="Ends" sortKey="end_date" activeKey={sortedIndustryJobs.sortKey} dir={sortedIndustryJobs.sortDir} onSort={sortedIndustryJobs.sort} />
                 </tr>
               </thead>
               <tbody>
-                {industryJobs.entries.map((j) => (
+                {sortedIndustryJobs.rows.map((j) => (
                   <tr key={j.job_id}>
                     <td>{j.activity_name}</td>
                     <td>{j.blueprint_type_name}</td>
@@ -1549,15 +1622,15 @@ function CharacterDetail({
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Description</th>
-                      <th className="data-table-numeric">Amount</th>
-                      <th className="data-table-numeric">Balance</th>
+                      <SortableTh label="Date" sortKey="date" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} />
+                      <SortableTh label="Type" sortKey="ref_type" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} />
+                      <SortableTh label="Description" sortKey="description" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} />
+                      <SortableTh label="Amount" sortKey="amount" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} numeric />
+                      <SortableTh label="Balance" sortKey="balance" activeKey={sortedWalletJournal.sortKey} dir={sortedWalletJournal.sortDir} onSort={sortedWalletJournal.sort} numeric />
                     </tr>
                   </thead>
                   <tbody>
-                    {walletJournal.entries.slice(0, 1000).map((e) => (
+                    {sortedWalletJournal.rows.map((e) => (
                       <tr key={e.id}>
                         <td>{fmtDate(e.date)}</td>
                         <td>{e.ref_type.replace(/_/g, " ")}</td>
@@ -1603,18 +1676,18 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Side</th>
-                  <th>Item</th>
-                  <th className="data-table-numeric">Qty</th>
-                  <th className="data-table-numeric">Unit Price</th>
-                  <th className="data-table-numeric">Total</th>
-                  <th>Location</th>
-                  <th>With</th>
+                  <SortableTh label="Date" sortKey="date" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                  <SortableTh label="Side" sortKey="side" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                  <SortableTh label="Item" sortKey="type_name" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                  <SortableTh label="Qty" sortKey="quantity" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} numeric />
+                  <SortableTh label="Unit Price" sortKey="unit_price" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} numeric />
+                  <SortableTh label="Total" sortKey="total" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} numeric />
+                  <SortableTh label="Location" sortKey="location_name" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
+                  <SortableTh label="With" sortKey="client_name" activeKey={sortedTransactions.sortKey} dir={sortedTransactions.sortDir} onSort={sortedTransactions.sort} />
                 </tr>
               </thead>
               <tbody>
-                {transactions.entries.map((t) => (
+                {sortedTransactions.rows.map((t) => (
                   <tr key={t.transaction_id}>
                     <td>{fmtDate(t.date)}</td>
                     <td>
@@ -1770,16 +1843,16 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Planet</th>
-                  <th>System</th>
-                  <th>Type</th>
-                  <th className="data-table-numeric">Level</th>
-                  <th className="data-table-numeric">Pins</th>
-                  <th>Last Updated</th>
+                  <SortableTh label="Planet" sortKey="planet_name" activeKey={sortedPlanets.sortKey} dir={sortedPlanets.sortDir} onSort={sortedPlanets.sort} />
+                  <SortableTh label="System" sortKey="solar_system_name" activeKey={sortedPlanets.sortKey} dir={sortedPlanets.sortDir} onSort={sortedPlanets.sort} />
+                  <SortableTh label="Type" sortKey="planet_type" activeKey={sortedPlanets.sortKey} dir={sortedPlanets.sortDir} onSort={sortedPlanets.sort} />
+                  <SortableTh label="Level" sortKey="upgrade_level" activeKey={sortedPlanets.sortKey} dir={sortedPlanets.sortDir} onSort={sortedPlanets.sort} numeric />
+                  <SortableTh label="Pins" sortKey="num_pins" activeKey={sortedPlanets.sortKey} dir={sortedPlanets.sortDir} onSort={sortedPlanets.sort} numeric />
+                  <SortableTh label="Last Updated" sortKey="last_update" activeKey={sortedPlanets.sortKey} dir={sortedPlanets.sortDir} onSort={sortedPlanets.sort} />
                 </tr>
               </thead>
               <tbody>
-                {planets.entries.map((p, i) => (
+                {sortedPlanets.rows.map((p, i) => (
                   <tr key={i}>
                     <td>{p.planet_name}</td>
                     <td>{p.solar_system_name}</td>
@@ -1806,15 +1879,15 @@ function CharacterDetail({
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Agent</th>
-                  <th>Field</th>
-                  <th className="data-table-numeric">Points/Day</th>
-                  <th className="data-table-numeric">Current Points</th>
-                  <th>Started</th>
+                  <SortableTh label="Agent" sortKey="agent_name" activeKey={sortedResearch.sortKey} dir={sortedResearch.sortDir} onSort={sortedResearch.sort} />
+                  <SortableTh label="Field" sortKey="skill_name" activeKey={sortedResearch.sortKey} dir={sortedResearch.sortDir} onSort={sortedResearch.sort} />
+                  <SortableTh label="Points/Day" sortKey="points_per_day" activeKey={sortedResearch.sortKey} dir={sortedResearch.sortDir} onSort={sortedResearch.sort} numeric />
+                  <SortableTh label="Current Points" sortKey="current_points" activeKey={sortedResearch.sortKey} dir={sortedResearch.sortDir} onSort={sortedResearch.sort} numeric />
+                  <SortableTh label="Started" sortKey="started_at" activeKey={sortedResearch.sortKey} dir={sortedResearch.sortDir} onSort={sortedResearch.sort} />
                 </tr>
               </thead>
               <tbody>
-                {research.entries.map((r) => (
+                {sortedResearch.rows.map((r) => (
                   <tr key={r.agent_id}>
                     <td>{r.agent_name}</td>
                     <td>{r.skill_name}</td>
