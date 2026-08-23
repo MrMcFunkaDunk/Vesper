@@ -5,6 +5,7 @@ import { searchSystemsLive, type SystemSearchMatch } from "../lib/map";
 import { useLocationTracking, type ProximityRadius } from "../hooks/useLocationTracking";
 import StatusChip from "./StatusChip";
 import HelpBadge from "./HelpBadge";
+import NotificationBell from "./NotificationBell";
 import { HELP_CONTENT } from "../lib/helpContent";
 
 interface TopBarProps {
@@ -312,6 +313,7 @@ function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout }: TopBarP
             </div>
           )}
         </div>
+        <NotificationBell />
       </div>
     </header>
   );

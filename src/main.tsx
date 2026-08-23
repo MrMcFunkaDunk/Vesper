@@ -14,17 +14,20 @@ import { ErrorReporterProvider } from "./hooks/useErrorReporter";
 import { RecentActivityProvider } from "./hooks/useRecentActivity";
 import { TrackedSystemsProvider } from "./hooks/useTrackedSystemsActivity";
 import { LocationTrackingProvider } from "./hooks/useLocationTracking";
+import { NotificationCenterProvider } from "./hooks/useNotificationCenter";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorReporterProvider>
-      <RecentActivityProvider>
-        <TrackedSystemsProvider>
-          <LocationTrackingProvider>
-            <App />
-          </LocationTrackingProvider>
-        </TrackedSystemsProvider>
-      </RecentActivityProvider>
+      <NotificationCenterProvider>
+        <RecentActivityProvider>
+          <TrackedSystemsProvider>
+            <LocationTrackingProvider>
+              <App />
+            </LocationTrackingProvider>
+          </TrackedSystemsProvider>
+        </RecentActivityProvider>
+      </NotificationCenterProvider>
     </ErrorReporterProvider>
   </React.StrictMode>,
 );
