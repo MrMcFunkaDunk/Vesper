@@ -3,7 +3,7 @@ import { Search, X, Crosshair, MapPin, BarChart3 } from "lucide-react";
 import SystemStatsPanel from "./SystemStatsPanel";
 import { getMapData, getCharacterHomeSystems, getPlayerStructures, type MapData, type MapSystem, type PlayerStructureInfo } from "../lib/map";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { securityColor, formatSecurity, formatUtcTime, formatIskCompact } from "../lib/format";
+import { securityColor, formatSecurity, formatUtcTime, formatIskCompact, formatExactTime } from "../lib/format";
 import { useRecentActivity } from "../hooks/useRecentActivity";
 import { useLocationTracking } from "../hooks/useLocationTracking";
 import { useMapDisplayPrefs } from "../hooks/useMapDisplayPrefs";
@@ -175,14 +175,14 @@ function heatIntensity(killCount: number): number {
   return 1 - Math.exp(-killCount / HEAT_INTENSITY_DIVISOR);
 }
 
-/** Dim red -> red -> orange -> yellow as intensity climbs - the real color
- * ramp EVE's own in-game kill heatmap used, not just a flat red that fades
- * in/out. Stops are [intensity, r, g, b]. */
+/** Dim red -> vivid red as intensity climbs - stays red throughout rather
+ * than shifting through orange/yellow at high kill counts, so "more kills"
+ * always reads as "more red", never as a different color. Stops are
+ * [intensity, r, g, b]. */
 const HEAT_COLOR_STOPS: [number, number, number, number][] = [
-  [0, 130, 24, 24],
-  [0.35, 235, 45, 40],
-  [0.65, 255, 130, 35],
-  [1, 255, 225, 70],
+  [0, 110, 18, 18],
+  [0.4, 200, 30, 26],
+  [1, 255, 40, 34],
 ];
 
 function heatColor(intensity: number): [number, number, number] {
@@ -257,7 +257,7 @@ function computeSystemHeat(kills: KillEntry[], now: number): Map<number, SystemH
  * actively pulse - older than this, it still glows at the same brightness
  * (the rolling-hour count hasn't changed) but holds steady instead of
  * breathing, since nothing is actually happening there right now. */
-const PULSE_RECENCY_MS = 5 * 60 * 1000;
+const PULSE_RECENCY_MS = 2 * 60 * 1000;
 
 function hasRecentHeat(heat: Map<number, SystemHeat>, now: number): boolean {
   for (const entry of heat.values()) {
@@ -278,14 +278,6 @@ function pulseWave(now: number, systemId: number, floor: number): number {
   return floor + (1 - floor) * wave;
 }
 
-/** A single sonar-style ping animation, spawned at a system the moment a new kill streams in there - matches zKillboard's live map. */
-interface Ping {
-  systemId: number;
-  startedAt: number;
-}
-
-const PING_DURATION_MS = 1600;
-const PING_MAX_RADIUS_PX = 34;
 
 interface TopActivityEntry {
   name: string;
@@ -419,9 +411,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const showServiceIconsRef = useRef(true);
   const homePinsBySystemRef = useRef<Map<number, HomePin[]>>(new Map());
   const structuresBySystemRef = useRef<Map<number, PlayerStructureInfo[]>>(new Map());
-  const pingsRef = useRef<Ping[]>([]);
   const heatMapRef = useRef<Map<number, SystemHeat>>(new Map());
-  const seenKillIdsRef = useRef<Set<number> | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const drawScheduledRef = useRef(false);
 
@@ -432,6 +422,13 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const [selectedSystem, setSelectedSystem] = useState<MapSystem | null>(null);
   const [statsSystemId, setStatsSystemId] = useState<number | null>(null);
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
+  /** Clicking a system pins its tooltip open at that screen position, so
+   * the mini-killboard inside it can actually be clicked without the
+   * tooltip disappearing the instant the mouse leaves the dot - normal
+   * hover still works (and takes over the tooltip) whenever nothing is
+   * pinned. Cleared by clicking the same system again or clicking
+   * elsewhere on the map. */
+  const [pinnedHover, setPinnedHover] = useState<HoverInfo | null>(null);
   const [topActivity, setTopActivity] = useState<{ systems: TopActivityEntry[]; regions: TopActivityEntry[] }>({
     systems: [],
     regions: [],
@@ -660,16 +657,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
       const intensity = heatIntensity(entry.count);
       const [hr, hg, hb] = heatColor(intensity);
-      const isActive = now - entry.mostRecentAt < PULSE_RECENCY_MS;
-      // Deliberately dramatic - a subtle pulse reads as "not pulsing at
-      // all" once it's multiplied against an already-dim low-kill-count
-      // alpha, so this swings alpha and radius both by a lot while active.
-      const wave = isActive ? pulseWave(now, systemId, 0) : 0;
-      const alphaPulse = isActive ? 0.45 + 0.55 * wave : 1;
-      const radiusPulse = isActive ? 1 + 0.28 * wave : 1;
-      const alpha = intensity * alphaPulse;
+      // Purely a function of kill count - no pulse/wave here at all. Only
+      // the system dot itself (drawn later below) pulses; the heat glow is
+      // a steady "how hot has this system been" read that never animates.
+      const alpha = intensity;
 
-      const glowRadius = dotRadius * (4.5 + intensity * 11) * radiusPulse;
+      const glowRadius = dotRadius * (4.5 + intensity * 11);
       const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowRadius);
       glow.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.95, 0.05, 0.95)})`);
       glow.addColorStop(0.45, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.5, 0.03, 0.55)})`);
@@ -683,32 +676,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       ctx.restore();
 
       ctx.strokeStyle = `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha, 0.08, 1)})`;
-      ctx.lineWidth = isActive ? 1.6 + wave * 0.8 : 1.6;
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.arc(sx, sy, (dotRadius * 2.6 + intensity * 4) * radiusPulse, 0, Math.PI * 2);
+      ctx.arc(sx, sy, dotRadius * 2.6 + intensity * 4, 0, Math.PI * 2);
       ctx.stroke();
 
       ctx.strokeStyle = `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.55, 0.04, 0.6)})`;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(sx, sy, (dotRadius * 3.8 + intensity * 6) * radiusPulse, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // Sonar-style pings: one ring spawned per new kill, expanding and
-    // fading out over PING_DURATION_MS - a "something just happened" flash
-    // layered on top of the steadier heat rings above.
-    for (const ping of pingsRef.current) {
-      const system = systemById.get(ping.systemId);
-      if (!system || !inView(system.x, system.y)) continue;
-      const t = Math.min((now - ping.startedAt) / PING_DURATION_MS, 1);
-      const sx = toScreenX(system.x);
-      const sy = toScreenY(system.y);
-      const radius = dotRadius + t * PING_MAX_RADIUS_PX;
-      ctx.beginPath();
-      ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(255, 120, 40, ${(1 - t) * 0.85})`;
-      ctx.lineWidth = 1.5;
+      ctx.arc(sx, sy, dotRadius * 3.8 + intensity * 6, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -749,6 +725,22 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       } else if (isHovered) {
         ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
         ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      // A pulsing outline just outside the dot itself, separate from the
+      // (non-pulsing) heat glow above - the glow says "this system has been
+      // hot", this ring says "a kill is landing here right now", and
+      // without its own border the dot's alpha-only pulse was too subtle to
+      // notice at a glance.
+      if (isDotActive) {
+        const borderWave = pulseWave(now, system.id, 0.15);
+        const baseRadius =
+          (isSelected ? dotRadius * 2.2 : isCurrentLocation ? dotRadius * 2 : isHovered ? dotRadius * 1.7 : dotRadius) + heatBump;
+        ctx.beginPath();
+        ctx.arc(sx, sy, baseRadius + 2.5, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 90, 60, ${clamp(borderWave, 0.15, 1)})`;
+        ctx.lineWidth = 1.2 + borderWave * 1.6;
         ctx.stroke();
       }
 
@@ -923,16 +915,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     if (animFrameRef.current !== null) return;
     function tick() {
       const now = Date.now();
-      pingsRef.current = pingsRef.current.filter((p) => now - p.startedAt < PING_DURATION_MS);
       draw();
-      // Keeps ticking every frame as long as either a ping is expanding or
-      // some system is actively pulsing (a kill within the last
-      // PULSE_RECENCY_MS) - stops (falls back to on-demand redraws) once
-      // both go quiet, so an empty or merely-still-warm map isn't burning
-      // frames for nothing. Older, non-pulsing heat still renders (draw()
-      // reads it fine on any triggered redraw), it just doesn't need a
-      // continuous animation loop to look right.
-      const stillAnimating = pingsRef.current.length > 0 || hasRecentHeat(heatMapRef.current, now);
+      // Keeps ticking every frame as long as some system is actively
+      // pulsing (a kill within the last PULSE_RECENCY_MS) - stops (falls
+      // back to on-demand redraws) once that goes quiet, so an empty or
+      // merely-still-warm map isn't burning frames for nothing. Older,
+      // non-pulsing heat still renders (draw() reads it fine on any
+      // triggered redraw), it just doesn't need a continuous animation
+      // loop to look right.
+      const stillAnimating = hasRecentHeat(heatMapRef.current, now);
       animFrameRef.current = stillAnimating ? requestAnimationFrame(tick) : null;
     }
     animFrameRef.current = requestAnimationFrame(tick);
@@ -946,21 +937,6 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
   useEffect(() => {
     const now = Date.now();
-    if (seenKillIdsRef.current === null) {
-      // First snapshot on load - just remember what's already there so the
-      // whole existing history doesn't burst into pings all at once.
-      seenKillIdsRef.current = new Set(kills.map((k) => k.killmail_id));
-    } else {
-      let spawned = false;
-      for (const kill of kills) {
-        if (!seenKillIdsRef.current.has(kill.killmail_id)) {
-          seenKillIdsRef.current.add(kill.killmail_id);
-          pingsRef.current.push({ systemId: kill.system_id, startedAt: now });
-          spawned = true;
-        }
-      }
-      if (spawned) ensureAnimating();
-    }
     heatMapRef.current = computeSystemHeat(kills, now);
     if (hasRecentHeat(heatMapRef.current, now)) ensureAnimating();
     setTopActivity(computeTopActivity(kills, now));
@@ -1170,6 +1146,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           const picked = pickSystemForClick(e.clientX, e.clientY);
           selectedIdRef.current = picked?.id ?? null;
           setSelectedSystem(picked);
+          setPinnedHover((prev) => {
+            if (!picked) return null;
+            if (prev?.system.id === picked.id) return null;
+            return { system: picked, clientX: e.clientX, clientY: e.clientY };
+          });
           requestDraw();
         }
       }
@@ -1177,7 +1158,13 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     canvas.addEventListener("mousedown", handleMouseDown);
-    canvas.addEventListener("mouseleave", clearHover);
+    // No native canvas "mouseleave" listener: the mini-killboard tooltip
+    // sits on top of the canvas with pointer-events re-enabled (so its
+    // kill rows are clickable), and moving the cursor onto it would fire a
+    // real DOM mouseleave on the canvas underneath, clearing hoverInfo and
+    // hiding the tooltip the instant someone tries to click a kill in it.
+    // handleMouseMove's own clientX/Y-vs-canvas-rect bounds check below
+    // already covers "the mouse actually left the map area".
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
     window.addEventListener("resize", requestDraw);
@@ -1186,7 +1173,6 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       resizeObserver.disconnect();
       canvas.removeEventListener("wheel", handleWheel);
       canvas.removeEventListener("mousedown", handleMouseDown);
-      canvas.removeEventListener("mouseleave", clearHover);
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
       window.removeEventListener("resize", requestDraw);
@@ -1278,11 +1264,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     requestDraw();
   }
 
+  // A pinned tooltip (from clicking a system) takes priority over whatever
+  // is currently hovered - see pinnedHover's own comment above.
+  const activeHover = pinnedHover ?? hoverInfo;
+
   // Memoized rather than recomputed inline - this used to re-scan the full
   // live kills array (and re-parse every timestamp) on every render,
   // including ones triggered by unrelated state changes like a mousemove
   // that didn't even change which system is hovered.
-  const hoveredSystemId = hoverInfo?.system.id;
+  const hoveredSystemId = activeHover?.system.id;
   const hoveredKillCount = useMemo(() => {
     if (hoveredSystemId == null) return 0;
     const now = Date.now();
@@ -1297,6 +1287,17 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     () => (hoveredSystemId == null ? [] : (structuresBySystemRef.current.get(hoveredSystemId) ?? [])),
     [hoveredSystemId],
   );
+
+  /** A compact mini-killboard for the hover tooltip - the same live kill
+   * feed already driving the map dots/ticker, just filtered to this one
+   * system and capped short, click-through to the real kill detail page. */
+  const hoveredKills = useMemo(() => {
+    if (hoveredSystemId == null) return [];
+    return kills
+      .filter((k) => k.system_id === hoveredSystemId)
+      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+      .slice(0, 5);
+  }, [kills, hoveredSystemId]);
 
   // Every live kill gets routed into exactly one of the two feeds below,
   // based on whether it falls within the chosen proximity radius AND is
@@ -1585,19 +1586,39 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         </div>
       </div>
 
-      {hoverInfo && (
-        <div className="map-hover-tooltip" style={{ left: hoverInfo.clientX + 16, top: hoverInfo.clientY + 16 }}>
+      {activeHover && (
+        <div
+          className={`map-hover-tooltip${pinnedHover ? " map-hover-tooltip-pinned" : ""}`}
+          style={{ left: activeHover.clientX + 16, top: activeHover.clientY + 16 }}
+        >
           <div className="map-hover-tooltip-title">
-            <span className="kills-security" style={{ color: securityColor(hoverInfo.system.security) }}>
-              {formatSecurity(hoverInfo.system.security)}
+            <span className="kills-security" style={{ color: securityColor(activeHover.system.security) }}>
+              {formatSecurity(activeHover.system.security)}
             </span>
-            <span className="map-hover-name">{hoverInfo.system.name}</span>
+            <span className="map-hover-name">{activeHover.system.name}</span>
+            {pinnedHover && (
+              <button type="button" className="map-hover-tooltip-close" onClick={() => setPinnedHover(null)} title="Unpin">
+                <X size={12} strokeWidth={2.5} />
+              </button>
+            )}
           </div>
           <span className="map-hover-kills">
             {hoveredKillCount > 0
               ? `${hoveredKillCount} kill${hoveredKillCount === 1 ? "" : "s"} in the last hour`
               : "No recent activity"}
           </span>
+          {hoveredKills.length > 0 && (
+            <div className="map-hover-killboard">
+              {hoveredKills.map((k) => (
+                <div key={k.killmail_id} className="map-hover-killboard-row" onClick={() => onSelectKill(k.killmail_id)}>
+                  <img className="map-hover-killboard-icon" src={`https://images.evetech.net/types/${k.ship_type_id}/icon?size=32`} alt="" />
+                  <span className="map-hover-killboard-ship">{k.ship_type_name}</span>
+                  <span className="map-hover-killboard-victim">{k.victim_character_name ?? "Unknown"}</span>
+                  <span className="map-hover-killboard-time">{formatExactTime(k.time)}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {hoveredStructures.length > 0 && (
             <div className="map-hover-structures">
               {hoveredStructures.length > 1 && <span className="map-hover-structures-count">{hoveredStructures.length} structures</span>}
