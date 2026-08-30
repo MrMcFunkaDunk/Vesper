@@ -9,6 +9,10 @@ export interface BlueprintFavourite {
   /** StructureTier's own values ("npc_station" | "engineering_complex"), stored loosely to avoid importing a component-local type - the reader narrows it the same defensive way industryDefaults.production.structure already is. */
   structure: string;
   facilityTax: number;
+  /** Structure owner's job-cost role bonus, as entered (e.g. 3 for -3%) - manual for now, see IndustryPage.tsx's job cost panel. */
+  structureRoleBonusPct: number;
+  /** Whether to apply the flat Alpha-clone job-cost surcharge - manual for now, same reasoning as structureRoleBonusPct. */
+  isAlphaClone: boolean;
   hubRegionId: number;
   systemId: number | null;
   systemName: string | null;

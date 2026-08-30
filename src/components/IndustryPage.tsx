@@ -23,7 +23,8 @@ import {
 } from "../lib/market";
 import { buildCostTree, repriceTree, type BuildTreeNode } from "../lib/industryBuildTree";
 import {
-  jobInstallCost,
+  computeJobCostBreakdown,
+  type JobCostBreakdown,
   estimatedItemValue,
   reprocessingYield,
   reprocessedMaterialQuantity,
@@ -61,6 +62,28 @@ import CharacterSelectorStrip from "./CharacterSelectorStrip";
 // current SDE (it's already a refined output, not something you'd
 // reprocess further), so the browse list below is Ore/Ice only.
 const ORE_CATEGORY_ID = 25;
+
+/** Plain object rather than importing HelpContent - structurally identical
+ * to what HelpBadge expects, and this glossary only makes sense pinned to
+ * the Costs sidebar itself, not the page-level help registry every other
+ * tab's badge reads from. */
+const COSTS_SIDEBAR_HELP = {
+  title: "Costs",
+  what: "Every cost figure for the current build in one place - the material cost from the Build Steps tree, plus (once a system is picked and Calculate Build Cost run) the real job-installation cost the in-game Industry window itself would charge.",
+  how: [
+    "Total Cost, Per Unit, and Build Time always reflect the Build Steps tree - Total Cost folds in Job Cost automatically the moment a system's been picked.",
+    "Selected Total only counts whatever's still ticked in the Build Steps tree - untick anything you already have in a hangar to see the cost of just what's left to buy or build.",
+  ],
+  gives: [
+    "Estimated Item Value (EIV): the game's own valuation of this build's base (0% ME) materials at real Trade Hub prices - not reduced by your actual ME level.",
+    "System Cost Index (SCI): the picked system's live industry activity index, from ESI - busier systems cost more to build in.",
+    "Structure Role Bonus: a cost-reduction the structure owner can set - manual entry, since no ESI endpoint exposes it. Reduces just the SCI portion, not the taxes.",
+    "Facility Tax: 0.25% fixed at NPC stations; owner-set, capped at 10%, at player structures - also manual entry, same ESI limitation.",
+    "SCC Surcharge: CCP's own fixed cut - 4% for manufacturing/reaction/invention/copying, 2% for ME/TE research.",
+    "Alpha Clone Tax: an extra flat 0.25% of EIV, Alpha clones only.",
+    "Total Job Cost: Job Gross Cost (SCI after any role bonus) plus every tax above - this is the number that gets added into Total Cost.",
+  ],
+};
 
 const FACILITY_LABEL: Record<ReprocessingFacility, string> = {
   npc_station: "NPC Station",
@@ -391,6 +414,7 @@ interface NumberStepperInputProps {
   max?: number;
   step?: number;
   className?: string;
+  title?: string;
 }
 
 /** Every plain number input across the Industry tabs used the browser's own
@@ -400,7 +424,7 @@ interface NumberStepperInputProps {
  * field's own onChange already did (an empty/invalid field falls back to 0
  * before clamping, which lands on the same floor every existing field's own
  * fallback constant already matched its min at). */
-function NumberStepperInput({ value, onChange, min, max, step = 1, className }: NumberStepperInputProps) {
+function NumberStepperInput({ value, onChange, min, max, step = 1, className, title }: NumberStepperInputProps) {
   function clamp(next: number): number {
     let result = next;
     if (min != null) result = Math.max(min, result);
@@ -409,7 +433,7 @@ function NumberStepperInput({ value, onChange, min, max, step = 1, className }: 
   }
 
   return (
-    <div className="industry-number-stepper">
+    <div className="industry-number-stepper" title={title}>
       <button
         type="button"
         className="industry-number-stepper-btn"
@@ -461,6 +485,13 @@ function ProductionCalculator() {
     industryDefaults.production.structure === "npc_station" ? "npc_station" : "engineering_complex",
   );
   const [facilityTax, setFacilityTax] = useState(industryDefaults.production.facilityTax);
+  // Job-cost inputs neither VESPER nor a plain ESI call can know on their
+  // own: a structure's role bonus is set by its owner with no public
+  // endpoint exposing it, and Alpha/Omega status has no direct ESI field
+  // either (VESPER only guesses it elsewhere via skill levels, which isn't
+  // reliable enough to silently apply a tax off of). Manual for now.
+  const [structureRoleBonusPct, setStructureRoleBonusPct] = useState(0);
+  const [isAlphaClone, setIsAlphaClone] = useState(false);
 
   const [systemQuery, setSystemQuery] = useState("");
   const [systemSuggestions, setSystemSuggestions] = useState<SystemSearchMatch[]>([]);
@@ -468,6 +499,14 @@ function ProductionCalculator() {
   const [system, setSystem] = useState<SystemSearchMatch | null>(null);
 
   const [tree, setTree] = useState<BuildTreeNode | null>(null);
+  /** The job-cost panel (SCI/role-bonus/facility/SCC/alpha/total), kept as
+   * its own piece of state rather than folded into the tree's totalCost -
+   * pricedTree below recomputes totalCost from scratch off hub prices
+   * every time they refresh, so anything added directly onto tree.totalCost
+   * gets silently overwritten the moment that happens. Only set when a
+   * system was picked (job cost needs a real System Cost Index); null
+   * otherwise, which the footer treats as "nothing to add". */
+  const [jobCost, setJobCost] = useState<JobCostBreakdown | null>(null);
   /** The blueprint/reaction-formula item itself - a one-time acquisition
    * cost separate from the per-unit material tree above (buildCostTree
    * starts from what the blueprint OUTPUTS, so the blueprint's own cost
@@ -514,6 +553,8 @@ function ProductionCalculator() {
       timeEfficiency,
       structure,
       facilityTax,
+      structureRoleBonusPct,
+      isAlphaClone,
       hubRegionId,
       systemId: system?.id ?? null,
       systemName: system?.name ?? null,
@@ -534,6 +575,10 @@ function ProductionCalculator() {
     setTimeEfficiency(fav.timeEfficiency);
     setStructure(fav.structure === "npc_station" ? "npc_station" : "engineering_complex");
     setFacilityTax(fav.facilityTax);
+    // ?? fallbacks: a favourite saved before these two fields existed won't
+    // have them in its stored JSON at all, not just at their zero-value default.
+    setStructureRoleBonusPct(fav.structureRoleBonusPct ?? 0);
+    setIsAlphaClone(fav.isAlphaClone ?? false);
     setHubRegionId(fav.hubRegionId);
     if (fav.systemId != null && fav.systemName != null) {
       setSystem({ id: fav.systemId, name: fav.systemName, security: 0 });
@@ -543,6 +588,7 @@ function ProductionCalculator() {
       setSystemQuery("");
     }
     setTree(null);
+    setJobCost(null);
     setFavouritesOpen(false);
   }
 
@@ -638,6 +684,7 @@ function ProductionCalculator() {
     if (!selected) return;
     setCalculating(true);
     setTree(null);
+    setJobCost(null);
     setBlueprintCost(null);
     setBlueprintManualCost("");
     setCheckedPaths(new Set());
@@ -688,8 +735,15 @@ function ProductionCalculator() {
           activityInfo.materials.map((m) => ({ typeId: m.type_id, quantity: m.quantity * runs })),
           priceByTypeId,
         );
-        const installCost = jobInstallCost(eiv, costIndex, activity, facilityTax);
-        setTree((prev) => (prev ? { ...prev, totalCost: prev.totalCost + installCost } : prev));
+        setJobCost(computeJobCostBreakdown(eiv, costIndex, activity, facilityTax, structureRoleBonusPct, isAlphaClone));
+      } else if (systemQuery.trim().length > 0) {
+        // Typing a name into the System field doesn't select it on its own -
+        // system only gets set by clicking a suggestion (see the input's
+        // onChange, which clears it on every keystroke). Without this, a
+        // typed-but-never-clicked system silently skipped the whole Job
+        // Cost section with no feedback at all, which looked exactly like
+        // the feature wasn't there.
+        reportError(`"${systemQuery}" wasn't selected from the dropdown, so no Job Cost was calculated - pick a system from the suggestions list under the field to include it.`);
       }
     } catch (err) {
       reportError(`Failed to calculate build cost: ${String(err)}`);
@@ -815,6 +869,8 @@ function ProductionCalculator() {
 
   return (
     <div className="industry-production">
+      <div className="industry-production-layout">
+      <div className="industry-main-column">
       <div className="industry-inputs-panel">
         <div className="market-browser-favourites">
           <button
@@ -908,8 +964,21 @@ function ProductionCalculator() {
                 value={facilityTax * 100}
                 onChange={(v) => setFacilityTax(v / 100)}
                 min={0}
+                max={10}
                 step={0.01}
                 className="industry-field-input"
+                title="0.25% fixed at NPC stations; owner-set at player structures, capped at 10%. No public ESI endpoint exposes a player structure's own rate, so this is manual for now."
+              />
+            </label>
+            <label className="wh-field-label">
+              Structure Role Bonus %
+              <NumberStepperInput
+                value={structureRoleBonusPct}
+                onChange={setStructureRoleBonusPct}
+                min={0}
+                step={0.1}
+                className="industry-field-input"
+                title="A cost-reduction role bonus the structure owner can set (e.g. 3 for -3%) - reduces just the System Cost Index portion of the job cost, not the taxes. Manual for now, no ESI endpoint exposes it."
               />
             </label>
             <label className="wh-field-label">
@@ -930,6 +999,18 @@ function ProductionCalculator() {
                     {h.regionName}
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="wh-field-label">
+              Clone Type
+              <select
+                className="industry-field-input"
+                value={isAlphaClone ? "alpha" : "omega"}
+                onChange={(e) => setIsAlphaClone(e.target.value === "alpha")}
+                title="Alpha clones pay an extra flat 0.25% of EIV in job cost. Manual for now - ESI has no direct field for Alpha/Omega status."
+              >
+                <option value="omega">Omega</option>
+                <option value="alpha">Alpha</option>
               </select>
             </label>
             {hubPricesLoading && <span className="industry-hub-prices-loading">Loading hub prices...</span>}
@@ -1052,45 +1133,122 @@ function ProductionCalculator() {
               hubPrices={hubPrices}
             />
           </div>
+        </div>
+      )}
+      </div>
 
-          <div className="skill-plan-footer">
-            <span>
-              Total cost: <strong>{formatIsk(pricedTree.totalCost)}</strong>
-            </span>
-            <span className="skill-queue-footer-sep">|</span>
-            <span>
-              Per unit: <strong>{formatIsk(pricedTree.totalCost / pricedTree.quantityNeeded)}</strong>
-            </span>
+      {pricedTree && (
+        <div className="industry-costs-sidebar">
+          <div className="industry-costs-sidebar-header">
+            <p className="wh-side-label">Costs</p>
+            <HelpBadge content={COSTS_SIDEBAR_HELP} align="left" />
+          </div>
+
+          <div className="industry-job-cost-block">
+            <div className="industry-job-cost-row industry-job-cost-eiv">
+              <span>Total Cost</span>
+              <span className="industry-job-cost-value industry-job-cost-value-total">
+                {formatIsk(pricedTree.totalCost + (jobCost?.totalJobCost ?? 0))}
+              </span>
+            </div>
+            {jobCost && <p className="industry-job-cost-included-note">(incl. Job Cost)</p>}
+            <div className="industry-job-cost-row">
+              <span>Per Unit</span>
+              <span className="industry-job-cost-value">
+                {formatIsk((pricedTree.totalCost + (jobCost?.totalJobCost ?? 0)) / pricedTree.quantityNeeded)}
+              </span>
+            </div>
             {pricedTree.timeSeconds != null && (
-              <>
-                <span className="skill-queue-footer-sep">|</span>
-                <span>
-                  Build time: <strong>{formatDuration(pricedTree.timeSeconds)}</strong>
-                </span>
-              </>
+              <div className="industry-job-cost-row">
+                <span>Build Time</span>
+                <span>{formatDuration(pricedTree.timeSeconds)}</span>
+              </div>
             )}
             {checkedPaths.size > 0 && (
-              <>
-                <span className="skill-queue-footer-sep">|</span>
+              <div className="industry-job-cost-row industry-job-cost-subtotal">
                 <span>
-                  Selected total ({checkedPaths.size} item{checkedPaths.size === 1 ? "" : "s"}):{" "}
-                  <strong>{formatIsk(selectedTotal)}</strong>
+                  Selected Total ({checkedPaths.size} item{checkedPaths.size === 1 ? "" : "s"})
                 </span>
-                <button
-                  type="button"
-                  className="industry-copy-clipboard-btn"
-                  onClick={handleCopyToClipboard}
-                  title="Copy the ticked items as Name/Quantity lines, ready to paste into the game's Multibuy window"
-                >
-                  <Copy size={14} strokeWidth={2.5} />
-                  {justCopied ? "Copied!" : "Copy to Clipboard"}
-                </button>
-              </>
+                <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(selectedTotal)}</span>
+              </div>
             )}
           </div>
+
+          {checkedPaths.size > 0 && (
+            <button
+              type="button"
+              className="industry-copy-clipboard-btn"
+              onClick={handleCopyToClipboard}
+              title="Copy the ticked items as Name/Quantity lines, ready to paste into the game's Multibuy window"
+            >
+              <Copy size={14} strokeWidth={2.5} />
+              {justCopied ? "Copied!" : "Copy to Clipboard"}
+            </button>
+          )}
+
+          {jobCost && (
+            <>
+              <p className="wh-side-label industry-job-cost-heading">Job Cost{system && ` at ${system.name}`}</p>
+
+              <div className="industry-job-cost-block">
+                <div className="industry-job-cost-row industry-job-cost-eiv">
+                  <span>Estimated Item Value (EIV)</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.eiv)}</span>
+                </div>
+              </div>
+
+              <div className="industry-job-cost-block">
+                <p className="industry-job-cost-section-label">Job Gross Cost</p>
+                <div className="industry-job-cost-row">
+                  <span>System Cost Index ({(jobCost.systemCostIndex * 100).toFixed(2)}% EIV)</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.sciAmount)}</span>
+                </div>
+                {jobCost.structureRoleBonusPct > 0 && (
+                  <div className="industry-job-cost-row industry-job-cost-reduction">
+                    <span>Structure Role Bonus (-{jobCost.structureRoleBonusPct}% of SCI)</span>
+                    <span>-{formatIsk(jobCost.roleBonusReduction)}</span>
+                  </div>
+                )}
+                <div className="industry-job-cost-row industry-job-cost-subtotal">
+                  <span>Total Job Gross Cost</span>
+                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.jobGrossCost)}</span>
+                </div>
+              </div>
+
+              <div className="industry-job-cost-block">
+                <p className="industry-job-cost-section-label">Taxes</p>
+                <div className="industry-job-cost-row">
+                  <span>Facility Tax ({(jobCost.facilityTaxPct * 100).toFixed(2)}% EIV)</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.facilityTaxAmount)}</span>
+                </div>
+                <div className="industry-job-cost-row">
+                  <span>SCC Surcharge ({(jobCost.sccSurchargePct * 100).toFixed(2)}% EIV)</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.sccSurchargeAmount)}</span>
+                </div>
+                {jobCost.alphaTaxAmount > 0 && (
+                  <div className="industry-job-cost-row">
+                    <span>Alpha Clone Tax ({(jobCost.alphaTaxPct * 100).toFixed(2)}% EIV)</span>
+                    <span className="industry-job-cost-value">{formatIsk(jobCost.alphaTaxAmount)}</span>
+                  </div>
+                )}
+                <div className="industry-job-cost-row industry-job-cost-subtotal">
+                  <span>Total Taxes</span>
+                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.totalTaxes)}</span>
+                </div>
+              </div>
+
+              <div className="industry-job-cost-block industry-job-cost-total-block">
+                <div className="industry-job-cost-row industry-job-cost-total">
+                  <span>Total Job Cost</span>
+                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.totalJobCost)}</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
+      </div>
     </div>
   );
 }

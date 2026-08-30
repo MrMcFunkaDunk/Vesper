@@ -3302,6 +3302,45 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   gap: 14px;
 }
 
+/* Production only - Reprocessing/Invention/Research all still render
+   straight into .industry-production and don't get a sidebar. The main
+   column and the Costs sidebar are siblings so the sidebar can stay put
+   (sticky) beside a Build Steps tree that can get very long, rather than
+   living at the very bottom of the page where you'd have to scroll past
+   everything to see what a build actually costs. */
+.industry-production-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: 16px;
+}
+
+.industry-main-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.industry-costs-sidebar {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.industry-costs-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.industry-job-cost-heading {
+  margin-top: 4px;
+}
+
 .industry-inputs-panel {
   display: flex;
   flex-direction: column;
@@ -3442,6 +3481,14 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   filter: brightness(1.25);
 }
 
+/* In the Costs sidebar the button's own flex parent stretches it to the
+   full sidebar width (column-flex default) - centered content reads as
+   intentional there, unlike the compact inline button this class also
+   still is everywhere else it's used. */
+.industry-costs-sidebar .industry-copy-clipboard-btn {
+  justify-content: center;
+}
+
 .industry-input-grid input,
 .industry-input-grid select {
   width: 100%;
@@ -3523,6 +3570,102 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* Job Cost panel - mirrors the in-game Industry window's own job-cost
+   tooltip layout (EIV, then a Job Gross Cost group, then a Taxes group,
+   then one final Total). Each group is its own separate boxed card with
+   real space between them, not one box with faint internal dividers - the
+   point is that EIV / Job Gross Cost / Taxes / Total read as four
+   distinct, independently-scannable things, the same way the real panel's
+   own shaded bands do, not as one dense list. */
+.industry-job-cost-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.industry-job-cost-block {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.industry-job-cost-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.industry-job-cost-eiv {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* The actual ISK figure in a row, not its label - same accent blue as the
+   TopBar's EVE Time clock and server player count (.eve-time-value /
+   .server-status-players), so a cost reads as a highlighted readout the
+   same way those already do, not as a color unique to this panel. */
+.industry-job-cost-value {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* A grand total (Total Cost, Selected Total, Total Job Gross Cost, Total
+   Taxes, Total Job Cost) - a lighter tint of the same accent blue so it
+   stands out from the line items feeding into it, without introducing a
+   second, unrelated color. */
+.industry-job-cost-value-total {
+  color: color-mix(in srgb, white 25%, var(--accent));
+}
+
+.industry-job-cost-section-label {
+  margin: 0 0 2px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+/* The one line that reduces cost rather than adding to it - green, same
+   as every other "this is cheaper" signal already used across Industry
+   (see .industry-build-cost-cheaper). */
+.industry-job-cost-reduction {
+  color: var(--success);
+}
+
+.industry-job-cost-subtotal {
+  margin-top: 2px;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.industry-job-cost-total-block {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated-2));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.industry-job-cost-total {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.industry-job-cost-included-note {
+  margin: -2px 0 0;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 12px;
 }
 
 .industry-build-row {
@@ -10095,8 +10238,20 @@ body[data-reduce-motion="true"] .skeleton-row {
   transition: border-color var(--transition-fast);
 }
 
-.tracked-entity-card:hover {
-  border-color: var(--border-active);
+/* Only Kills & Intel's own copy of this panel makes cards open a killboard
+   - Settings' copy is just for managing the tracked list, so its cards
+   stay plain (see TrackedEntitiesPanel.tsx's `clickable` prop). */
+.tracked-entity-card-clickable {
+  cursor: pointer;
+}
+
+.tracked-entity-card-clickable:hover {
+  border-color: var(--accent);
+}
+
+.tracked-entity-card-clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .tracked-entity-card-image {

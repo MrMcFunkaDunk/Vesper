@@ -91,29 +91,87 @@ export function jobTimeSeconds(baseTimePerRun: number, runs: number, timeEfficie
 export const SCC_SURCHARGE_STANDARD = 0.04;
 /** Cut from 4% specifically for ME/TE research jobs in Jul 2025 - verified via CCP's own "Exploration & Industry Balance Rework" post. */
 export const SCC_SURCHARGE_RESEARCH = 0.02;
-/** Real default for NPC stations (owner-set for player structures) - verified via EVE University wiki, and matches what eve-tools-suite already had independently. */
+/** Real default for NPC stations (owner-set for player structures, capped
+ * at 10% - verified against EVE University's current Manufacturing page,
+ * which also confirms this used to be a flat 10% everywhere before the
+ * Viridian patch, mid-2023, cut it to 0.25% at NPC stations specifically). */
 export const DEFAULT_FACILITY_TAX = 0.0025;
+/** Alpha-clone-only surcharge - the "known gap" flagged in the previous
+ * version of this file's comment is now closed, confirmed against the
+ * same EVE University page. Flat regardless of activity type. */
+export const ALPHA_CLONE_TAX = 0.0025;
 
 export function sccSurcharge(activity: ActivityType): number {
   return activity === "research_me" || activity === "research_te" ? SCC_SURCHARGE_RESEARCH : SCC_SURCHARGE_STANDARD;
 }
 
+/** Every line of the in-game "Job Cost" panel, not just the final total -
+ * the Production calculator shows each of these the same way the game
+ * itself breaks a job's cost down (Job Gross Cost, then Taxes, then Total
+ * job cost), rather than a single opaque number. */
+export interface JobCostBreakdown {
+  eiv: number;
+  systemCostIndex: number;
+  /** As entered, e.g. 3 for a -3% reduction - not yet divided by 100. */
+  structureRoleBonusPct: number;
+  /** EIV x systemCostIndex, before the role bonus reduction. */
+  sciAmount: number;
+  /** ISK taken off sciAmount by the role bonus - always <= sciAmount. */
+  roleBonusReduction: number;
+  /** sciAmount - roleBonusReduction - the game's own "Total job gross cost" line. */
+  jobGrossCost: number;
+  facilityTaxPct: number;
+  facilityTaxAmount: number;
+  sccSurchargePct: number;
+  sccSurchargeAmount: number;
+  alphaTaxPct: number;
+  alphaTaxAmount: number;
+  /** facilityTaxAmount + sccSurchargeAmount + alphaTaxAmount. */
+  totalTaxes: number;
+  /** jobGrossCost + totalTaxes - the number that actually gets added to a build's total cost. */
+  totalJobCost: number;
+}
+
 /**
  * Real EVE University formula: `EIV x ((system cost index x structure
- * bonus) + facility tax + SCC surcharge + alpha clone tax)`. Alpha clone
- * tax isn't modeled (defaults to 0) - its exact rate wasn't found during
- * verification and is being left as a known gap rather than guessed.
- * `structureBonusMultiplier` is 1.0 (no reduction) by default; a rigged/
- * bonused structure would pass something below 1.0 here.
+ * bonus) + facility tax + SCC surcharge + alpha clone tax)` - computed here
+ * as its individual line items (see JobCostBreakdown) rather than
+ * collapsed straight to one number, matching how the in-game panel itself
+ * presents a job's cost.
  */
-export function jobInstallCost(
+export function computeJobCostBreakdown(
   eiv: number,
   systemCostIndex: number,
   activity: ActivityType,
   facilityTax: number = DEFAULT_FACILITY_TAX,
-  structureBonusMultiplier = 1.0,
-): number {
-  return Math.max(0, eiv * (systemCostIndex * structureBonusMultiplier + facilityTax + sccSurcharge(activity)));
+  structureRoleBonusPct = 0,
+  isAlphaClone = false,
+): JobCostBreakdown {
+  const sciAmount = eiv * systemCostIndex;
+  const roleBonusReduction = sciAmount * (structureRoleBonusPct / 100);
+  const jobGrossCost = Math.max(0, sciAmount - roleBonusReduction);
+  const sccSurchargePct = sccSurcharge(activity);
+  const sccSurchargeAmount = eiv * sccSurchargePct;
+  const facilityTaxAmount = eiv * facilityTax;
+  const alphaTaxPct = isAlphaClone ? ALPHA_CLONE_TAX : 0;
+  const alphaTaxAmount = eiv * alphaTaxPct;
+  const totalTaxes = facilityTaxAmount + sccSurchargeAmount + alphaTaxAmount;
+  return {
+    eiv,
+    systemCostIndex,
+    structureRoleBonusPct,
+    sciAmount,
+    roleBonusReduction,
+    jobGrossCost,
+    facilityTaxPct: facilityTax,
+    facilityTaxAmount,
+    sccSurchargePct,
+    sccSurchargeAmount,
+    alphaTaxPct,
+    alphaTaxAmount,
+    totalTaxes,
+    totalJobCost: jobGrossCost + totalTaxes,
+  };
 }
 
 /** Estimated Item Value: sum of a blueprint's BASE (ME-0) material quantities x each material's live ESI adjusted_price, for one run - explicitly NOT reduced by the character's actual ME level (confirmed by both reference tools independently). */
