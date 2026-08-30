@@ -5,11 +5,14 @@ import { appLocalDataDir } from "@tauri-apps/api/path";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { playProximityAlert } from "../lib/sound";
+import { playProximityAlert, playNotificationPing } from "../lib/sound";
 import { useSoundEnabled } from "../hooks/useSoundEnabled";
+import { useSoundVolume } from "../hooks/useSoundVolume";
+import { useNotificationSoundVolume } from "../hooks/useNotificationSoundVolume";
 import { useNotificationPreferences } from "../hooks/useNotificationPreferences";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useReduceMotion } from "../hooks/useReduceMotion";
+import { useTheme, THEMES } from "../hooks/useTheme";
 import { useDefaultLandingTab } from "../hooks/useDefaultLandingTab";
 import { useColorOverrides } from "../hooks/useColorOverrides";
 import { useNavOrder } from "../hooks/useNavOrder";
@@ -27,7 +30,7 @@ interface SettingsPageProps {
   onLogout: (id: number) => void;
 }
 
-type SettingsTab = "general" | "sync";
+type SettingsTab = "general" | "sounds" | "display" | "sync";
 
 /** Strips the "esi-"/".v1" boilerplate every scope carries and turns the
  * dot/underscore-separated remainder into something readable, e.g.
@@ -44,9 +47,13 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("general");
   const [tested, setTested] = useState(false);
   const [soundEnabled, setSoundEnabled] = useSoundEnabled();
+  const [soundVolume, setSoundVolume] = useSoundVolume();
+  const [notificationVolume, setNotificationVolume] = useNotificationSoundVolume();
+  const [notificationTested, setNotificationTested] = useState(false);
   const { prefs: notifPrefs, setEnabled: setNotifEnabled, update: updateNotifPrefs, permissionDenied } = useNotificationPreferences();
   const [hubRegionId, setHubRegionId] = useDefaultTradeHub();
   const [reduceMotion, setReduceMotion] = useReduceMotion();
+  const [theme, setTheme] = useTheme();
   const [landingTab, setLandingTab] = useDefaultLandingTab(NAV_ITEMS[0].id);
   const { resetAll: resetColors } = useColorOverrides("vesper.colors.sidebar");
   const { setOrder } = useNavOrder(NAV_ITEMS.map((item) => item.id));
@@ -104,9 +111,15 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
   }
 
   function handleTestSound() {
-    playProximityAlert();
+    playProximityAlert(soundVolume);
     setTested(true);
     window.setTimeout(() => setTested(false), 1200);
+  }
+
+  function handleTestNotificationSound() {
+    playNotificationPing(notificationVolume);
+    setNotificationTested(true);
+    window.setTimeout(() => setNotificationTested(false), 1200);
   }
 
   function handleRemoveCharacter(id: number, name: string) {
@@ -141,14 +154,20 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
           <button type="button" className={`kills-tab ${tab === "general" ? "kills-tab-active" : ""}`} onClick={() => setTab("general")}>
             General
           </button>
+          <button type="button" className={`kills-tab ${tab === "sounds" ? "kills-tab-active" : ""}`} onClick={() => setTab("sounds")}>
+            Sounds
+          </button>
+          <button type="button" className={`kills-tab ${tab === "display" ? "kills-tab-active" : ""}`} onClick={() => setTab("display")}>
+            Display
+          </button>
           <button type="button" className={`kills-tab ${tab === "sync" ? "kills-tab-active" : ""}`} onClick={() => setTab("sync")}>
             Settings Sync
           </button>
         </div>
 
-        {tab === "sync" ? (
-          <SettingsSyncPanel characters={session.characters} />
-        ) : (
+        {tab === "sync" && <SettingsSyncPanel characters={session.characters} />}
+
+        {tab === "general" && (
           <>
         <div className="settings-section">
           <h3>Characters &amp; Scopes</h3>
@@ -260,28 +279,6 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
         </div>
 
         <div className="settings-section">
-          <h3>Proximity Alert Sound</h3>
-          <p className="settings-section-hint">
-            Plays when a kill lands in your current system or one jump away. The red screen flash always happens
-            regardless of this setting - this only controls the sound on top of it.
-          </p>
-          <div className="settings-section-row">
-            <button
-              type="button"
-              className={`kills-sync-btn${soundEnabled ? "" : " kills-npc-toggle-off"}`}
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              title={soundEnabled ? "Mute the proximity alert sound" : "Unmute the proximity alert sound"}
-            >
-              {soundEnabled ? <Volume2 size={14} strokeWidth={2} /> : <VolumeX size={14} strokeWidth={2} />}
-              Sound: {soundEnabled ? "On" : "Off"}
-            </button>
-            <button type="button" className="detail-back" onClick={handleTestSound}>
-              {tested ? "Played!" : "Test Sound"}
-            </button>
-          </div>
-        </div>
-
-        <div className="settings-section">
           <h3>Default Trade Hub</h3>
           <p className="settings-section-hint">
             The trade hub Industry, Market Browser, Screener, and Wallet contracts start on - switch it here instead
@@ -294,44 +291,6 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
               </option>
             ))}
           </select>
-        </div>
-
-        <div className="settings-section">
-          <h3>Display</h3>
-          <label className="settings-checkbox-row">
-            <input type="checkbox" checked={reduceMotion} onChange={(e) => setReduceMotion(e.target.checked)} />
-            Reduce motion (stops the skill-queue training pulse and the proximity-alert flash)
-          </label>
-          <div className="settings-section-row">
-            <span className="settings-inline-label">Default landing tab</span>
-            <select className="industry-field-input settings-hub-select" value={landingTab} onChange={(e) => setLandingTab(e.target.value)}>
-              {NAV_ITEMS.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="settings-section">
-          <h3>Sidebar</h3>
-          <p className="settings-section-hint">
-            Icon colors (right-click a nav item to set one) and drag-to-reorder are saved automatically - these just
-            undo them in bulk.
-          </p>
-          <div className="settings-section-row">
-            <button type="button" className="detail-back" onClick={resetColors}>
-              Reset Icon Colors
-            </button>
-            <button
-              type="button"
-              className="detail-back"
-              onClick={() => setOrder(NAV_ITEMS.map((item) => item.id))}
-            >
-              Reset Nav Order
-            </button>
-          </div>
         </div>
 
         <div className="settings-section">
@@ -382,6 +341,123 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
             <button type="button" className="detail-back" onClick={() => openUrl("https://github.com/MrMcFunkaDunk/Vesper/discussions")}>
               <ExternalLink size={13} strokeWidth={2} />
               Discussions
+            </button>
+          </div>
+        </div>
+          </>
+        )}
+
+        {tab === "sounds" && (
+          <>
+        <div className="settings-section">
+          <h3>Proximity Alert Sound</h3>
+          <p className="settings-section-hint">
+            Plays when a kill lands in your current system or one jump away. The red screen flash always happens
+            regardless of this setting - this only controls the sound on top of it.
+          </p>
+          <div className="settings-section-row">
+            <button
+              type="button"
+              className={`kills-sync-btn${soundEnabled ? "" : " kills-npc-toggle-off"}`}
+              onClick={() => setSoundEnabled(!soundEnabled)}
+              title={soundEnabled ? "Mute the proximity alert sound" : "Unmute the proximity alert sound"}
+            >
+              {soundEnabled ? <Volume2 size={14} strokeWidth={2} /> : <VolumeX size={14} strokeWidth={2} />}
+              Sound: {soundEnabled ? "On" : "Off"}
+            </button>
+            <button type="button" className="detail-back" onClick={handleTestSound}>
+              {tested ? "Played!" : "Test Sound"}
+            </button>
+          </div>
+          <div className="settings-section-row">
+            <span className="settings-inline-label">Volume</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={soundVolume}
+              disabled={!soundEnabled}
+              onChange={(e) => setSoundVolume(Number(e.target.value))}
+            />
+            <span className="multibox-settings-value">{Math.round(soundVolume * 100)}%</span>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <h3>Notification Bell Sound</h3>
+          <p className="settings-section-hint">
+            Plays whenever anything lands in the notification bell up top - tracked-entity kills, update alerts, and
+            anything else added down the line. Separate from the proximity alert above, with its own volume.
+          </p>
+          <div className="settings-section-row">
+            <button type="button" className="detail-back" onClick={handleTestNotificationSound}>
+              {notificationTested ? "Played!" : "Test Sound"}
+            </button>
+          </div>
+          <div className="settings-section-row">
+            <span className="settings-inline-label">Volume</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={notificationVolume}
+              onChange={(e) => setNotificationVolume(Number(e.target.value))}
+            />
+            <span className="multibox-settings-value">{Math.round(notificationVolume * 100)}%</span>
+          </div>
+        </div>
+          </>
+        )}
+
+        {tab === "display" && (
+          <>
+        <div className="settings-section">
+          <h3>Display</h3>
+          <label className="settings-checkbox-row">
+            <input type="checkbox" checked={reduceMotion} onChange={(e) => setReduceMotion(e.target.checked)} />
+            Reduce motion (stops the skill-queue training pulse and the proximity-alert flash)
+          </label>
+          <div className="settings-section-row">
+            <span className="settings-inline-label">Color theme</span>
+            <select className="industry-field-input settings-hub-select" value={theme} onChange={(e) => setTheme(e.target.value as typeof theme)}>
+              {THEMES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="settings-section-hint">{THEMES.find((t) => t.id === theme)?.description}</p>
+          <div className="settings-section-row">
+            <span className="settings-inline-label">Default landing tab</span>
+            <select className="industry-field-input settings-hub-select" value={landingTab} onChange={(e) => setLandingTab(e.target.value)}>
+              {NAV_ITEMS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <h3>Sidebar</h3>
+          <p className="settings-section-hint">
+            Icon colors (right-click a nav item to set one) and drag-to-reorder are saved automatically - these just
+            undo them in bulk.
+          </p>
+          <div className="settings-section-row">
+            <button type="button" className="detail-back" onClick={resetColors}>
+              Reset Icon Colors
+            </button>
+            <button
+              type="button"
+              className="detail-back"
+              onClick={() => setOrder(NAV_ITEMS.map((item) => item.id))}
+            >
+              Reset Nav Order
             </button>
           </div>
         </div>

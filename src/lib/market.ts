@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { cleanEveDescription } from "./format";
 
 export interface TypeSearchMatch {
   id: number;
@@ -116,6 +117,35 @@ export function getCategoryGroups(categoryId: number): Promise<GroupSummary[]> {
 /** Every item filed directly under one leaf group. */
 export function getGroupItems(groupId: number): Promise<TypeSummary[]> {
   return invoke("get_group_items", { groupId });
+}
+
+/** Every T1 blueprint group with at least one blueprint that actually has
+ * invention data - the Invention tab's browsable picker. Unlike
+ * getCategoryGroups(9), this excludes T2/T3/faction/capital blueprint
+ * groups (and non-invertible members of a mixed group) that have no
+ * invention recipe, so nothing this returns can dead-end when picked. */
+export function getInventableBlueprintGroups(): Promise<GroupSummary[]> {
+  return invoke("get_inventable_blueprint_groups");
+}
+
+/** Every blueprint within one group that actually has invention data. */
+export function getInventableBlueprintsInGroup(groupId: number): Promise<TypeSummary[]> {
+  return invoke("get_inventable_blueprints_in_group", { groupId });
+}
+
+/** Every blueprint group with at least one blueprint that has ME or TE
+ * research data - the Research tab's browsable picker. A much broader
+ * set than the invention/reprocessing pickers (ME/TE research applies to
+ * essentially every manufacturable blueprint, not just T1), but filtered
+ * the same way: only blueprints with a real, named recipe, never the raw
+ * "Blueprint" category as-is. */
+export function getResearchableBlueprintGroups(): Promise<GroupSummary[]> {
+  return invoke("get_researchable_blueprint_groups");
+}
+
+/** Every blueprint within one group that has ME or TE research data. */
+export function getResearchableBlueprintsInGroup(groupId: number): Promise<TypeSummary[]> {
+  return invoke("get_researchable_blueprints_in_group", { groupId });
 }
 
 export interface AttributeValue {
@@ -252,9 +282,12 @@ export function resolveMarketLocations(characterId: number, locationIds: number[
   return invoke("resolve_market_locations", { characterId, locationIds });
 }
 
-/** An item type's flavor-text description - not in the local types cache, fetched live from ESI. */
+/** An item type's flavor-text description - not in the local types cache,
+ * fetched live from ESI. Cleaned of CCP's in-game-only markup dialect (see
+ * cleanEveDescription) before it ever reaches a caller, so every consumer
+ * gets plain readable text for free. */
 export function getItemDescription(typeId: number): Promise<string> {
-  return invoke("get_item_description", { typeId });
+  return invoke<string>("get_item_description", { typeId }).then(cleanEveDescription);
 }
 
 export interface PublicContractEntry {

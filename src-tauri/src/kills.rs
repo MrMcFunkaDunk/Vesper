@@ -298,6 +298,11 @@ pub struct KillEntry {
     /// approximate total_value for backfilled kills that have no zkb-
     /// provided value at all.
     pub items: Vec<KillmailItem>,
+    /// The victim's position at time of death - only populated alongside
+    /// the full attacker list, used by the kill history recorder to persist
+    /// gate-proximity data for the gate-camp checker's local store (see
+    /// route.rs's GATE_PROXIMITY_METERS / nearest_gate_name).
+    pub position: Option<(f64, f64, f64)>,
 }
 
 #[derive(Serialize, Clone)]
@@ -319,6 +324,11 @@ pub struct KillAttacker {
     pub faction_name: Option<String>,
     pub ship_type_id: Option<i64>,
     pub ship_type_name: Option<String>,
+    /// The module that dealt the damage, not the attacker's own ship - a
+    /// smartbomb attacker is identified by this, not ship_type_id, since a
+    /// smartbomb is a fitted module any hull can carry (see route.rs's
+    /// SMART_BOMB_GROUP classification).
+    pub weapon_type_id: Option<i64>,
     pub final_blow: bool,
 }
 
@@ -597,6 +607,10 @@ pub async fn fetch_location_kills(client: &reqwest::Client, location_id: i64) ->
 /// not the full KillEntry shape, since this is only ever consumed by the
 /// route module's classification logic, never rendered directly.
 pub(crate) struct RawGateKill {
+    /// Present so two RawGateKill lists from different sources (the local
+    /// store and a live zKillboard REST call) can be merged and deduplicated
+    /// - see route.rs::get_gate_activity, which trusts neither source alone.
+    pub(crate) killmail_id: i64,
     pub(crate) time: String,
     pub(crate) position: Option<(f64, f64, f64)>,
     pub(crate) attacker_ship_type_ids: Vec<i64>,
@@ -606,12 +620,23 @@ pub(crate) struct RawGateKill {
 
 /// Same source as fetch_recent_kills (one system's recent kills from
 /// zKillboard) but without the name-resolution/enrichment pass, since gate
-/// analysis only needs positions and type ids, not display strings.
+/// analysis only needs positions and type ids, not display strings. Used as
+/// a safety net alongside the local kill-history store (see
+/// route.rs::get_gate_activity), not as the sole source: the local store is
+/// fast and always current going forward, but it only knows about kills
+/// recorded while this app's own live-stream recorder was actually running
+/// - a kill from before that (or from a period the old fixed-queue-ID bug
+/// caused kills to be missed - see kills::TRACKED_SYSTEMS_QUEUE_ID history)
+/// would silently read as "no kills" without this REST fallback. zKillboard's
+/// own documented up-to-an-hour CDN cache still applies here, same as
+/// always, but merging it with the always-fresh local store means a kill
+/// missing from one is very unlikely to be missing from both at once.
 pub(crate) async fn fetch_raw_gate_kills(client: &reqwest::Client, system_id: i64) -> Result<Vec<RawGateKill>, String> {
     let kills = fetch_system_kills(client, system_id).await?;
     Ok(kills
         .into_iter()
         .map(|k| RawGateKill {
+            killmail_id: k.killmail_id,
             time: k.killmail_time,
             position: k.victim.position.map(|p| (p.x, p.y, p.z)),
             attacker_ship_type_ids: k.attackers.iter().filter_map(|a| a.ship_type_id).collect(),
@@ -1503,11 +1528,9 @@ pub async fn fetch_recent_activity(client: &reqwest::Client) -> Result<Vec<KillE
 }
 
 const KILLMAIL_STREAM_BASE: &str = "https://killmail.stream";
-const TRACKED_SYSTEMS_QUEUE_ID: &str = "vesper-capsuleer-ops-tracked";
 
-/// Randomized once per app launch (not a fixed constant like
-/// TRACKED_SYSTEMS_QUEUE_ID above) so every fresh start of the app gets its
-/// own brand-new queue on killmail.stream's server, with nothing already
+/// Randomized once per app launch so every fresh start gets its own
+/// brand-new queue on killmail.stream's server, with nothing already
 /// queued up on it. A fixed queue ID here meant the very first poll after
 /// the app had been closed for a while came back with everything that had
 /// happened across all of New Eden in the meantime - potentially a large
@@ -1523,6 +1546,27 @@ static RECENT_ACTIVITY_QUEUE_ID: LazyLock<String> = LazyLock::new(|| {
     rand::thread_rng().fill_bytes(&mut bytes);
     let suffix: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     format!("vesper-capsuleer-ops-activity-{suffix}")
+});
+
+/// Same per-launch randomization as RECENT_ACTIVITY_QUEUE_ID and for the
+/// same core reason, plus one more this queue actually hit in practice:
+/// this used to be a single fixed string ("vesper-capsuleer-ops-tracked")
+/// shared by every launch of VESPER anywhere. A killmail.stream queue is
+/// single-consumer - once a kill is delivered to whichever poller calls
+/// /poll/{queueID} first, it's gone from that queue - so two instances
+/// polling the same fixed ID concurrently (a dev build and an installed
+/// build running side by side, or simply more than one VESPER user in the
+/// world) silently steal kills from each other's tracked-systems feed.
+/// Fixed here the same way RECENT_ACTIVITY_QUEUE_ID already was: give
+/// every launch its own private queue, and lean on
+/// TrackedSystemsProvider's loadSnapshot() (the same "what have I missed"
+/// role fetch_recent_activity's snapshot already plays) to cover the gap.
+static TRACKED_SYSTEMS_QUEUE_ID: LazyLock<String> = LazyLock::new(|| {
+    use rand::RngCore;
+    let mut bytes = [0u8; 8];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let suffix: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("vesper-capsuleer-ops-tracked-{suffix}")
 });
 
 /// killmail.stream is a maintained, RedisQ-compatible live killmail feed.
@@ -1567,7 +1611,7 @@ pub async fn poll_recent_activity(client: &reqwest::Client) -> Result<Vec<KillEn
 /// consumers each get their own independent position in the stream. Most
 /// calls will filter down to nothing to enrich at all, which is normal.
 pub async fn poll_tracked_systems(client: &reqwest::Client, system_ids: &[i64]) -> Result<Vec<KillEntry>, String> {
-    let raw = poll_live_kills(client, TRACKED_SYSTEMS_QUEUE_ID).await?;
+    let raw = poll_live_kills(client, &TRACKED_SYSTEMS_QUEUE_ID).await?;
     let matching: Vec<ZkbKillmail> = raw.into_iter().filter(|k| system_ids.contains(&k.solar_system_id)).collect();
     Ok(enrich_kills(client, matching, false).await)
 }
@@ -1705,6 +1749,7 @@ async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>, inclu
                         faction_name: a.faction_id.and_then(|id| names.get(&id).cloned()),
                         ship_type_id: a.ship_type_id,
                         ship_type_name: a.ship_type_id.and_then(|id| names.get(&id).cloned()),
+                        weapon_type_id: a.weapon_type_id,
                         final_blow: a.final_blow,
                     })
                     .collect()
@@ -1719,6 +1764,7 @@ async fn enrich_kills(client: &reqwest::Client, mut raw: Vec<ZkbKillmail>, inclu
                 system_security: info.map(|i| i.security_status),
                 region_name: info.map(|i| i.region_name.clone()),
                 location_id: zkb.location_id,
+                position: kill.victim.position.as_ref().map(|p| (p.x, p.y, p.z)),
                 victim_character_id: kill.victim.character_id,
                 victim_character_name: kill.victim.character_id.and_then(|id| names.get(&id).cloned()),
                 victim_corporation_id: kill.victim.corporation_id,

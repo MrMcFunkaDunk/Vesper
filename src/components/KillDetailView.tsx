@@ -9,8 +9,15 @@ import type { SystemSummary } from "./SystemKillboard";
 import type { CorporationSummary } from "./CorporationKillboard";
 import type { AllianceSummary } from "./AllianceKillboard";
 import type { MarketItemRef } from "./MarketBrowser";
+import type { GateSummary } from "./GateKillboard";
 import BackToMapButton from "./BackToMapButton";
 import TrackToggleButton from "./TrackToggleButton";
+
+/** Strips the "Stargate (X)" ESI wrapper down to the bare gate name, the
+ * same display convention GateSummary/GateCheck already use. */
+function bareGateName(locationName: string): string {
+  return locationName.replace(/^Stargate \(/, "").replace(/\)$/, "");
+}
 
 interface KillDetailViewProps {
   killmailId: number;
@@ -19,6 +26,7 @@ interface KillDetailViewProps {
   onSelectSystem: (system: SystemSummary) => void;
   onSelectCorporation: (corporation: CorporationSummary) => void;
   onSelectAlliance: (alliance: AllianceSummary) => void;
+  onSelectGate: (gate: GateSummary) => void;
   breadcrumb: ReactNode;
   onLabelReady?: (label: string) => void;
   onGoToMap: () => void;
@@ -73,6 +81,7 @@ function KillDetailView({
   onSelectSystem,
   onSelectCorporation,
   onSelectAlliance,
+  onSelectGate,
   breadcrumb,
   onLabelReady,
   onGoToMap,
@@ -310,7 +319,36 @@ function KillDetailView({
                 {detail.location_name && (
                   <div className="detail-location-row">
                     <span>
-                      {detail.location_name}
+                      {detail.location_id != null ? (
+                        <span
+                          className="kills-system-clickable"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() =>
+                            onSelectGate({
+                              id: detail.location_id!,
+                              name: bareGateName(detail.location_name!),
+                              systemId: detail.system_id,
+                              systemName: detail.system_name,
+                            })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onSelectGate({
+                                id: detail.location_id!,
+                                name: bareGateName(detail.location_name!),
+                                systemId: detail.system_id,
+                                systemName: detail.system_name,
+                              });
+                            }
+                          }}
+                        >
+                          {detail.location_name}
+                        </span>
+                      ) : (
+                        detail.location_name
+                      )}
                       {detail.location_distance_m != null && (
                         <span className="detail-location-distance">
                           {" "}

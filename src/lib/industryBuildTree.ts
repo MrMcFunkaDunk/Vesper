@@ -19,8 +19,19 @@ export interface BuildTreeOptions {
   maxNodes?: number;
 }
 
-const DEFAULT_MAX_DEPTH = 6;
-const DEFAULT_MAX_NODES = 400;
+// Raised from the original 6/400: those were tight enough that a wide,
+// multi-tier T2 ship BOM (T2 hull -> T2 rig components -> their own R.A.M./
+// PI/moon-material inputs) could exhaust the node budget partway through
+// its own material list, silently mislabeling later, perfectly real,
+// perfectly buildable siblings (e.g. the T1 hull itself) as "no blueprint
+// at all" the moment the cap was hit - not a build-vs-buy judgment call,
+// just wrong data. Each node's blueprint lookup is a local SQLite query
+// (see findBlueprintForProduct), not a network call, so a much larger
+// budget costs very little; it's still a finite safety net against
+// genuinely unbounded/cyclical SDE data, not a limit meant to bind in
+// practice for anything short of capital-ship-tier BOMs.
+const DEFAULT_MAX_DEPTH = 10;
+const DEFAULT_MAX_NODES = 4000;
 
 export interface BuildTreeNode {
   typeId: number;
@@ -137,7 +148,13 @@ async function expand(ctx: BuildContext, typeId: number, name: string, quantityN
     buyCostPerUnit,
     totalCost: shouldBuild ? materialCost : buyTotal,
     timeSeconds,
-    materials: shouldBuild ? materials : [],
+    // Kept regardless of shouldBuild - a "Buy" verdict just means buying
+    // beat building on cost, not that the sub-materials don't exist. Always
+    // exposing them lets a node be expanded and inspected either way (see
+    // BuildTreeRow's hasChildren), for anyone deciding whether to build a
+    // "should-buy" item anyway. flattenRawMaterials still short-circuits on
+    // !shouldBuild first, so the shopping list is unaffected by this.
+    materials,
   };
 }
 
@@ -166,6 +183,35 @@ export async function buildCostTree(productTypeId: number, name: string, quantit
     nodeCount: 0,
   };
   return expand(ctx, productTypeId, name, quantity, 0);
+}
+
+/**
+ * Re-derives every cost field in an already-built tree using real Trade Hub
+ * prices instead of the galaxy-wide index buildCostTree started from -
+ * quantities/activity/materials structure are untouched (those come from
+ * ME/TE/runs, not price), only buyCostPerUnit/buildCostPerUnit/shouldBuild/
+ * totalCost get recomputed, bottom-up so a parent's build cost reflects its
+ * children's own re-priced totals rather than their original galaxy-index
+ * ones. Falls back to each node's existing buyCostPerUnit for anything the
+ * hub has no live sell orders for, exactly like the per-row hub price
+ * display already does - this just makes that the one source of truth
+ * everywhere (Total cost, Per unit, Selected total, Build-vs-Buy) instead
+ * of a column sitting next to a different underlying number.
+ */
+export function repriceTree(node: BuildTreeNode, hubPrices: Map<number, number>): BuildTreeNode {
+  const materials = node.materials.map((child) => repriceTree(child, hubPrices));
+  const buyCostPerUnit = hubPrices.get(node.typeId) ?? node.buyCostPerUnit;
+
+  if (node.activity == null) {
+    return { ...node, materials, buyCostPerUnit, buildCostPerUnit: null, shouldBuild: false, totalCost: buyCostPerUnit * node.quantityNeeded };
+  }
+
+  const materialCost = materials.reduce((sum, m) => sum + m.totalCost, 0);
+  const buildCostPerUnit = materialCost / node.quantityNeeded;
+  const buyTotal = buyCostPerUnit * node.quantityNeeded;
+  const shouldBuild = materialCost < buyTotal || buyCostPerUnit === 0;
+
+  return { ...node, materials, buyCostPerUnit, buildCostPerUnit, shouldBuild, totalCost: shouldBuild ? materialCost : buyTotal };
 }
 
 /** Flattens a build tree into total raw/bought material quantities needed across the whole plan - the "shopping list" view, deduped and summed across every branch that ends in a buy decision. */

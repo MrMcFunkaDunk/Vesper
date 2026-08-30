@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   color-scheme: dark;
 
   /* Surfaces */
@@ -16,6 +16,12 @@
   /* Accent + status */
   --accent: #6fc3d9;
   --accent-soft: rgba(111, 195, 217, 0.12);
+  /* Text color for content sitting on a solid --accent fill (filled button
+     hover states, active pills) - a fixed near-black works for every dark
+     theme's fairly light accent, but light theme's accent is a mid-dark
+     teal, so it needs white text instead - hence its own variable rather
+     than every such rule hardcoding a color that only works on dark. */
+  --accent-contrast: #06110f;
   --metal: #9aa5ad;
   --success: #5fbf8a;
   --success-soft: rgba(95, 191, 138, 0.14);
@@ -56,6 +62,42 @@
   --gate: #d9a35b;
   --gate-soft: rgba(217, 163, 91, 0.14);
 
+  /* Per-0.1-step system security-status colors (1.0 down to 0.0, plus a
+     shared color for negative security) - see securityColor() in format.ts,
+     which returns a var(--sec-N) reference rather than a hex so the whole
+     scale can be redefined per theme and repaint instantly on a switch.
+     These values are RIFT's own (SecurityColors.kt), tuned to read clearly
+     against this app's dark UI - kept exactly as-is here since this is the
+     default theme. --sec-legend-on-light/-on-dark are the two fixed text
+     colors used on the map's legend swatches (see SECURITY_LEGEND). */
+  --sec-10: #2c75e1;
+  --sec-9: #399aeb;
+  --sec-8: #4ecef8;
+  --sec-7: #60dba3;
+  --sec-6: #71e754;
+  --sec-5: #f5ff83;
+  --sec-4: #dc6c06;
+  --sec-3: #ce440f;
+  --sec-2: #e51a26;
+  --sec-1: #e5264f;
+  --sec-min: #c23d8a;
+  --sec-legend-on-light: #0a0a0c;
+  --sec-legend-on-dark: #f4f4f6;
+
+  /* Fit Builder slot-type colors (Low/Mid/High power slots - a real EVE
+     concept, not arbitrary UI color, so kept in the same gold/blue/rose
+     family every theme reinterprets rather than reusing --warning/--accent/
+     --danger, which already mean something else). */
+  --slot-low: #e8cf8f;
+  --slot-low-soft: rgba(250, 235, 204, 0.12);
+  --slot-mid: #9fc3ea;
+  --slot-mid-soft: rgba(188, 215, 241, 0.12);
+  --slot-high: #e8a7b1;
+  --slot-high-soft: rgba(235, 204, 209, 0.12);
+
+  /* Faint 48px background grid texture behind the whole app shell. */
+  --grid-line: rgba(255, 255, 255, 0.025);
+
   /* Type */
   --font-display: "Oxanium", sans-serif;
   --font-label: "Rajdhani", sans-serif;
@@ -74,6 +116,470 @@
 
   --sidebar-width: 248px;
   --topbar-height: 56px;
+}
+
+/* Alternate color themes - each block redefines the same semantic variables
+   set above (surfaces, text, accent/status, kill-entity, currency, standing,
+   tracked-list colors, and the --sec-* security-status scale) under a
+   [data-theme="x"] attribute on <html>, applied by useTheme.ts. Nothing else
+   needs to change per-theme: every component already renders off these
+   variable names rather than hardcoded colors, so redefining them here
+   reskins the whole app at once. "dark" (the default) has no block - it's
+   just the bare :root values above, left alone and never edited by this
+   theming pass. The canvas-drawn Map (heat pulse, home/location pins) and
+   the ProximityFlashOverlay's kill-alert flash are separate JS-driven
+   drawing code, not CSS - not covered by this variable pass. */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef0f3;
+  --bg-elevated: #ffffff;
+  --bg-elevated-2: #f5f6f8;
+  --border: #dde1e6;
+  --border-active: rgba(35, 131, 155, 0.4);
+
+  --text: #1a1d22;
+  --text-secondary: #565d66;
+  --text-muted: #8b929b;
+
+  --accent: #23839b;
+  --accent-soft: rgba(35, 131, 155, 0.1);
+  --accent-contrast: #ffffff;
+  --metal: #6b737c;
+  --success: #2f9160;
+  --success-soft: rgba(47, 145, 96, 0.1);
+  --warning: #b5791f;
+  --warning-soft: rgba(181, 121, 31, 0.1);
+  --danger: #c94a3f;
+  --danger-soft: rgba(201, 74, 63, 0.1);
+
+  --kill-corp: #3f6fa8;
+  --kill-alliance: #8551b3;
+  --kill-ship: #b06800;
+
+  --isk: #b5791f;
+  --isk-soft: rgba(181, 121, 31, 0.1);
+
+  --standing-positive: #2f74b5;
+  --standing-positive-soft: rgba(47, 116, 181, 0.1);
+  --standing-negative: #b0455a;
+  --standing-negative-soft: rgba(176, 69, 90, 0.1);
+  --standing-neutral: #6b717a;
+
+  --constellation: #7a53a8;
+  --constellation-soft: rgba(122, 83, 168, 0.1);
+  --region: #3f6fa8;
+  --region-soft: rgba(63, 111, 168, 0.1);
+  --gate: #a8703f;
+  --gate-soft: rgba(168, 112, 63, 0.1);
+
+  /* Darkened/saturated versions of the default scale - the original's pale
+     blues/cyans/yellow (tuned for dark panels) nearly disappear on a light
+     background, e.g. --sec-5's #F5FF83 is almost white-on-white here. Hue
+     order is preserved (blue -> cyan -> green -> gold -> orange -> red ->
+     magenta) so it's still instantly the same familiar scale, just legible. */
+  --sec-10: #1e5fc7;
+  --sec-9: #1478a8;
+  --sec-8: #0f8a92;
+  --sec-7: #1f8f5c;
+  --sec-6: #4a8f1f;
+  --sec-5: #9c7c00;
+  --sec-4: #b0590a;
+  --sec-3: #a23a10;
+  --sec-2: #b81c26;
+  --sec-1: #b8244a;
+  --sec-min: #96316d;
+  --sec-legend-on-light: #ffffff;
+  --sec-legend-on-dark: #ffffff;
+
+  --slot-low: var(--warning);
+  --slot-low-soft: var(--warning-soft);
+  --slot-mid: var(--accent);
+  --slot-mid-soft: var(--accent-soft);
+  --slot-high: var(--danger);
+  --slot-high-soft: var(--danger-soft);
+
+  --grid-line: rgba(0, 0, 0, 0.035);
+
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 16px rgba(35, 131, 155, 0.12);
+}
+
+/* Analog Signal (80s/90s anime) - Barry's own swatches (Midnight Navy, Deep
+   Indigo, Faded Teal, Petrol Blue, Muted Cyan, Dusty Rose, Brick Red, Burnt
+   Orange, Mustard Gold, Warm Cream, Old Paper, Sage Grey, Olive Green, Warm
+   Charcoal, Ink Black) - warm cream text instead of white, per his own
+   "retro anime white is #E8DDC9, not #FFFFFF" note. Panels lean hard into
+   Deep Indigo/Petrol Blue rather than staying close to black, specifically
+   so switching into this theme reads as an obvious shift at a glance, not
+   just a slightly different shade of dark. */
+:root[data-theme="anime"] {
+  color-scheme: dark;
+  --bg: #1c1830;
+  --bg-elevated: #2b2a52;
+  --bg-elevated-2: #423827;
+  --border: #4c4878;
+  --border-active: rgba(111, 180, 189, 0.5);
+
+  --text: #f0dcb8;
+  --text-secondary: #d6be95;
+  --text-muted: #a89a78;
+
+  --accent: #6fb4bd;
+  --accent-soft: rgba(111, 180, 189, 0.16);
+  --accent-contrast: #10181a;
+  --metal: #9c9a7e;
+  --success: #90a05e;
+  --success-soft: rgba(144, 160, 94, 0.16);
+  --warning: #e0ac4c;
+  --warning-soft: rgba(224, 172, 76, 0.16);
+  --danger: #c05e66;
+  --danger-soft: rgba(192, 94, 102, 0.16);
+
+  --kill-corp: #4a80a0;
+  --kill-alliance: #90a05e;
+  --kill-ship: #d97e46;
+
+  --isk: #e0ac4c;
+  --isk-soft: rgba(224, 172, 76, 0.16);
+
+  --standing-positive: #6fb4bd;
+  --standing-positive-soft: rgba(111, 180, 189, 0.14);
+  --standing-negative: #cc7f8a;
+  --standing-negative-soft: rgba(204, 127, 138, 0.14);
+  --standing-neutral: #a89a78;
+
+  --constellation: #cc7f8a;
+  --constellation-soft: rgba(204, 127, 138, 0.16);
+  --region: #3f8a8f;
+  --region-soft: rgba(63, 138, 143, 0.16);
+  --gate: #e0ac4c;
+  --gate-soft: rgba(224, 172, 76, 0.16);
+
+  /* Warm cel-animation reinterpretation of the security scale - the same
+     blue->cyan->green->gold->orange->red->magenta order, recolored to sit
+     inside this theme's indigo/rose/mustard palette instead of EVE's real
+     saturated hues. */
+  --sec-10: #6fa8d0;
+  --sec-9: #6fb4bd;
+  --sec-8: #7db99a;
+  --sec-7: #8fae5e;
+  --sec-6: #b0a24a;
+  --sec-5: #e0ac4c;
+  --sec-4: #d97e46;
+  --sec-3: #c05e46;
+  --sec-2: #c05e66;
+  --sec-1: #cc7f8a;
+  --sec-min: #9a6a8f;
+  --sec-legend-on-light: #1a1620;
+  --sec-legend-on-dark: #f0dcb8;
+
+  --slot-low: var(--warning);
+  --slot-low-soft: var(--warning-soft);
+  --slot-mid: var(--accent);
+  --slot-mid-soft: var(--accent-soft);
+  --slot-high: var(--danger);
+  --slot-high-soft: var(--danger-soft);
+
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 18px rgba(111, 180, 189, 0.22);
+}
+
+/* Night Static (90s nighttime/cyberpunk) - Barry's swatches (almost-black
+   blue, night navy, dirty blue-teal, oxidised cyan, muted neon crimson,
+   warning orange/red, sodium streetlight gold, warm cream, dusty violet,
+   purple-grey shadow). Panels pushed brighter/more saturated than the raw
+   swatches so the theme reads as a clear shift, not just a darker dark. */
+:root[data-theme="cyberpunk"] {
+  color-scheme: dark;
+  --bg: #10152a;
+  --bg-elevated: #1c3157;
+  --bg-elevated-2: #4a3f60;
+  --border: #3f5a86;
+  --border-active: rgba(74, 150, 163, 0.5);
+
+  --text: #e6d8b4;
+  --text-secondary: #c2ae94;
+  --text-muted: #9689a0;
+
+  --accent: #4a96a3;
+  --accent-soft: rgba(74, 150, 163, 0.16);
+  --accent-contrast: #0a1418;
+  --metal: #8577a0;
+  --success: #5d9070;
+  --success-soft: rgba(93, 144, 112, 0.16);
+  --warning: #efbe5e;
+  --warning-soft: rgba(239, 190, 94, 0.16);
+  --danger: #c24361;
+  --danger-soft: rgba(194, 67, 97, 0.16);
+
+  --kill-corp: #2f5f78;
+  --kill-alliance: #8577a0;
+  --kill-ship: #dd6c4f;
+
+  --isk: #efbe5e;
+  --isk-soft: rgba(239, 190, 94, 0.16);
+
+  --standing-positive: #4a96a3;
+  --standing-positive-soft: rgba(74, 150, 163, 0.14);
+  --standing-negative: #c24361;
+  --standing-negative-soft: rgba(194, 67, 97, 0.14);
+  --standing-neutral: #8577a0;
+
+  --constellation: #8577a0;
+  --constellation-soft: rgba(133, 119, 160, 0.16);
+  --region: #2f5f78;
+  --region-soft: rgba(47, 95, 120, 0.16);
+  --gate: #efbe5e;
+  --gate-soft: rgba(239, 190, 94, 0.16);
+
+  /* Cool neon-night reinterpretation of the security scale. */
+  --sec-10: #4a7fd6;
+  --sec-9: #4a96a3;
+  --sec-8: #4aa3a0;
+  --sec-7: #5d9070;
+  --sec-6: #8a9a4a;
+  --sec-5: #efbe5e;
+  --sec-4: #dd8a4f;
+  --sec-3: #dd6c4f;
+  --sec-2: #c24361;
+  --sec-1: #a8447a;
+  --sec-min: #8577a0;
+  --sec-legend-on-light: #0a0e1c;
+  --sec-legend-on-dark: #e6d8b4;
+
+  --slot-low: var(--warning);
+  --slot-low-soft: var(--warning-soft);
+  --slot-mid: var(--accent);
+  --slot-mid-soft: var(--accent-soft);
+  --slot-high: var(--danger);
+  --slot-high-soft: var(--danger-soft);
+
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 18px rgba(239, 190, 94, 0.22);
+}
+
+/* Dusk Horizon (softer 80s/early 90s sunset) - Barry's swatches, unnamed,
+   assigned here by apparent role (dark slate-blue -> panels, coral/tan/cream
+   -> text and warm status colors). Panels lightened well past the base
+   swatch so cards clearly separate from the page instead of blending into
+   one flat dark-blue field. */
+:root[data-theme="sunset"] {
+  color-scheme: dark;
+  --bg: #24344a;
+  --bg-elevated: #3f5a72;
+  --bg-elevated-2: #587489;
+  --border: #6f8ba0;
+  --border-active: rgba(102, 144, 166, 0.5);
+
+  --text: #fbe6c4;
+  --text-secondary: #edcba0;
+  --text-muted: #a7b5b2;
+
+  --accent: #6690a6;
+  --accent-soft: rgba(102, 144, 166, 0.16);
+  --accent-contrast: #10181e;
+  --metal: #9cb6b4;
+  --success: #9ebab6;
+  --success-soft: rgba(158, 186, 182, 0.16);
+  --warning: #e4a97c;
+  --warning-soft: rgba(228, 169, 124, 0.16);
+  --danger: #bc6875;
+  --danger-soft: rgba(188, 104, 117, 0.16);
+
+  --kill-corp: #6690a6;
+  --kill-alliance: #bc6875;
+  --kill-ship: #e08a6f;
+
+  --isk: #e4a97c;
+  --isk-soft: rgba(228, 169, 124, 0.16);
+
+  --standing-positive: #9ebab6;
+  --standing-positive-soft: rgba(158, 186, 182, 0.14);
+  --standing-negative: #bc6875;
+  --standing-negative-soft: rgba(188, 104, 117, 0.14);
+  --standing-neutral: #8a938f;
+
+  --constellation: #bc6875;
+  --constellation-soft: rgba(188, 104, 117, 0.16);
+  --region: #6690a6;
+  --region-soft: rgba(102, 144, 166, 0.16);
+  --gate: #e4a97c;
+  --gate-soft: rgba(228, 169, 124, 0.16);
+
+  /* Warm dusk reinterpretation of the security scale. */
+  --sec-10: #6690a6;
+  --sec-9: #7a9fae;
+  --sec-8: #9ebab6;
+  --sec-7: #b0b58a;
+  --sec-6: #cdb47a;
+  --sec-5: #e4a97c;
+  --sec-4: #d99270;
+  --sec-3: #cc7a6e;
+  --sec-2: #bc6875;
+  --sec-1: #a85c72;
+  --sec-min: #8a5c78;
+  --sec-legend-on-light: #1c2a3b;
+  --sec-legend-on-dark: #fbe6c4;
+
+  --slot-low: var(--warning);
+  --slot-low-soft: var(--warning-soft);
+  --slot-mid: var(--accent);
+  --slot-mid-soft: var(--accent-soft);
+  --slot-high: var(--danger);
+  --slot-high-soft: var(--danger-soft);
+
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 18px rgba(228, 169, 124, 0.2);
+}
+
+/* "YC Retro" - EVE reimagined as a 1994 sci-fi anime OVA. Based on Barry's
+   own full spec (deep space navy, tactical cyan, aged amber, faded warning
+   red), with panels brightened past his exact values so the theme still
+   reads as a clear shift at a glance rather than nearly-black-on-nearly-
+   black - the rest of his palette identity (hues, the amber/cyan pairing)
+   carries through unchanged. */
+:root[data-theme="retro-ova"] {
+  color-scheme: dark;
+  --bg: #0f1822;
+  --bg-elevated: #182838;
+  --bg-elevated-2: #21384a;
+  --border: #385163;
+  --border-active: rgba(208, 163, 94, 0.5);
+
+  --text: #e2ddc9;
+  --text-secondary: #b7bab0;
+  --text-muted: #7c8588;
+
+  --accent: #6fa8ae;
+  --accent-soft: rgba(111, 168, 174, 0.16);
+  --accent-contrast: #071013;
+  --metal: #7c8588;
+  --success: #7fa587;
+  --success-soft: rgba(127, 165, 135, 0.16);
+  --warning: #cc9c58;
+  --warning-soft: rgba(204, 156, 88, 0.16);
+  --danger: #bd575d;
+  --danger-soft: rgba(189, 87, 93, 0.16);
+
+  --kill-corp: #6fa8ae;
+  --kill-alliance: #8a7a99;
+  --kill-ship: #dcb168;
+
+  --isk: #dcb168;
+  --isk-soft: rgba(220, 177, 104, 0.16);
+
+  --standing-positive: #6fa8ae;
+  --standing-positive-soft: rgba(111, 168, 174, 0.14);
+  --standing-negative: #bd575d;
+  --standing-negative-soft: rgba(189, 87, 93, 0.14);
+  --standing-neutral: #b7bab0;
+
+  --constellation: #8a7a99;
+  --constellation-soft: rgba(138, 122, 153, 0.16);
+  --region: #4f8f95;
+  --region-soft: rgba(79, 143, 149, 0.16);
+  --gate: #a67f45;
+  --gate-soft: rgba(166, 127, 69, 0.16);
+
+  /* Desaturated 1994-OVA security scale - Barry's own given anchor points
+     (1.0 Highsec #6FA9A4, the 0.5-0.9 band #789B78, the 0.1-0.4 lowsec band
+     #C0924F, 0.0 #B9674E, negative security #A3474D), with the in-between
+     tenths interpolated to keep a smooth gradient across the same anchors. */
+  --sec-10: #6fa9a4;
+  --sec-9: #74a594;
+  --sec-8: #789b78;
+  --sec-7: #7b9b78;
+  --sec-6: #839672;
+  --sec-5: #9b8a5e;
+  --sec-4: #c0924f;
+  --sec-3: #bd8850;
+  --sec-2: #b97d52;
+  --sec-1: #b9674e;
+  --sec-min: #a3474d;
+  --sec-legend-on-light: #0b1119;
+  --sec-legend-on-dark: #e2ddc9;
+
+  --slot-low: var(--warning);
+  --slot-low-soft: var(--warning-soft);
+  --slot-mid: var(--accent);
+  --slot-mid-soft: var(--accent-soft);
+  --slot-high: var(--danger);
+  --slot-high-soft: var(--danger-soft);
+
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 18px rgba(111, 168, 174, 0.22);
+}
+
+/* Phosphor Deck - an old spacecraft terminal. Barry's own explicit split:
+   amber for navigation/industry/"important value" contexts (so it fills the
+   role --accent already plays everywhere), CRT green reserved for
+   data/telemetry/status contexts (--success, since "online"/"active" is
+   already that exact semantic) rather than being forced into every accent
+   spot - "I would not make green your universal accent." */
+:root[data-theme="crt-green"] {
+  color-scheme: dark;
+  --bg: #0e1615;
+  --bg-elevated: #16211f;
+  --bg-elevated-2: #1b2926;
+  --border: #293834;
+  --border-active: rgba(208, 163, 94, 0.5);
+
+  --text: #d8d9cf;
+  --text-secondary: #a7aea5;
+  --text-muted: #727d76;
+
+  --accent: #d0a35e;
+  --accent-soft: rgba(208, 163, 94, 0.16);
+  --accent-contrast: #0c1212;
+  --metal: #687471;
+  --success: #7caf78;
+  --success-soft: rgba(124, 175, 120, 0.16);
+  --warning: #c08c4a;
+  --warning-soft: rgba(192, 140, 74, 0.16);
+  --danger: #a95750;
+  --danger-soft: rgba(169, 87, 80, 0.16);
+
+  --kill-corp: #526f73;
+  --kill-alliance: #756a7d;
+  --kill-ship: #99703b;
+
+  --isk: #d0a35e;
+  --isk-soft: rgba(208, 163, 94, 0.16);
+
+  --standing-positive: #7caf78;
+  --standing-positive-soft: rgba(124, 175, 120, 0.14);
+  --standing-negative: #a95750;
+  --standing-negative-soft: rgba(169, 87, 80, 0.14);
+  --standing-neutral: #a7aea5;
+
+  --constellation: #756a7d;
+  --constellation-soft: rgba(117, 106, 125, 0.16);
+  --region: #526f73;
+  --region-soft: rgba(82, 111, 115, 0.16);
+  --gate: #99703b;
+  --gate-soft: rgba(153, 112, 59, 0.16);
+
+  /* Security scale runs terminal-green (safe) through amber to alert-red -
+     the same high-to-low shape as every other theme, recolored into this
+     one's CRT-green/amber/red family. */
+  --sec-10: #5f936b;
+  --sec-9: #6a9d70;
+  --sec-8: #7caf78;
+  --sec-7: #8bab6e;
+  --sec-6: #9ba36a;
+  --sec-5: #ab9860;
+  --sec-4: #bc8c4b;
+  --sec-3: #c08c4a;
+  --sec-2: #a9645a;
+  --sec-1: #a95750;
+  --sec-min: #874148;
+  --sec-legend-on-light: #080c0b;
+  --sec-legend-on-dark: #d8d9cf;
+
+  --slot-low: var(--warning);
+  --slot-low-soft: var(--warning-soft);
+  --slot-mid: var(--accent);
+  --slot-mid-soft: var(--accent-soft);
+  --slot-high: var(--danger);
+  --slot-high-soft: var(--danger-soft);
+
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 18px rgba(208, 163, 94, 0.22);
 }
 
 * {
@@ -211,8 +717,8 @@ select.wh-roller-select,
   height: 100vh;
   background-color: var(--bg);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 48px 48px;
 }
 
@@ -1663,7 +2169,7 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 
 .reconnect-button:hover:not(:disabled) {
   background: var(--accent);
-  color: #06110f;
+  color: var(--accent-contrast);
 }
 
 .reconnect-button:disabled {
@@ -2809,11 +3315,131 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   max-width: 420px;
 }
 
+/* Shared browsable picker for Industry tabs that used to be a
+   type-to-search box - Reprocessing's ore/ice list and Invention's
+   invertible-blueprint list both use this (reusing the Item Database's
+   own category/group card styles), so choosing something never depends
+   on remembering its exact name. */
+.industry-browse-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.industry-selected-pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.industry-selected-pick-name {
+  flex: 1;
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+
 .industry-input-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
   max-width: 800px;
+}
+
+/* Reuses .market-browser-favourites/-toggle/-count/-empty/-list for the
+   toggle button and panel itself, so this looks identical to the Market
+   Browser's own favourites feature - only the per-row layout needs its own
+   rules here, since a blueprint favourite also carries a remove button
+   next to it (the Market Browser's own rows don't). */
+.industry-blueprint-favourite-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.industry-blueprint-favourite-row button:first-child {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.industry-blueprint-favourite-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.industry-blueprint-favourite-row button:first-child:hover {
+  background: var(--bg-elevated-2);
+}
+
+/* Extra specificity from the parent class is deliberate, not decorative -
+   .market-browser-favourites-list button (a class+element selector, since
+   this row's buttons sit nested a level deeper than that rule expects)
+   otherwise wins the width/padding cascade over a bare .industry-
+   blueprint-favourite-remove class selector alone. */
+.industry-blueprint-favourite-row .industry-blueprint-favourite-remove {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.industry-blueprint-favourite-row .industry-blueprint-favourite-remove:hover {
+  background: var(--bg-elevated-2);
+  color: var(--danger);
+}
+
+.industry-favourite-setup-active {
+  color: var(--warning);
+}
+
+/* Solid-colored and bordered on purpose, unlike the plain text-style
+   .detail-back links this sits among in the footer row - this one got
+   missed entirely at that quieter treatment, so it needs to actually
+   read as a button, not just another muted label in a row of numbers. */
+.industry-copy-clipboard-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--success);
+  border-radius: var(--radius-sm);
+  background: var(--success-soft);
+  color: var(--success);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.industry-copy-clipboard-btn:hover {
+  filter: brightness(1.25);
 }
 
 .industry-input-grid input,
@@ -2834,6 +3460,65 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   letter-spacing: normal;
 }
 
+/* Wraps a plain number input in +/- buttons instead of relying on the
+   browser's own tiny up/down spinner - the input keeps its usual look
+   (.industry-field-input) except its outer corners flatten where a button
+   sits flush against it, and its native spinner is hidden since the
+   buttons replace it. */
+.industry-number-stepper {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.industry-number-stepper .industry-field-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  border-radius: 0;
+  text-align: center;
+  -moz-appearance: textfield;
+}
+
+.industry-number-stepper .industry-field-input::-webkit-inner-spin-button,
+.industry-number-stepper .industry-field-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.industry-number-stepper-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.industry-number-stepper-btn:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border-right: none;
+}
+
+.industry-number-stepper-btn:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  border-left: none;
+}
+
+.industry-number-stepper-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.industry-number-stepper-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .industry-results-panel {
   display: flex;
   flex-direction: column;
@@ -2842,11 +3527,217 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 
 .industry-build-row {
   gap: 10px;
+  cursor: default;
 }
 
-.industry-build-qty {
+/* Every build-tree node (and the blueprint row) sits in its own bordered
+   box, matching the nested Components/Minerals/Items grouping EVE's own
+   Industry window uses - a box's own .industry-build-children sits inside
+   this same border when expanded, so the box visibly grows to contain its
+   children rather than the children appearing as a disconnected list
+   underneath. Scoped to this class (not the shared .market-tree-node,
+   which the Market Browser's own category tree also uses) so that tree
+   isn't affected. */
+.industry-build-node {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.industry-build-node + .industry-build-node {
+  margin-top: 4px;
+}
+
+.industry-build-steps-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* Labels the columns every row below repeats with no header of its own
+   (each row is its own bordered box, not a table row, so there was
+   previously nothing to read the numbers against except a hover tooltip -
+   this puts the same explanation up front, visible without hovering).
+   Mirrors .industry-build-row's own checkbox-spacer + grid structure so
+   the labels land roughly over their columns for a top-level row; deeper,
+   more-indented rows won't line up pixel-for-pixel, same tradeoff any
+   nested tree view has against a flat table. */
+.industry-build-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 6px 14px;
+}
+
+.industry-build-header-checkbox-spacer {
+  flex-shrink: 0;
+  width: 14px;
+}
+
+.industry-build-header-grid {
+  display: grid;
+  /* Only Material flexes (1fr) - every other column is a fixed px width,
+     widened well past the original 80/130/130/130 to actually use the
+     spare room, but fixed rather than fr on purpose: a flexible Qty/
+     Build/Buy/Total column resizes with however much space is left over
+     after the row's own left indent is subtracted, and that leftover
+     shrinks a little at every nesting depth - so a flexible width put
+     each column's boundary in a slightly different place tier to tier,
+     the numbers no longer lining up under each other let alone under the
+     header. Fixed widths here can't drift: the same px value at every
+     depth means every column's left/right edge lands in an identical
+     spot all the way down the tree. Must stay identical to
+     .industry-build-row-body's template or the header stops lining up
+     with the columns beneath it. */
+  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 190px 190px 20px;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.industry-build-header-grid span {
+  text-align: right;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.industry-build-header-label-left {
+  text-align: left;
+}
+
+.industry-build-children {
+  gap: 4px;
+  /* Right margin/padding deliberately 0, not matching the left - a right
+     value here would compound at every nesting level exactly the way the
+     left indent is supposed to, pulling each deeper tier's Qty/Build/Buy/
+     Total columns further and further in from the right edge until they
+     no longer land under the header labels at all (the bug this comment
+     replaces). Indenting from the left only keeps every row's own grid
+     anchored to the same right edge regardless of depth, so those columns
+     line up at every tier, not just the first one. */
+  margin: 4px 0 6px 6px;
+  padding: 4px 0 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  /* Background is set inline per-row (see tierTint in IndustryPage.tsx) -
+     each depth gets a progressively stronger accent tint off the theme's
+     own --bg-elevated, capped well short of solid color, so a deeper tier
+     visibly reads as "one step further in" instead of every level looking
+     identical regardless of depth. */
+}
+
+/* One small flowchart-style connector at the top of each tier, marking
+   "this box is the next step down" the same way a step-connector glyph
+   would in a diagram - not a full per-row tree line, just a single marker
+   per expanded level. */
+.industry-build-tier-connector {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: 2px 0 0 4px;
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+.industry-build-checkbox {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* A real grid, not flex - flex only sizes each column by its own row's
+   content (min-width is just a floor), so a longer number in one row than
+   its neighbors made the qty/price/cost columns drift out of alignment
+   row to row. Only Material (1fr) flexes; qty/build/buy/total are fixed
+   px - see the "only Material flexes" note on .industry-build-header-grid
+   for why those four stay fixed instead of also taking an fr share. Track
+   order matches the children exactly as rendered: icon, name, qty, build
+   cost, buy cost, total material cost, expand chevron. */
+.industry-build-row-body {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 190px 190px 20px;
+  align-items: center;
+  gap: 10px;
+  /* This element is itself a flex child of .industry-build-row (the
+     checkbox is its sibling) - without flex:1 it only takes its own
+     content's width and everything sits bunched at the left instead of
+     spanning the full row with the pill/cost columns reaching the right
+     edge. min-width:0 lets it actually shrink below that content width
+     when the row's real space is tighter than the columns would prefer. */
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.industry-build-row-body .market-browser-tree-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.industry-build-qty-col {
+  text-align: right;
   color: var(--text-muted);
   font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Build Cost and Buy Cost sit side by side, no toggle needed to see both -
+   whichever one actually wins for this row gets .industry-build-cost-cheaper
+   on top, so the comparison itself stays legible at a glance instead of
+   needing to do the mental subtraction. */
+.industry-build-cost-option {
+  text-align: right;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.industry-build-cost-cheaper {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.industry-build-has-blueprint {
+  margin-left: 6px;
+  vertical-align: middle;
+  color: var(--accent);
+  opacity: 0.75;
+}
+
+.industry-build-row-blueprint {
+  cursor: default;
+}
+
+.industry-build-cost-input {
+  width: 130px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.industry-build-cost-input::placeholder {
+  color: var(--text-muted);
+}
+
+.industry-build-row-blueprint:hover {
+  background: transparent;
 }
 
 .industry-build-decision {
@@ -3462,8 +4353,8 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   justify-content: center;
   background-color: var(--bg);
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 48px 48px;
 }
 
@@ -3514,7 +4405,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 
 .sso-button:hover:not(:disabled) {
   background: var(--accent);
-  color: #06110f;
+  color: var(--accent-contrast);
   box-shadow: var(--glow-accent);
 }
 
@@ -4498,7 +5389,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 .kills-add-form button:hover:not(:disabled),
 .kills-character-search-form button:hover:not(:disabled) {
   background: var(--accent);
-  color: #06110f;
+  color: var(--accent-contrast);
 }
 
 .kills-add-form button:disabled,
@@ -4725,26 +5616,26 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 }
 
 .kills-secband-high {
-  border-color: rgba(111, 195, 217, 0.4);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
 .kills-secband-low {
-  border-color: rgba(224, 168, 92, 0.4);
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
   background: var(--warning-soft);
   color: var(--warning);
 }
 
 .kills-secband-null {
-  border-color: rgba(224, 104, 95, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
   background: var(--danger-soft);
   color: var(--danger);
 }
 
 .kills-secband-wspace {
-  border-color: rgba(178, 141, 217, 0.4);
-  background: rgba(178, 141, 217, 0.14);
+  border-color: color-mix(in srgb, var(--constellation) 40%, transparent);
+  background: var(--constellation-soft);
   color: var(--constellation);
 }
 
@@ -7119,7 +8010,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 
 .gatecheck-check-button:hover:not(:disabled) {
   background: var(--accent);
-  color: #06110f;
+  color: var(--accent-contrast);
 }
 
 .gatecheck-check-button:disabled {
@@ -7146,10 +8037,41 @@ body[data-reduce-motion="true"] .skeleton-row {
   font-weight: 500;
 }
 
+.gatecheck-caveat {
+  margin: 4px 0 12px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+
 .gatecheck-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+}
+
+.likely-camps-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.likely-camps-header h3 {
+  margin: 0 0 4px;
+}
+
+.likely-camps-arrow {
+  margin: 0 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.likely-camps-last-kill-ago {
+  color: var(--text-muted);
+  font-size: 12.5px;
 }
 
 .gatecheck-table {
@@ -7194,15 +8116,90 @@ body[data-reduce-motion="true"] .skeleton-row {
 }
 
 .gatecheck-row-safe {
-  background: rgba(95, 191, 138, 0.08);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 
 .gatecheck-row-caution {
-  background: rgba(224, 168, 92, 0.14);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
 }
 
 .gatecheck-row-danger {
-  background: rgba(224, 104, 95, 0.18);
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+.gatecheck-gate-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.gatecheck-gate-link:hover {
+  text-decoration: underline;
+}
+
+.gatecheck-gate-detail-row td {
+  white-space: normal;
+  background: var(--bg-elevated-2);
+}
+
+.gatecheck-gate-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 4px;
+}
+
+.gatecheck-gate-detail-heading {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gatecheck-gate-detail-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14.5px;
+}
+
+.gatecheck-gate-kill-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14.5px;
+}
+
+.gatecheck-gate-kill-row:last-child {
+  border-bottom: none;
+}
+
+.gatecheck-gate-kill-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 90px;
+}
+
+.gatecheck-gate-kill-ship {
+  color: var(--danger);
+  font-weight: 600;
+  min-width: 140px;
+}
+
+.gatecheck-gate-kill-victim {
+  color: var(--text);
+  flex: 1;
+}
+
+.gatecheck-gate-kill-isk {
+  color: var(--isk);
+  font-variant-numeric: tabular-nums;
 }
 
 .gatecheck-legend {
@@ -7401,6 +8398,116 @@ body[data-reduce-motion="true"] .skeleton-row {
 .market-browser-search {
   flex: 0 0 auto;
   width: 100%;
+}
+
+.market-browser-favourites {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.market-browser-favourites-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text-secondary);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.market-browser-favourites-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-active);
+}
+
+.market-browser-favourites-toggle-active {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.market-browser-favourites-count {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-family: var(--font-label);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.market-browser-favourites-empty {
+  margin: 0;
+  padding: 10px 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.market-browser-favourites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.market-browser-favourites-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.market-browser-favourites-list button:hover {
+  background: var(--bg-elevated-2);
+}
+
+.market-browser-favourite-star {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.market-browser-favourite-star:hover {
+  background: var(--bg-elevated-2);
+  border-color: var(--border-active);
+  color: var(--text);
+}
+
+.market-browser-favourite-star-active {
+  border-color: var(--warning);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .contracts-toolbar {
@@ -8574,17 +9681,17 @@ body[data-reduce-motion="true"] .skeleton-row {
 .pi-colony-pin-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  max-width: 220px;
+  gap: 6px;
+  max-width: 360px;
 }
 
 .pi-colony-pin-strip-icon {
-  width: 22px;
-  height: 22px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--bg-elevated-2);
-  border: 2px solid var(--border);
+  border: 3px solid var(--border);
 }
 
 .pi-colony-pin-strip-icon-running {
@@ -9726,18 +10833,18 @@ label.settings-sync-file-row {
 }
 
 .fit-rack-low {
-  background: rgba(250, 235, 204, 0.12);
-  color: #e8cf8f;
+  background: var(--slot-low-soft);
+  color: var(--slot-low);
 }
 
 .fit-rack-mid {
-  background: rgba(188, 215, 241, 0.12);
-  color: #9fc3ea;
+  background: var(--slot-mid-soft);
+  color: var(--slot-mid);
 }
 
 .fit-rack-high {
-  background: rgba(235, 204, 209, 0.12);
-  color: #e8a7b1;
+  background: var(--slot-high-soft);
+  color: var(--slot-high);
 }
 
 .fit-rack-rows {

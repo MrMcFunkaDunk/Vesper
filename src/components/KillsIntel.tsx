@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
-import { Search, Swords } from "lucide-react";
+import { Search } from "lucide-react";
 import TrackedSystemsFeed from "./TrackedSystemsFeed";
 import RecentKillsFeed from "./RecentKillsFeed";
 import BattleReportsFeed from "./BattleReportsFeed";
@@ -13,6 +13,7 @@ import CharacterKillboard from "./CharacterKillboard";
 import SystemKillboard, { type SystemSummary } from "./SystemKillboard";
 import ConstellationKillboard, { type ConstellationSummary } from "./ConstellationKillboard";
 import RegionKillboard, { type RegionSummary } from "./RegionKillboard";
+import GateKillboard, { type GateSummary } from "./GateKillboard";
 import CorporationKillboard, { type CorporationSummary } from "./CorporationKillboard";
 import AllianceKillboard, { type AllianceSummary } from "./AllianceKillboard";
 import BackToMapButton from "./BackToMapButton";
@@ -46,6 +47,7 @@ type KillsView =
   | { type: "system"; system: SystemSummary }
   | { type: "constellation"; constellation: ConstellationSummary }
   | { type: "region"; region: RegionSummary }
+  | { type: "gate"; gate: GateSummary }
   | { type: "corporation"; corporation: CorporationSummary }
   | { type: "alliance"; alliance: AllianceSummary };
 
@@ -65,8 +67,10 @@ interface KillsIntelProps {
   onConsumeInitialCorporation?: () => void;
   initialAlliance?: AllianceSummary | null;
   onConsumeInitialAlliance?: () => void;
+  /** A gate to jump straight into, e.g. from clicking a gate on a Gate Check row or a kill's location line. */
+  initialGate?: GateSummary | null;
+  onConsumeInitialGate?: () => void;
   onGoToMap: () => void;
-  onGoToWars: () => void;
   onSelectItem: (item: MarketItemRef) => void;
 }
 
@@ -82,8 +86,9 @@ function KillsIntel({
   onConsumeInitialCorporation,
   initialAlliance,
   onConsumeInitialAlliance,
+  initialGate,
+  onConsumeInitialGate,
   onGoToMap,
-  onGoToWars,
   onSelectItem,
 }: KillsIntelProps) {
   const [tab, setTab] = useState<KillsTab>("tracked");
@@ -138,6 +143,7 @@ function KillsIntel({
     if (initialCharacterId != null) return [{ type: "feed" }, { type: "character", characterId: initialCharacterId }];
     if (initialCorporation) return [{ type: "feed" }, { type: "corporation", corporation: initialCorporation }];
     if (initialAlliance) return [{ type: "feed" }, { type: "alliance", alliance: initialAlliance }];
+    if (initialGate) return [{ type: "feed" }, { type: "gate", gate: initialGate }];
     return [{ type: "feed" }];
   });
 
@@ -156,6 +162,9 @@ function KillsIntel({
     }
     if (initialAlliance) {
       onConsumeInitialAlliance?.();
+    }
+    if (initialGate) {
+      onConsumeInitialGate?.();
     }
     // Only meant to consume the value this component mounted with, so it
     // doesn't re-fire on every render.
@@ -238,6 +247,10 @@ function KillsIntel({
     setStack((s) => [...s, { type: "alliance", alliance }]);
   }
 
+  function pushGate(gate: GateSummary) {
+    setStack((s) => [...s, { type: "gate", gate }]);
+  }
+
   function goBack() {
     setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
   }
@@ -278,6 +291,8 @@ function KillsIntel({
         return view.constellation.name;
       case "region":
         return view.region.name;
+      case "gate":
+        return `Stargate (${view.gate.name})`;
       case "corporation":
         return view.corporation.name;
       case "alliance":
@@ -340,6 +355,7 @@ function KillsIntel({
         onSelectSystem={pushSystem}
         onSelectCorporation={pushCorporation}
         onSelectAlliance={pushAlliance}
+        onSelectGate={pushGate}
         breadcrumb={breadcrumb}
         onLabelReady={reportCurrentLabel}
         onGoToMap={onGoToMap}
@@ -418,6 +434,22 @@ function KillsIntel({
     );
   }
 
+  if (current.type === "gate") {
+    return (
+      <GateKillboard
+        gate={current.gate}
+        onBack={goBack}
+        onSelectKill={pushKillDetail}
+        onSelectCharacter={pushCharacter}
+        onSelectSystem={pushSystem}
+        onSelectCorporation={pushCorporation}
+        onSelectAlliance={pushAlliance}
+        breadcrumb={breadcrumb}
+        onGoToMap={onGoToMap}
+      />
+    );
+  }
+
   if (current.type === "corporation") {
     return (
       <CorporationKillboard
@@ -457,10 +489,6 @@ function KillsIntel({
       <div className="kills-page">
         <div className="kills-page-nav-row">
           <BackToMapButton onClick={onGoToMap} />
-          <button type="button" className="detail-back" onClick={onGoToWars}>
-            <Swords size={14} strokeWidth={2} />
-            Wars
-          </button>
         </div>
 
         <div className="kills-header">

@@ -17,7 +17,6 @@ const MailPage = lazy(() => import("./components/MailPage"));
 const WalletMarketPage = lazy(() => import("./components/WalletMarketPage"));
 const PlanetaryIndustry = lazy(() => import("./components/PlanetaryIndustry"));
 const IntelCheck = lazy(() => import("./components/IntelCheck"));
-const WarsPage = lazy(() => import("./components/WarsPage"));
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const CalendarPage = lazy(() => import("./components/CalendarPage"));
 const FittingsPage = lazy(() => import("./components/FittingsPage"));
@@ -27,6 +26,7 @@ const MultiboxPage = lazy(() => import("./components/MultiboxPage"));
 import type { SystemSummary } from "./components/SystemKillboard";
 import type { CorporationSummary } from "./components/CorporationKillboard";
 import type { AllianceSummary } from "./components/AllianceKillboard";
+import type { GateSummary } from "./components/GateKillboard";
 import type { MarketItemRef } from "./components/MarketBrowser";
 import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
@@ -39,11 +39,13 @@ import { TrackedEntityEventsEffect } from "./hooks/useTrackedEntityEvents";
 import ToastStack from "./components/ToastStack";
 import { useDefaultLandingTab } from "./hooks/useDefaultLandingTab";
 import { useReduceMotion } from "./hooks/useReduceMotion";
+import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
 function App() {
   const [activeId, setActiveId] = useDefaultLandingTab(NAV_ITEMS[0].id);
   useReduceMotion();
+  useTheme();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailCharacterId, setDetailCharacterId] = useState<number | null>(null);
@@ -52,6 +54,7 @@ function App() {
   const [pendingCharacterId, setPendingCharacterId] = useState<number | null>(null);
   const [pendingCorporation, setPendingCorporation] = useState<CorporationSummary | null>(null);
   const [pendingAlliance, setPendingAlliance] = useState<AllianceSummary | null>(null);
+  const [pendingGate, setPendingGate] = useState<GateSummary | null>(null);
   const [pendingMarketItem, setPendingMarketItem] = useState<MarketItemRef | null>(null);
   const [pendingFitShipTypeId, setPendingFitShipTypeId] = useState<number | null>(null);
   const reportError = useErrorReporter();
@@ -150,12 +153,13 @@ function App() {
     setActiveId("kills");
   }
 
-  function handleGoToMap() {
-    setActiveId("map");
+  function handleOpenGateKillboard(gate: GateSummary) {
+    setPendingGate(gate);
+    setActiveId("kills");
   }
 
-  function handleGoToWars() {
-    setActiveId("wars");
+  function handleGoToMap() {
+    setActiveId("map");
   }
 
   function handleOpenMarketItem(item: MarketItemRef) {
@@ -224,8 +228,9 @@ function App() {
             onConsumeInitialCorporation={() => setPendingCorporation(null)}
             initialAlliance={pendingAlliance}
             onConsumeInitialAlliance={() => setPendingAlliance(null)}
+            initialGate={pendingGate}
+            onConsumeInitialGate={() => setPendingGate(null)}
             onGoToMap={handleGoToMap}
-            onGoToWars={handleGoToWars}
             onSelectItem={handleOpenMarketItem}
           />
         ) : activeId === "map" ? null : activeId === "mail" ? (
@@ -242,10 +247,6 @@ function App() {
           <IntelCheck onSelectCharacter={handleOpenCharacterKillboard} />
         ) : activeId === "planetary" ? (
           <PlanetaryIndustry characters={session.characters} />
-        ) : activeId === "wars" ? (
-          <main className="main">
-            <WarsPage characters={session.characters} />
-          </main>
         ) : activeId === "settings" ? (
           <SettingsPage session={session} onAdd={handleAdd} onLogout={handleLogout} />
         ) : activeId === "calendar" ? (
@@ -274,7 +275,12 @@ function App() {
         {mapVisited && (
           <div style={{ display: activeId === "map" ? "contents" : "none" }}>
             <Suspense fallback={<div className="app-loading">Loading...</div>}>
-              <MapPage onSelectKill={handleOpenKillmail} onSelectSystem={handleOpenSystemKills} characters={session.characters} />
+              <MapPage
+                onSelectKill={handleOpenKillmail}
+                onSelectSystem={handleOpenSystemKills}
+                onSelectGate={handleOpenGateKillboard}
+                characters={session.characters}
+              />
             </Suspense>
           </div>
         )}

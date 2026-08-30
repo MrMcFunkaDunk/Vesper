@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { X, ArrowLeftRight, Star } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getMapData, type MapSystem } from "../lib/map";
 import { planGateCheck, getGateActivity, type RoutePreference, type GateCheckSystem, type GateKillEvent } from "../lib/route";
+import { getSystemKillHeat } from "../lib/kills";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { securityColor, formatSecurity } from "../lib/format";
 import { useSavedRoutes, type SavedRoute } from "../hooks/useSavedRoutes";
 import type { SystemSummary } from "./SystemKillboard";
+import type { GateSummary } from "./GateKillboard";
 
 /** Kills older than this don't count as "recent" for a gate's danger rating - same window the map's heat overlay uses. */
 const RECENT_WINDOW_MS = 60 * 60 * 1000;
@@ -26,10 +28,16 @@ type SlotSetter = Dispatch<SetStateAction<Slot[]>>;
 
 interface GateBreakdown {
   gateName: string;
+  gateId: number | null;
   count: number;
 }
 
 interface RouteRow extends GateCheckSystem {
+  /** Every kill anywhere in the system in the last hour, regardless of
+   * whether it happened near a gate - so a system that's simply a busy
+   * fight elsewhere (not a gate camp) still reads as "something's
+   * happening here" instead of a misleadingly clear 0. */
+  totalSystemKills: number;
   totalGateKills: number;
   gates: GateBreakdown[];
   smartbomb: boolean;
@@ -48,12 +56,11 @@ function killBand(row: RouteRow): "safe" | "caution" | "danger" {
   return "danger";
 }
 
-/** Builds the Info column's lines: one per gate with recent kills, plus a line for every specific threat seen in the system. */
-function infoLines(row: RouteRow): string[] {
-  const lines: string[] =
-    row.totalGateKills === 0
-      ? ["No kills at gates."]
-      : row.gates.map((g) => `${g.count} kill${g.count === 1 ? "" : "s"} at the ${g.gateName} gate.`);
+/** The Info column's threat-flag lines - the per-gate kill-count lines are
+ * rendered separately (see the table body below) since those need to be
+ * clickable, not plain text. */
+function threatLines(row: RouteRow): string[] {
+  const lines: string[] = [];
   if (row.smartbomb) lines.push("Smartbombs used.");
   if (row.interdictor) lines.push("HICs/dictors used.");
   if (row.mobileBubble) lines.push("Mobile bubbles used.");
@@ -68,14 +75,29 @@ function dotlanName(name: string): string {
 
 interface GateCheckProps {
   onSelectSystem: (system: SystemSummary) => void;
+  onSelectGate: (gate: GateSummary) => void;
 }
 
-function GateCheck({ onSelectSystem }: GateCheckProps) {
+function GateCheck({ onSelectSystem, onSelectGate }: GateCheckProps) {
   const [mapSystems, setMapSystems] = useState<MapSystem[]>([]);
   const [waypoints, setWaypoints] = useState<Slot[]>([emptySlot(0), emptySlot(1)]);
   const [avoids, setAvoids] = useState<Slot[]>([emptySlot(100)]);
   const [preference, setPreference] = useState<RoutePreference>("shortest");
-  const [rows, setRows] = useState<RouteRow[] | null>(null);
+  // Kept as the raw route + unfiltered events, not pre-computed rows - rows
+  // are derived below via useMemo against a ticking clock, so a kill that
+  // was inside the 1h window at check-time actually drops back out of the
+  // count on its own as real time passes, instead of staying "recent"
+  // forever until the next manual Check! click.
+  const [routeSystems, setRouteSystems] = useState<GateCheckSystem[] | null>(null);
+  const [rawEvents, setRawEvents] = useState<GateKillEvent[]>([]);
+  /** Whole-system last-hour kill counts, keyed by system_id - the same
+   * uncapped local-store aggregate the Map's heat glow uses (getSystemKillHeat),
+   * kept separate from the gate-specific totalGateKills below rather than
+   * folded into it: a system can be full of activity that never lands
+   * within 100km of any of its gates, and that's still worth knowing before
+   * jumping through it. */
+  const [systemTotals, setSystemTotals] = useState<Map<number, number>>(new Map());
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [checking, setChecking] = useState(false);
   const keyCounterRef = useRef(200);
   const reportError = useErrorReporter();
@@ -88,6 +110,64 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
       .catch((err) => reportError(`Failed to load system list: ${String(err)}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function loadSystemTotals() {
+    getSystemKillHeat()
+      .then((heat) => setSystemTotals(new Map(heat.map((h) => [h.system_id, h.kill_count]))))
+      .catch((err) => reportError(`Failed to load system kill totals: ${String(err)}`));
+  }
+
+  // Ticks the clock every 30s so the derived rows below (see the useMemo)
+  // re-run and drop any kill that's aged out of the rolling 1h window,
+  // without needing another Check! click - a gate that was "3 kills, 1h
+  // ago" should read as clear again on its own once that hour's up. Also
+  // refreshes the whole-system totals on the same cadence - unlike
+  // rawEvents (individual timestamped events the memo below ages out
+  // itself), systemTotals is a pre-aggregated count that only goes stale by
+  // being re-fetched.
+  useEffect(() => {
+    loadSystemTotals();
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+      loadSystemTotals();
+    }, 30_000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const rows = useMemo<RouteRow[] | null>(() => {
+    if (!routeSystems) return null;
+    const recent = rawEvents.filter((e) => nowTick - new Date(e.time).getTime() < RECENT_WINDOW_MS);
+
+    const bySystem = new Map<number, GateKillEvent[]>();
+    for (const event of recent) {
+      const list = bySystem.get(event.system_id);
+      if (list) list.push(event);
+      else bySystem.set(event.system_id, [event]);
+    }
+
+    return routeSystems.map((s) => {
+      const sysEvents = bySystem.get(s.id) ?? [];
+      const gateCounts = new Map<string, { count: number; gateId: number | null }>();
+      for (const event of sysEvents) {
+        if (!event.gate_name) continue;
+        const existing = gateCounts.get(event.gate_name);
+        gateCounts.set(event.gate_name, { count: (existing?.count ?? 0) + 1, gateId: event.gate_id });
+      }
+      const gates = [...gateCounts.entries()].map(([gateName, g]) => ({ gateName, gateId: g.gateId, count: g.count }));
+      return {
+        ...s,
+        totalSystemKills: systemTotals.get(s.id) ?? 0,
+        totalGateKills: gates.reduce((sum, g) => sum + g.count, 0),
+        gates,
+        smartbomb: sysEvents.some((e) => e.smartbomb),
+        interdictor: sysEvents.some((e) => e.interdictor),
+        capital: sysEvents.some((e) => e.capital),
+        citadel: sysEvents.some((e) => e.citadel),
+        mobileBubble: sysEvents.some((e) => e.mobile_bubble),
+      };
+    });
+  }, [routeSystems, rawEvents, nowTick, systemTotals]);
 
   function updateSlots(setter: SlotSetter, index: number, patch: Partial<Slot>) {
     setter((slots) => slots.map((s, i) => (i === index ? { ...s, ...patch } : s)));
@@ -136,37 +216,9 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
       const result = await planGateCheck(waypointIds, avoidIds, preference);
       const routeSystemIds = result.systems.map((s) => s.id);
       const events = await getGateActivity(routeSystemIds).catch(() => []);
-      const now = Date.now();
-      const recent = events.filter((e) => now - new Date(e.time).getTime() < RECENT_WINDOW_MS);
-
-      const bySystem = new Map<number, GateKillEvent[]>();
-      for (const event of recent) {
-        const list = bySystem.get(event.system_id);
-        if (list) list.push(event);
-        else bySystem.set(event.system_id, [event]);
-      }
-
-      setRows(
-        result.systems.map((s) => {
-          const sysEvents = bySystem.get(s.id) ?? [];
-          const gateCounts = new Map<string, number>();
-          for (const event of sysEvents) {
-            if (!event.gate_name) continue;
-            gateCounts.set(event.gate_name, (gateCounts.get(event.gate_name) ?? 0) + 1);
-          }
-          const gates = [...gateCounts.entries()].map(([gateName, count]) => ({ gateName, count }));
-          return {
-            ...s,
-            totalGateKills: gates.reduce((sum, g) => sum + g.count, 0),
-            gates,
-            smartbomb: sysEvents.some((e) => e.smartbomb),
-            interdictor: sysEvents.some((e) => e.interdictor),
-            capital: sysEvents.some((e) => e.capital),
-            citadel: sysEvents.some((e) => e.citadel),
-            mobileBubble: sysEvents.some((e) => e.mobile_bubble),
-          };
-        }),
-      );
+      setRouteSystems(result.systems);
+      setRawEvents(events);
+      setNowTick(Date.now());
     } catch (err) {
       reportError(`Failed to plan route: ${String(err)}`);
     } finally {
@@ -191,7 +243,7 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
     }));
     slots.push(emptySlot(++keyCounterRef.current));
     setWaypoints(slots);
-    setRows(null);
+    setRouteSystems(null);
   }
 
   function saveCurrentRoute() {
@@ -350,6 +402,11 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
             <p className="gatecheck-results-heading">
               Your route <span>({rows.length - 1} jumps)</span>
             </p>
+            <p className="gatecheck-caveat">
+              Showing kills from the last hour (EVE time) - a kill drops off this list on its own once it's more than
+              an hour old, so a clear system now isn't a guarantee it stays that way. A system can show a lot of
+              kills in total but none at a gate if the fighting isn't happening near one you'd actually jump through.
+            </p>
             <div className="gatecheck-table-wrap">
               <table className="gatecheck-table">
                 <thead>
@@ -357,7 +414,8 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
                     <th>#</th>
                     <th>Region</th>
                     <th>System / Sec</th>
-                    <th>Kills (1h)</th>
+                    <th>Total Kills In System (1h)</th>
+                    <th>Kills Within 100km Of A Gate (1h)</th>
                     <th>Info</th>
                   </tr>
                 </thead>
@@ -412,9 +470,32 @@ function GateCheck({ onSelectSystem }: GateCheckProps) {
                             {row.name}
                           </span>
                         </td>
+                        <td>{row.totalSystemKills}</td>
                         <td>{row.totalGateKills}</td>
                         <td>
-                          {infoLines(row).map((line, i) => (
+                          {row.totalGateKills === 0 && <div>No kills at gates.</div>}
+                          {row.gates.map((g) =>
+                            g.gateId != null ? (
+                              <div key={g.gateName}>
+                                {g.count} kill{g.count === 1 ? "" : "s"} at the{" "}
+                                <a
+                                  href="#"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    onSelectGate({ id: g.gateId!, name: g.gateName, systemId: row.id, systemName: row.name });
+                                  }}
+                                >
+                                  {g.gateName} gate
+                                </a>
+                                .
+                              </div>
+                            ) : (
+                              <div key={g.gateName}>
+                                {g.count} kill{g.count === 1 ? "" : "s"} at the {g.gateName} gate.
+                              </div>
+                            ),
+                          )}
+                          {threatLines(row).map((line, i) => (
                             <div key={i}>{line}</div>
                           ))}
                         </td>

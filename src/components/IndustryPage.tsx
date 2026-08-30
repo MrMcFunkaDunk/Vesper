@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Factory, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, CornerDownRight, Factory, Minus, Plus, Star, X } from "lucide-react";
 import {
   searchBlueprints,
   getBlueprintDetail,
@@ -9,8 +9,19 @@ import {
   type ReprocessingInfo,
   type BlueprintDetail,
 } from "../lib/industry";
-import { getMarketPrices, getRegionSellMinPrices, searchMarketTypes } from "../lib/market";
-import { buildCostTree, flattenRawMaterials, type BuildTreeNode } from "../lib/industryBuildTree";
+import {
+  getMarketPrices,
+  getRegionSellMinPrices,
+  getCategoryGroups,
+  getGroupItems,
+  getInventableBlueprintGroups,
+  getInventableBlueprintsInGroup,
+  getResearchableBlueprintGroups,
+  getResearchableBlueprintsInGroup,
+  type GroupSummary,
+  type TypeSummary,
+} from "../lib/market";
+import { buildCostTree, repriceTree, type BuildTreeNode } from "../lib/industryBuildTree";
 import {
   jobInstallCost,
   estimatedItemValue,
@@ -36,11 +47,20 @@ import { getCharacterMiningLedger, type CharacterMiningLedger, type SessionChara
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useIndustryDefaults } from "../hooks/useIndustryDefaults";
+import { useBlueprintFavourites, type BlueprintFavourite } from "../hooks/useBlueprintFavourites";
 import HelpBadge from "./HelpBadge";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
 import { HELP_CONTENT } from "../lib/helpContent";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
+
+// EVE's real "Asteroid" item category - confirmed against the local SDE
+// cache (every group filed under it is a mineable ore or ice variant,
+// nothing else) rather than assumed from memory. Reprocessing_materials
+// data confirms Salvage has no reprocessing recipe of its own in the
+// current SDE (it's already a refined output, not something you'd
+// reprocess further), so the browse list below is Ore/Ice only.
+const ORE_CATEGORY_ID = 25;
 
 const FACILITY_LABEL: Record<ReprocessingFacility, string> = {
   npc_station: "NPC Station",
@@ -112,39 +132,311 @@ function formatDuration(seconds: number): string {
   return parts.join(" ");
 }
 
-function BuildTreeRow({ node, depth }: { node: BuildTreeNode; depth: number }) {
-  const [expanded, setExpanded] = useState(depth < 1);
+/** Whether a node renders the "Build" pill rather than "Buy" - shared by
+ * the row itself and the sibling sort below so the two never disagree. */
+function isBuildRow(node: BuildTreeNode): boolean {
+  return node.activity != null && node.shouldBuild;
+}
+
+/** Each nesting level gets a progressively stronger tint toward --accent
+ * off the theme's own --bg-elevated, so a deeper tier visibly reads as
+ * "one step further in" rather than every level looking like the exact
+ * same box regardless of depth. Relative to whatever the active theme's
+ * own accent/surface colors actually are (via color-mix), rather than a
+ * hardcoded blue, so it stays sane across every theme this app ships
+ * (including the more saturated seasonal ones) instead of just adding a
+ * fixed color on top. Capped so a genuinely deep BOM doesn't end up solid
+ * accent-colored by the time it bottoms out at raw materials. */
+function tierTint(depth: number): string {
+  const percent = Math.min(depth * 6, 30);
+  return `color-mix(in srgb, var(--accent) ${percent}%, var(--bg-elevated))`;
+}
+
+/** Every checkable row's identity - the type_id chain from the tree root
+ * down to that row, not a positional index. A plain index would break the
+ * moment the build/buy sort below reorders siblings (the row a user
+ * checked would silently become a different one); typeId chains stay
+ * correct regardless of render order, since a blueprint never lists the
+ * same material twice as sibling lines under one parent. */
+function rowPath(parentPath: string, typeId: number): string {
+  return `${parentPath}>${typeId}`;
+}
+
+/** Every ancestor of path, root-first, path itself included last - e.g.
+ * "root>20125>11145" -> ["root", "root>20125", "root>20125>11145"]. Used
+ * when expanding a row: unticking just that one row isn't enough if any
+ * ancestor above it is still ticked, since sumCheckedCost's short-circuit
+ * stops at the FIRST ticked ancestor it meets going down from the root -
+ * a still-ticked grandparent would keep swallowing this whole branch
+ * regardless of what gets ticked/unticked below it. */
+function ancestorPaths(path: string): string[] {
+  const parts = path.split(">");
+  const result: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    result.push(parts.slice(0, i + 1).join(">"));
+  }
+  return result;
+}
+
+/** Sums the real hub buy cost (per-unit hub price x quantity needed - the
+ * same figure each row's own hub-total column shows) for every checked
+ * row, not node.totalCost - that field is the galaxy-wide-index-based
+ * build/buy assessment, which is a different number from "what would this
+ * actually cost to buy at the trade hub right now", and hub cost is what
+ * ticking a row is meant to represent. A checked node short-circuits
+ * rather than also recursing into its children (its own hub cost already
+ * stands for that whole branch), so only an *unchecked* node keeps walking
+ * down - its children might still be individually opted back in below it.
+ * This is what makes "everything ticked by default" a coherent number
+ * with no double-counting, and lets unticking one row cleanly drop just
+ * that row's cost (see the cascade-clear in toggleChecked). */
+function sumCheckedCost(node: BuildTreeNode, path: string, checked: Set<string>, hubPrices: Map<number, number>): number {
+  if (checked.has(path)) return (hubPrices.get(node.typeId) ?? node.buyCostPerUnit) * node.quantityNeeded;
+  let sum = 0;
+  for (const child of node.materials) {
+    sum += sumCheckedCost(child, rowPath(path, child.typeId), checked, hubPrices);
+  }
+  return sum;
+}
+
+/** Every path in node's own subtree, itself included - used both to seed
+ * "everything ticked" on a fresh calculation and to cascade an uncheck
+ * down through a node's descendants (see toggleChecked's comment for why
+ * that cascade matters). */
+function collectPaths(node: BuildTreeNode, path: string, into: Set<string>): Set<string> {
+  into.add(path);
+  for (const child of node.materials) {
+    collectPaths(child, rowPath(path, child.typeId), into);
+  }
+  return into;
+}
+
+/** Every distinct type_id anywhere in the tree, root included - used to
+ * fetch real hub sell prices for every row at once (not just the flattened
+ * shopping-list leaves), since a Build row's own per-unit hub price is just
+ * as real a number to show as a Buy row's. */
+function collectAllTypeIds(node: BuildTreeNode, into: Set<number> = new Set()): Set<number> {
+  into.add(node.typeId);
+  for (const child of node.materials) collectAllTypeIds(child, into);
+  return into;
+}
+
+/** Every checked row's name + quantity, for the Multibuy clipboard export -
+ * same short-circuit rule as sumCheckedCost (a checked node contributes
+ * itself and stops, since its own quantityNeeded already accounts for
+ * everything under it), and summed by type_id in case the same material
+ * ends up checked at more than one point in the tree, so the pasted list
+ * doesn't show the same item on two separate lines. */
+function collectCheckedItems(
+  node: BuildTreeNode,
+  path: string,
+  checked: Set<string>,
+  into: Map<number, { name: string; quantity: number }>,
+): Map<number, { name: string; quantity: number }> {
+  if (checked.has(path)) {
+    const existing = into.get(node.typeId);
+    into.set(node.typeId, { name: node.name, quantity: (existing?.quantity ?? 0) + node.quantityNeeded });
+    return into;
+  }
+  for (const child of node.materials) {
+    collectCheckedItems(child, rowPath(path, child.typeId), checked, into);
+  }
+  return into;
+}
+
+interface BuildTreeRowProps {
+  node: BuildTreeNode;
+  depth: number;
+  path: string;
+  checkedPaths: Set<string>;
+  /** Lifted to the parent (not local useState) so a "Collapse All" button
+   * up there can close every open tier at once instead of only being able
+   * to reach whichever single row's own local state it happens to be. */
+  expandedPaths: Set<string>;
+  onToggle: (node: BuildTreeNode, path: string) => void;
+  onExpandToggle: (node: BuildTreeNode, path: string, expanding: boolean) => void;
+  /** Real per-unit sell prices at the selected Trade Hub, keyed by type_id -
+   * falls back to the node's own galaxy-wide index price (buyCostPerUnit)
+   * for anything the hub has no live sell orders for. */
+  hubPrices: Map<number, number>;
+}
+
+function BuildTreeRow({ node, depth, path, checkedPaths, expandedPaths, onToggle, onExpandToggle, hubPrices }: BuildTreeRowProps) {
+  const expanded = expandedPaths.has(path);
   const indent = 10 + depth * 18;
   const hasChildren = node.materials.length > 0;
+  // node itself already carries hub-based prices by the time it gets here
+  // (see repriceTree, applied once at the tree root) - hubPrices is only
+  // still needed here for the one thing that isn't part of the tree
+  // itself: direct-children's totals for directMaterialsHubTotal below.
+  const buyTotal = node.buyCostPerUnit * node.quantityNeeded;
+  const buildTotal = node.buildCostPerUnit != null ? node.buildCostPerUnit * node.quantityNeeded : null;
+  const buildIsCheaper = buildTotal != null && buildTotal < buyTotal;
+  /** For a row with its own materials, node.totalCost (the recursive
+   * build-vs-buy optimum, i.e. buildTotal or buyTotal above) isn't the only
+   * useful number - "what would just the direct ingredients one level down
+   * cost", not optimizing any further than that, is a different, still
+   * useful comparison for this item's own next production step. Leaf rows
+   * (no materials) keep showing their own real totalCost instead. */
+  const directMaterialsHubTotal = node.materials.reduce(
+    (sum, child) => sum + (hubPrices.get(child.typeId) ?? child.buyCostPerUnit) * child.quantityNeeded,
+    0,
+  );
+  // Build materials first, buy materials after - a stable sort so
+  // materials within the same group keep the build-tree's own original
+  // ordering rather than shuffling alphabetically or by quantity.
+  const sortedMaterials = useMemo(
+    () => [...node.materials].sort((a, b) => Number(isBuildRow(b)) - Number(isBuildRow(a))),
+    [node.materials],
+  );
 
   return (
-    <div className="market-tree-node">
-      <button
-        type="button"
-        className="market-browser-tree-item industry-build-row"
-        style={{ paddingLeft: indent }}
-        onClick={() => hasChildren && setExpanded((v) => !v)}
-      >
-        <img src={typeIconUrl(node.typeId, 32, node.name)} alt="" className="market-browser-row-icon" />
-        <span className="market-browser-tree-item-label">
-          {node.name}
-          <span className="industry-build-qty"> x{node.quantityNeeded.toLocaleString()}</span>
-        </span>
-        <span className={`industry-build-decision${node.shouldBuild ? "" : " industry-build-decision-buy"}`}>
-          {node.activity == null ? "Buy" : node.shouldBuild ? "Build" : "Buy"}
-        </span>
-        <span className="industry-build-cost">{formatIsk(node.totalCost)}</span>
-        {hasChildren && (
-          <ChevronRight size={13} strokeWidth={2} className={`market-tree-chevron${expanded ? " market-tree-chevron-open" : ""}`} />
+    <div className="market-tree-node industry-build-node">
+      <div className="market-browser-tree-item industry-build-row" style={{ paddingLeft: indent }}>
+        {/* The root product (the actual thing being built, e.g. the Curse
+            itself) has no checkbox - "opting out" of it is meaningless, and
+            expanding its own row already unticks it automatically via
+            handleExpandToggle, same as any other row. */}
+        {depth > 0 && (
+          <input
+            type="checkbox"
+            className="industry-build-checkbox"
+            checked={checkedPaths.has(path)}
+            onChange={() => onToggle(node, path)}
+            aria-label={`Include ${node.name} in the selected total`}
+          />
         )}
-      </button>
+        <button
+          type="button"
+          className="industry-build-row-body"
+          onClick={() => {
+            if (!hasChildren) return;
+            onExpandToggle(node, path, !expanded);
+          }}
+        >
+          <img src={typeIconUrl(node.typeId, 32, node.name)} alt="" className="market-browser-row-icon" />
+          <span className="market-browser-tree-item-label">
+            {node.name}
+            {node.activity != null && (
+              <Factory
+                size={12}
+                strokeWidth={2}
+                className="industry-build-has-blueprint"
+                aria-label="Has a blueprint/reaction formula"
+              >
+                <title>Has a blueprint/reaction formula - could be built instead of bought</title>
+              </Factory>
+            )}
+          </span>
+          <span className="industry-build-qty-col" title="Total Quantity: the total number of units required for this stage of the build.">
+            x{node.quantityNeeded.toLocaleString()}
+          </span>
+          <span
+            className={`industry-build-cost-option${buildIsCheaper ? " industry-build-cost-cheaper" : ""}`}
+            title={
+              buildTotal != null
+                ? "Build Cost: what it would cost to build the full quantity needed from its own materials, at real Trade Hub prices."
+                : "Build Cost: no blueprint or reaction formula exists for this item - it can only be bought."
+            }
+          >
+            {buildTotal != null ? formatIsk(buildTotal) : "—"}
+          </span>
+          <span
+            className={`industry-build-cost-option${buildIsCheaper ? "" : " industry-build-cost-cheaper"}`}
+            title="Buy Cost: the Trade Hub cost of buying the full quantity needed outright, right now."
+          >
+            {formatIsk(buyTotal)}
+          </span>
+          <span
+            className="industry-build-cost"
+            title={
+              hasChildren
+                ? "Total Material Cost: the combined Trade Hub cost of all required materials from the tier directly below, using the full quantities needed for the build."
+                : "Total Cost: the cheaper of Build Cost and Buy Cost above - this item's own assessed cost."
+            }
+          >
+            {formatIsk(hasChildren ? directMaterialsHubTotal : node.totalCost)}
+          </span>
+          {hasChildren && (
+            <ChevronRight size={13} strokeWidth={2} className={`market-tree-chevron${expanded ? " market-tree-chevron-open" : ""}`} />
+          )}
+        </button>
+      </div>
       {expanded && hasChildren && (
-        <div className="market-tree-children">
-          {node.materials.map((child) => (
-            <BuildTreeRow key={child.typeId} node={child} depth={depth + 1} />
+        <div className="market-tree-children industry-build-children" style={{ background: tierTint(depth + 1) }}>
+          <CornerDownRight size={13} strokeWidth={2} className="industry-build-tier-connector" aria-hidden="true" />
+          {sortedMaterials.map((child) => (
+            <BuildTreeRow
+              key={child.typeId}
+              node={child}
+              depth={depth + 1}
+              path={rowPath(path, child.typeId)}
+              checkedPaths={checkedPaths}
+              expandedPaths={expandedPaths}
+              onToggle={onToggle}
+              onExpandToggle={onExpandToggle}
+              hubPrices={hubPrices}
+            />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+interface NumberStepperInputProps {
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  className?: string;
+}
+
+/** Every plain number input across the Industry tabs used the browser's own
+ * up/down spinner arrows - replaced everywhere with explicit +/- buttons
+ * instead, which are easier to hit precisely and read at a glance than the
+ * native control's tiny hit targets. min/max are clamped the same way each
+ * field's own onChange already did (an empty/invalid field falls back to 0
+ * before clamping, which lands on the same floor every existing field's own
+ * fallback constant already matched its min at). */
+function NumberStepperInput({ value, onChange, min, max, step = 1, className }: NumberStepperInputProps) {
+  function clamp(next: number): number {
+    let result = next;
+    if (min != null) result = Math.max(min, result);
+    if (max != null) result = Math.min(max, result);
+    return result;
+  }
+
+  return (
+    <div className="industry-number-stepper">
+      <button
+        type="button"
+        className="industry-number-stepper-btn"
+        onClick={() => onChange(clamp(value - step))}
+        disabled={min != null && value <= min}
+        aria-label="Decrease"
+      >
+        <Minus size={12} strokeWidth={2.5} />
+      </button>
+      <input
+        type="number"
+        className={className}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(e) => onChange(clamp(Number(e.target.value) || 0))}
+      />
+      <button
+        type="button"
+        className="industry-number-stepper-btn"
+        onClick={() => onChange(clamp(value + step))}
+        disabled={max != null && value >= max}
+        aria-label="Increase"
+      >
+        <Plus size={12} strokeWidth={2.5} />
+      </button>
     </div>
   );
 }
@@ -156,7 +448,11 @@ function ProductionCalculator() {
   const [selected, setSelected] = useState<TypeSearchMatch | null>(null);
 
   const [defaultTradeHub] = useDefaultTradeHub();
-  const { defaults: industryDefaults, saveProductionDefaults } = useIndustryDefaults();
+  const { defaults: industryDefaults } = useIndustryDefaults();
+  const { favourites, isFavourite, saveFavourite, removeFavourite } = useBlueprintFavourites();
+  const [favouritesOpen, setFavouritesOpen] = useState(false);
+  const [justFavourited, setJustFavourited] = useState(false);
+  const [justCopied, setJustCopied] = useState(false);
 
   const [runs, setRuns] = useState(1);
   const [materialEfficiency, setMaterialEfficiency] = useState(industryDefaults.production.materialEfficiency);
@@ -165,7 +461,6 @@ function ProductionCalculator() {
     industryDefaults.production.structure === "npc_station" ? "npc_station" : "engineering_complex",
   );
   const [facilityTax, setFacilityTax] = useState(industryDefaults.production.facilityTax);
-  const [savedDefaults, setSavedDefaults] = useState(false);
 
   const [systemQuery, setSystemQuery] = useState("");
   const [systemSuggestions, setSystemSuggestions] = useState<SystemSearchMatch[]>([]);
@@ -173,38 +468,82 @@ function ProductionCalculator() {
   const [system, setSystem] = useState<SystemSearchMatch | null>(null);
 
   const [tree, setTree] = useState<BuildTreeNode | null>(null);
+  /** The blueprint/reaction-formula item itself - a one-time acquisition
+   * cost separate from the per-unit material tree above (buildCostTree
+   * starts from what the blueprint OUTPUTS, so the blueprint's own cost
+   * never appears anywhere in that tree). Shown as its own line rather than
+   * folded into totalCost/"Per unit", since owning the blueprint isn't a
+   * per-run material cost. */
+  const [blueprintCost, setBlueprintCost] = useState<{ typeId: number; name: string; cost: number } | null>(null);
+  /** A manually-typed override for the blueprint row's cost, as a raw
+   * string so the field can be edited freely (cleared, mid-typing, etc.)
+   * without fighting a parsed number's re-formatting. Market/adjusted
+   * pricing rarely covers blueprints at all (most aren't sold as market
+   * orders, only via contracts - see blueprintEffectiveCost below), so this
+   * is the practical way to get a real figure in: look the price up on
+   * contracts yourself and type it in. */
+  const [blueprintManualCost, setBlueprintManualCost] = useState("");
+  /** Which Build Steps rows are ticked, keyed by rowPath (see BuildTreeRow) -
+   * lets someone check off just the handful of items they still need
+   * (already have the rest in a hangar, only buying part of the list this
+   * trip, etc.) and see a total for only that subset instead of everything. */
+  const [checkedPaths, setCheckedPaths] = useState<Set<string>>(new Set());
+  /** Which Build Steps rows are currently expanded, keyed the same way as
+   * checkedPaths - lifted up here (rather than local state per row) so
+   * "Collapse All" can close every open tier from one place instead of
+   * only ever being able to reach whichever single row's own state it is. */
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [calculating, setCalculating] = useState(false);
-  const [basePrices, setBasePrices] = useState<Map<number, number>>(new Map());
   const [hubRegionId, setHubRegionId] = useState(defaultTradeHub);
   const [hubPrices, setHubPrices] = useState<Map<number, number>>(new Map());
   const [hubPricesLoading, setHubPricesLoading] = useState(false);
   const reportError = useErrorReporter();
 
-  // Multiple queued build jobs, each a snapshot of the tree as computed at
-  // "add" time (its own ME/TE/runs baked in) - independent of whatever the
-  // inputs above currently show, so reconfiguring for the next product
-  // doesn't retroactively change an already-queued one.
-  const [shoppingListJobs, setShoppingListJobs] = useState<{ id: string; name: string; runs: number; tree: BuildTreeNode }[]>([]);
-
-  function handleAddToShoppingList() {
-    if (!tree || !selected) return;
-    setShoppingListJobs((prev) => [...prev, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: selected.name, runs, tree }]);
+  /** Saves (or updates) the currently-selected blueprint's whole setup -
+   * runs/ME/TE/structure/tax/trade hub/system - as a favourite, so it can
+   * be picked from the list later with everything restored instead of
+   * retyping it. Always overwrites rather than toggling off, so tweaking
+   * an already-favourited setup and clicking again just updates it. */
+  function handleFavouriteSetup() {
+    if (!selected) return;
+    saveFavourite({
+      typeId: selected.id,
+      name: selected.name,
+      runs,
+      materialEfficiency,
+      timeEfficiency,
+      structure,
+      facilityTax,
+      hubRegionId,
+      systemId: system?.id ?? null,
+      systemName: system?.name ?? null,
+    });
+    setJustFavourited(true);
+    window.setTimeout(() => setJustFavourited(false), 1500);
   }
 
-  function handleRemoveShoppingListJob(id: string) {
-    setShoppingListJobs((prev) => prev.filter((j) => j.id !== id));
-  }
-
-  const aggregatedMaterials = useMemo(() => {
-    const combined = new Map<number, { name: string; quantity: number }>();
-    for (const job of shoppingListJobs) flattenRawMaterials(job.tree, combined);
-    return Array.from(combined.entries());
-  }, [shoppingListJobs]);
-
-  function handleSaveDefaults() {
-    saveProductionDefaults({ materialEfficiency, timeEfficiency, structure, facilityTax });
-    setSavedDefaults(true);
-    window.setTimeout(() => setSavedDefaults(false), 1500);
+  /** Loads a saved favourite's whole setup back in - just the inputs, not
+   * an automatic recalculation, so this stays a simple, safe state
+   * assignment rather than needing handleCalculate to read values that
+   * haven't actually landed in state yet by the time it'd run. */
+  function loadFavourite(fav: BlueprintFavourite) {
+    setQuery(fav.name);
+    setSelected({ id: fav.typeId, name: fav.name, market_group_id: null, volume: 0 });
+    setRuns(fav.runs);
+    setMaterialEfficiency(fav.materialEfficiency);
+    setTimeEfficiency(fav.timeEfficiency);
+    setStructure(fav.structure === "npc_station" ? "npc_station" : "engineering_complex");
+    setFacilityTax(fav.facilityTax);
+    setHubRegionId(fav.hubRegionId);
+    if (fav.systemId != null && fav.systemName != null) {
+      setSystem({ id: fav.systemId, name: fav.systemName, security: 0 });
+      setSystemQuery(fav.systemName);
+    } else {
+      setSystem(null);
+      setSystemQuery("");
+    }
+    setTree(null);
+    setFavouritesOpen(false);
   }
 
   useEffect(() => {
@@ -262,8 +601,11 @@ function ProductionCalculator() {
       setHubPrices(new Map());
       return;
     }
-    const materials = Array.from(flattenRawMaterials(tree).entries());
-    if (materials.length === 0) {
+    // Every distinct item anywhere in the tree, not just the flattened
+    // shopping-list leaves - a Build row's own per-unit hub price is shown
+    // too now, not only Buy rows, so it needs pricing just the same.
+    const typeIds = Array.from(collectAllTypeIds(tree));
+    if (typeIds.length === 0) {
       setHubPrices(new Map());
       return;
     }
@@ -276,10 +618,7 @@ function ProductionCalculator() {
     setHubPricesLoading(true);
     // One IPC call for the whole material list instead of one per material -
     // the backend batches and caches these itself now.
-    getRegionSellMinPrices(
-      hubRegionId,
-      materials.map(([typeId]) => typeId),
-    )
+    getRegionSellMinPrices(hubRegionId, typeIds)
       .then((next) => {
         if (cancelled) return;
         setHubPrices(next);
@@ -299,6 +638,10 @@ function ProductionCalculator() {
     if (!selected) return;
     setCalculating(true);
     setTree(null);
+    setBlueprintCost(null);
+    setBlueprintManualCost("");
+    setCheckedPaths(new Set());
+    setExpandedPaths(new Set());
     try {
       const detail = await getBlueprintDetail(selected.id);
       const activityInfo = detail.manufacturing ?? detail.reaction;
@@ -310,7 +653,7 @@ function ProductionCalculator() {
 
       const prices = await getMarketPrices();
       const priceByTypeId = new Map(prices.map((p) => [p.type_id, p.adjusted_price ?? p.average_price ?? 0]));
-      setBasePrices(priceByTypeId);
+      setBlueprintCost({ typeId: selected.id, name: selected.name, cost: priceByTypeId.get(selected.id) ?? 0 });
 
       // The blueprint/reaction-formula item itself is never a manufacturable
       // product (nothing produces "Orca Blueprint" - it's the SHIP that gets
@@ -330,6 +673,11 @@ function ProductionCalculator() {
         structureTimeBonus: structure === "engineering_complex" ? 0.15 : 0,
       }, priceByTypeId);
       setTree(result);
+      // Opt-out by default: every material row starts ticked (the
+      // blueprint row deliberately doesn't - see its own comment) so
+      // "Selected total" reads as the real total until something's
+      // unticked, rather than looking like nothing's selected yet.
+      setCheckedPaths(collectPaths(result, rowPath("root", result.typeId), new Set()));
 
       if (system) {
         const costIndices = await getIndustrySystemCostIndices();
@@ -350,11 +698,162 @@ function ProductionCalculator() {
     }
   }
 
-  const rawMaterials = tree ? Array.from(flattenRawMaterials(tree).entries()) : [];
+  /** Toggles a tree row. Unticking cascades down through the whole
+   * subtree (not just this one path) - otherwise the still-ticked
+   * children would simply take over the sum via sumCheckedCost's
+   * short-circuit rule, and the row would look unticked while its cost
+   * silently kept counting. Ticking a row back on only needs to add that
+   * one path back - its subtree is irrelevant to the sum once the parent
+   * itself is ticked, whatever state the descendants are still in. */
+  function toggleChecked(node: BuildTreeNode, path: string) {
+    setCheckedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        for (const p of collectPaths(node, path, new Set())) next.delete(p);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }
+
+  /** The blueprint row has no subtree, so a plain flip is enough - no cascade needed. */
+  function toggleBlueprintChecked(path: string) {
+    setCheckedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  /** Opening a row to look inside it is itself a decision - it means
+   * "I'm building this from its own materials, not treating it as one
+   * unit" - so expanding automatically unticks the row and ticks its
+   * direct children (their own totalCost stands in for the parent's),
+   * and collapsing it back reverses that (re-tick the row, untick its
+   * children) since going back to the rolled-up view means the drill-down
+   * is done. Only direct children are touched on the way down - a
+   * grandchild's own state only matters once its own parent is expanded
+   * too. Expanding also unticks every ancestor above this row, not just
+   * the row itself: sumCheckedCost stops at the first ticked ancestor it
+   * finds coming down from the root, so leaving one ticked above this row
+   * (e.g. the root product, ticked by default) would keep swallowing
+   * whatever gets ticked/unticked in here regardless. */
+  function handleExpandToggle(node: BuildTreeNode, path: string, expanding: boolean) {
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      if (expanding) next.add(path);
+      else next.delete(path);
+      return next;
+    });
+    setCheckedPaths((prev) => {
+      const next = new Set(prev);
+      if (expanding) {
+        for (const p of ancestorPaths(path)) next.delete(p);
+        for (const child of node.materials) next.add(rowPath(path, child.typeId));
+      } else {
+        next.add(path);
+        for (const child of node.materials) next.delete(rowPath(path, child.typeId));
+      }
+      return next;
+    });
+  }
+
+  /** Closes every open tier at once and puts the checkbox state back to
+   * "everything ticked at the top" - the same state a fresh calculation
+   * starts in - rather than leaving whatever ticks/unticks were made deep
+   * in now-hidden branches silently still in effect. */
+  function handleCollapseAll() {
+    setExpandedPaths(new Set());
+    if (tree) setCheckedPaths(collectPaths(tree, rowPath("root", tree.typeId), new Set()));
+  }
+
+  /** Every cost field re-derived off real Trade Hub prices instead of the
+   * galaxy-wide index buildCostTree started from (see repriceTree) - the
+   * one source of truth for Total cost/Per unit/Selected total/Build-vs-Buy
+   * everywhere below, not just a column sitting next to a different number.
+   * Falls back to the original galaxy-index price node by node wherever the
+   * hub has no live sell orders, same as the per-row display already did;
+   * an empty hubPrices map (nothing fetched yet) just means every node
+   * falls back, so this is never null while tree itself isn't. */
+  const pricedTree = useMemo(() => (tree ? repriceTree(tree, hubPrices) : null), [tree, hubPrices]);
+
+  const BLUEPRINT_ROW_PATH = "blueprint";
+  // A manual entry always wins once typed, even "0" - only a genuinely
+  // empty field falls back to the (usually unhelpful, market-order-based)
+  // fetched price, so clearing the field back out restores that fallback.
+  const blueprintEffectiveCost = blueprintManualCost.trim() !== "" ? Number(blueprintManualCost) || 0 : (blueprintCost?.cost ?? 0);
+  const selectedTotal = useMemo(() => {
+    let sum = checkedPaths.has(BLUEPRINT_ROW_PATH) ? blueprintEffectiveCost : 0;
+    if (pricedTree) sum += sumCheckedCost(pricedTree, rowPath("root", pricedTree.typeId), checkedPaths, hubPrices);
+    return sum;
+  }, [pricedTree, blueprintEffectiveCost, checkedPaths, hubPrices]);
+
+  /** Name\tQuantity per line - the same tab-separated shape EVE's own
+   * inventory/contract copy produces, which is exactly what the game's
+   * Multibuy paste box expects. Summed by type_id first (collectCheckedItems)
+   * so the same material checked in two branches doesn't show up twice. */
+  function handleCopyToClipboard() {
+    const items = new Map<number, { name: string; quantity: number }>();
+    if (blueprintCost && checkedPaths.has(BLUEPRINT_ROW_PATH)) {
+      items.set(blueprintCost.typeId, { name: blueprintCost.name, quantity: 1 });
+    }
+    if (pricedTree) collectCheckedItems(pricedTree, rowPath("root", pricedTree.typeId), checkedPaths, items);
+    if (items.size === 0) return;
+    const text = Array.from(items.values())
+      .map((i) => `${i.name}\t${i.quantity}`)
+      .join("\n");
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setJustCopied(true);
+        window.setTimeout(() => setJustCopied(false), 1500);
+      })
+      .catch((err) => reportError(`Failed to copy to clipboard: ${String(err)}`));
+  }
 
   return (
     <div className="industry-production">
       <div className="industry-inputs-panel">
+        <div className="market-browser-favourites">
+          <button
+            type="button"
+            className={`market-browser-favourites-toggle${favouritesOpen ? " market-browser-favourites-toggle-active" : ""}`}
+            onClick={() => setFavouritesOpen((v) => !v)}
+          >
+            <Star size={14} strokeWidth={2} fill={favouritesOpen ? "currentColor" : "none"} />
+            My Favourites
+            {favourites.length > 0 && <span className="market-browser-favourites-count">{favourites.length}</span>}
+          </button>
+          {favouritesOpen &&
+            (favourites.length === 0 ? (
+              <p className="market-browser-favourites-empty">
+                No favourites yet - pick a blueprint below, set it up how you like, then click "Favourite This Setup".
+              </p>
+            ) : (
+              <div className="market-browser-favourites-list">
+                {favourites.map((f) => (
+                  <div key={f.typeId} className="industry-blueprint-favourite-row">
+                    <button type="button" onClick={() => loadFavourite(f)}>
+                      <img src={typeIconUrl(f.typeId, 32, f.name)} alt="" className="market-browser-row-icon" />
+                      <span className="industry-blueprint-favourite-name">{f.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="industry-blueprint-favourite-remove"
+                      onClick={() => removeFavourite(f.typeId)}
+                      aria-label={`Remove ${f.name} from favourites`}
+                      title="Remove from favourites"
+                    >
+                      <X size={12} strokeWidth={2.5} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
+        </div>
+
         <div className="kills-add-combobox industry-blueprint-search">
           <input
             type="text"
@@ -393,29 +892,24 @@ function ProductionCalculator() {
           <div className="industry-input-grid">
             <label className="wh-field-label">
               Runs
-              <input type="number" min={1} className="industry-field-input" value={runs} onChange={(e) => setRuns(Math.max(1, Number(e.target.value) || 1))} />
+              <NumberStepperInput value={runs} onChange={setRuns} min={1} className="industry-field-input" />
             </label>
             <label className="wh-field-label">
               Material Efficiency
-              <input
-                type="number"
-                min={0}
-                max={10}
-                className="industry-field-input"
-                value={materialEfficiency}
-                onChange={(e) => setMaterialEfficiency(Math.max(0, Math.min(10, Number(e.target.value) || 0)))}
-              />
+              <NumberStepperInput value={materialEfficiency} onChange={setMaterialEfficiency} min={0} max={10} className="industry-field-input" />
             </label>
             <label className="wh-field-label">
               Time Efficiency
-              <input
-                type="number"
+              <NumberStepperInput value={timeEfficiency} onChange={setTimeEfficiency} min={0} max={20} step={2} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Facility Tax %
+              <NumberStepperInput
+                value={facilityTax * 100}
+                onChange={(v) => setFacilityTax(v / 100)}
                 min={0}
-                max={20}
-                step={2}
+                step={0.01}
                 className="industry-field-input"
-                value={timeEfficiency}
-                onChange={(e) => setTimeEfficiency(Math.max(0, Math.min(20, Number(e.target.value) || 0)))}
               />
             </label>
             <label className="wh-field-label">
@@ -429,16 +923,16 @@ function ProductionCalculator() {
               </select>
             </label>
             <label className="wh-field-label">
-              Facility Tax %
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className="industry-field-input"
-                value={facilityTax * 100}
-                onChange={(e) => setFacilityTax(Math.max(0, Number(e.target.value) || 0) / 100)}
-              />
+              Trade Hub
+              <select className="industry-field-input" value={hubRegionId} onChange={(e) => setHubRegionId(Number(e.target.value))}>
+                {TRADE_HUB_REGIONS.map((h) => (
+                  <option key={h.regionId} value={h.regionId}>
+                    {h.regionName}
+                  </option>
+                ))}
+              </select>
             </label>
+            {hubPricesLoading && <span className="industry-hub-prices-loading">Loading hub prices...</span>}
             <div className="kills-add-combobox industry-system-search">
               <label className="wh-field-label">
                 System (for job cost)
@@ -481,175 +975,136 @@ function ProductionCalculator() {
             <button type="button" className="kills-sync-btn" onClick={handleCalculate} disabled={calculating}>
               {calculating ? "Calculating..." : "Calculate Build Cost"}
             </button>
-            <button type="button" className="detail-back" onClick={handleSaveDefaults} title="Remember these ME/TE/structure/tax inputs as the default next time">
-              {savedDefaults ? "Saved!" : "Save as Default"}
+            <button
+              type="button"
+              className={`detail-back${isFavourite(selected.id) ? " industry-favourite-setup-active" : ""}`}
+              onClick={handleFavouriteSetup}
+              title="Save these runs/ME/TE/structure/tax/trade hub/system settings against this blueprint, so picking it from My Favourites restores them exactly"
+            >
+              <Star size={13} strokeWidth={2} fill={isFavourite(selected.id) ? "currentColor" : "none"} />
+              {justFavourited ? "Saved!" : isFavourite(selected.id) ? "Update Favourite" : "Favourite This Setup"}
             </button>
-            {tree && (
-              <button
-                type="button"
-                className="detail-back"
-                onClick={handleAddToShoppingList}
-                title="Add this build (with its current ME/TE/runs) to the running shopping list below"
-              >
-                + Add to Shopping List
-              </button>
-            )}
           </div>
         )}
       </div>
 
-      {tree && (
+      {pricedTree && (
         <div className="industry-results-panel">
+          <div className="industry-build-steps-header">
+            <p className="wh-side-label">Build Steps</p>
+            {expandedPaths.size > 0 && (
+              <button type="button" className="skill-action-btn" onClick={handleCollapseAll}>
+                Collapse All
+              </button>
+            )}
+          </div>
+          <div className="industry-build-header">
+            <span className="industry-build-header-checkbox-spacer" />
+            <div className="industry-build-header-grid">
+              <span />
+              <span className="industry-build-header-label-left">Material</span>
+              <span title="Total Quantity: the total number of units required for this stage of the build.">Qty</span>
+              <span title="Build Cost: what it would cost to build the full quantity needed from its own materials, at real Trade Hub prices.">
+                Build Cost
+              </span>
+              <span title="Buy Cost: the Trade Hub cost of buying the full quantity needed outright, right now.">Buy Cost</span>
+              <span title="Total: the cheaper of Build/Buy for a raw material, or the combined cost of just the materials one tier below for anything buildable.">
+                Total
+              </span>
+              <span />
+            </div>
+          </div>
+          <div className="market-browser-tree-list">
+            {blueprintCost && (
+              <div className="market-tree-node industry-build-node">
+                <div className="market-browser-tree-item industry-build-row industry-build-row-blueprint">
+                  <input
+                    type="checkbox"
+                    className="industry-build-checkbox"
+                    checked={checkedPaths.has(BLUEPRINT_ROW_PATH)}
+                    onChange={() => toggleBlueprintChecked(BLUEPRINT_ROW_PATH)}
+                    aria-label={`Include ${blueprintCost.name} in the selected total`}
+                  />
+                  <img src={typeIconUrl(blueprintCost.typeId, 32, blueprintCost.name)} alt="" className="market-browser-row-icon" />
+                  <span className="market-browser-tree-item-label">{blueprintCost.name}</span>
+                  <span className="industry-build-decision industry-build-decision-buy">Buy</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    className="industry-build-cost-input"
+                    placeholder={formatIsk(blueprintCost.cost)}
+                    value={blueprintManualCost}
+                    onChange={(e) => setBlueprintManualCost(e.target.value)}
+                    title="Blueprints are rarely sold on the market - most real prices come from contracts. Type in what you found there."
+                  />
+                </div>
+              </div>
+            )}
+            <BuildTreeRow
+              node={pricedTree}
+              depth={0}
+              path={rowPath("root", pricedTree.typeId)}
+              checkedPaths={checkedPaths}
+              expandedPaths={expandedPaths}
+              onToggle={toggleChecked}
+              onExpandToggle={handleExpandToggle}
+              hubPrices={hubPrices}
+            />
+          </div>
+
           <div className="skill-plan-footer">
             <span>
-              Total cost: <strong>{formatIsk(tree.totalCost)}</strong>
+              Total cost: <strong>{formatIsk(pricedTree.totalCost)}</strong>
             </span>
             <span className="skill-queue-footer-sep">|</span>
             <span>
-              Per unit: <strong>{formatIsk(tree.totalCost / tree.quantityNeeded)}</strong>
+              Per unit: <strong>{formatIsk(pricedTree.totalCost / pricedTree.quantityNeeded)}</strong>
             </span>
-            {tree.timeSeconds != null && (
+            {pricedTree.timeSeconds != null && (
               <>
                 <span className="skill-queue-footer-sep">|</span>
                 <span>
-                  Build time: <strong>{formatDuration(tree.timeSeconds)}</strong>
+                  Build time: <strong>{formatDuration(pricedTree.timeSeconds)}</strong>
                 </span>
               </>
             )}
-          </div>
-
-          <p className="wh-side-label">Build Steps</p>
-          <div className="market-browser-tree-list">
-            <BuildTreeRow node={tree} depth={0} />
-          </div>
-
-          {rawMaterials.length > 0 && (
-            <>
-              <div className="industry-shopping-list-header">
-                <p className="wh-side-label">Shopping List (Raw / Bought Materials)</p>
-                <label className="wh-field-label industry-hub-select-label">
-                  Trade Hub
-                  <select
-                    className="industry-field-input"
-                    value={hubRegionId}
-                    onChange={(e) => setHubRegionId(Number(e.target.value))}
-                  >
-                    {TRADE_HUB_REGIONS.map((h) => (
-                      <option key={h.regionId} value={h.regionId}>
-                        {h.regionName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {hubPricesLoading && <span className="industry-hub-prices-loading">Loading hub prices...</span>}
-              </div>
-              <div className="data-table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Material</th>
-                      <th className="data-table-numeric">Unit Price</th>
-                      <th className="data-table-numeric">Quantity</th>
-                      <th className="data-table-numeric">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rawMaterials.map(([typeId, m]) => {
-                      const unitPrice = hubPrices.get(typeId) ?? basePrices.get(typeId) ?? 0;
-                      const total = unitPrice * m.quantity;
-                      return (
-                        <tr key={typeId}>
-                          <td className="industry-shopping-list-name">
-                            <img src={typeIconUrl(typeId, 32, m.name)} alt="" className="market-browser-row-icon" />
-                            {m.name}
-                          </td>
-                          <td className="data-table-numeric wallet-amount-negative">{formatIsk(unitPrice)}</td>
-                          <td className="data-table-numeric">{m.quantity.toLocaleString()}</td>
-                          <td className="data-table-numeric wallet-amount-negative">{formatIsk(total)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="industry-shopping-list-total-row">
-                      <td colSpan={3}>Shopping List Total</td>
-                      <td className="data-table-numeric wallet-amount-negative">
-                        {formatIsk(
-                          rawMaterials.reduce((sum, [typeId, m]) => sum + (hubPrices.get(typeId) ?? basePrices.get(typeId) ?? 0) * m.quantity, 0),
-                        )}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {shoppingListJobs.length > 0 && (
-        <div className="industry-results-panel">
-          <div className="industry-shopping-list-header">
-            <p className="wh-side-label">Multi-Job Shopping List ({shoppingListJobs.length} job{shoppingListJobs.length === 1 ? "" : "s"})</p>
-          </div>
-          <div className="industry-shopping-list-jobs">
-            {shoppingListJobs.map((job) => (
-              <span key={job.id} className="data-table-tag data-table-tag-neutral industry-shopping-list-job-tag">
-                {job.name} x{job.runs}
-                <button type="button" onClick={() => handleRemoveShoppingListJob(job.id)} title="Remove this job from the list">
-                  <X size={11} strokeWidth={2.5} />
+            {checkedPaths.size > 0 && (
+              <>
+                <span className="skill-queue-footer-sep">|</span>
+                <span>
+                  Selected total ({checkedPaths.size} item{checkedPaths.size === 1 ? "" : "s"}):{" "}
+                  <strong>{formatIsk(selectedTotal)}</strong>
+                </span>
+                <button
+                  type="button"
+                  className="industry-copy-clipboard-btn"
+                  onClick={handleCopyToClipboard}
+                  title="Copy the ticked items as Name/Quantity lines, ready to paste into the game's Multibuy window"
+                >
+                  <Copy size={14} strokeWidth={2.5} />
+                  {justCopied ? "Copied!" : "Copy to Clipboard"}
                 </button>
-              </span>
-            ))}
-          </div>
-          <div className="data-table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Material</th>
-                  <th className="data-table-numeric">Unit Price</th>
-                  <th className="data-table-numeric">Quantity</th>
-                  <th className="data-table-numeric">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {aggregatedMaterials.map(([typeId, m]) => {
-                  const unitPrice = hubPrices.get(typeId) ?? basePrices.get(typeId) ?? 0;
-                  const total = unitPrice * m.quantity;
-                  return (
-                    <tr key={typeId}>
-                      <td className="industry-shopping-list-name">
-                        <img src={typeIconUrl(typeId, 32, m.name)} alt="" className="market-browser-row-icon" />
-                        {m.name}
-                      </td>
-                      <td className="data-table-numeric wallet-amount-negative">{formatIsk(unitPrice)}</td>
-                      <td className="data-table-numeric">{m.quantity.toLocaleString()}</td>
-                      <td className="data-table-numeric wallet-amount-negative">{formatIsk(total)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="industry-shopping-list-total-row">
-                  <td colSpan={3}>Combined Shopping List Total</td>
-                  <td className="data-table-numeric wallet-amount-negative">
-                    {formatIsk(aggregatedMaterials.reduce((sum, [typeId, m]) => sum + (hubPrices.get(typeId) ?? basePrices.get(typeId) ?? 0) * m.quantity, 0))}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+              </>
+            )}
           </div>
         </div>
       )}
+
     </div>
   );
 }
 
 function ReprocessingCalculator() {
-  const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selected, setSelected] = useState<TypeSearchMatch | null>(null);
+  // Browsable ore/ice picker, replacing a type-to-search box - nobody has
+  // "Nocxite" or "Bezdnacine" memorized, so picking from a list beats
+  // recalling a name. Two levels, same pattern as the Item Database's own
+  // category->group->item browse: pick a mineral (Veldspar, Ice, ...),
+  // then the specific grade/compression variant within it.
+  const [oreGroups, setOreGroups] = useState<GroupSummary[] | null>(null);
+  const [activeGroup, setActiveGroup] = useState<GroupSummary | null>(null);
+  const [groupItems, setGroupItems] = useState<TypeSummary[] | null>(null);
 
   const [defaultTradeHub] = useDefaultTradeHub();
   const { defaults: industryDefaults, saveReprocessingDefaults } = useIndustryDefaults();
@@ -681,29 +1136,29 @@ function ReprocessingCalculator() {
   }
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
+    getCategoryGroups(ORE_CATEGORY_ID)
+      .then(setOreGroups)
+      .catch((err) => reportError(`Failed to load ore/ice types: ${String(err)}`));
+  }, [reportError]);
+
+  useEffect(() => {
+    if (!activeGroup) {
+      setGroupItems(null);
       return;
     }
     let cancelled = false;
-    const timer = setTimeout(() => {
-      searchMarketTypes(trimmed)
-        .then((matches) => {
-          if (!cancelled) {
-            setSuggestions(matches);
-            setSuggestionsOpen(matches.length > 0);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) setSuggestions([]);
-        });
-    }, 150);
+    setGroupItems(null);
+    getGroupItems(activeGroup.id)
+      .then((items) => {
+        if (!cancelled) setGroupItems(items);
+      })
+      .catch((err) => {
+        if (!cancelled) reportError(`Failed to load ${activeGroup.name} variants: ${String(err)}`);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [query]);
+  }, [activeGroup, reportError]);
 
   useEffect(() => {
     if (!info || info.materials.length === 0) {
@@ -738,7 +1193,7 @@ function ReprocessingCalculator() {
     try {
       const result = await getReprocessingMaterials(selected.id);
       if (result.materials.length === 0) {
-        reportError(`${selected.name} doesn't reprocess into anything - it may not be an ore, ice, or salvage type.`);
+        reportError(`${selected.name} doesn't reprocess into anything.`);
         setInfo(null);
         return;
       }
@@ -774,51 +1229,93 @@ function ReprocessingCalculator() {
   return (
     <div className="industry-production">
       <div className="industry-inputs-panel">
-        <div className="kills-add-combobox industry-blueprint-search">
-          <input
-            type="text"
-            placeholder="Search for an ore, ice, or salvage type..."
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSelected(null);
-              setInfo(null);
-            }}
-            onFocus={() => suggestions.length > 0 && setSuggestionsOpen(true)}
-            onBlur={() => setTimeout(() => setSuggestionsOpen(false), 120)}
-          />
-          {suggestionsOpen && (
-            <div className="gatecheck-slot-results kills-add-suggestions">
-              {suggestions.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setSelected(s);
-                    setQuery(s.name);
-                    setSuggestionsOpen(false);
-                  }}
-                >
-                  <img src={typeIconUrl(s.id, 32, s.name)} alt="" className="market-browser-row-icon" />
-                  {s.name}
-                </button>
-              ))}
+        {!selected &&
+          (!activeGroup ? (
+            <div className="industry-browse-picker">
+              <p className="item-db-breadcrumb">Choose an ore or ice type</p>
+              {oreGroups === null ? (
+                <p className="detail-empty">Loading ore/ice types...</p>
+              ) : (
+                <div className="item-db-grid">
+                  {oreGroups.map((g) => (
+                    <button key={g.id} type="button" className="item-db-card" onClick={() => setActiveGroup(g)}>
+                      <span className="item-db-card-name">{g.name}</span>
+                      <span className="data-table-tag data-table-tag-neutral">{g.item_count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          ) : (
+            <div className="industry-browse-picker">
+              <button type="button" className="detail-back" onClick={() => setActiveGroup(null)}>
+                <ChevronLeft size={16} strokeWidth={2} /> Back
+              </button>
+              <p className="item-db-breadcrumb">{activeGroup.name} - choose a grade or variant</p>
+              {groupItems === null ? (
+                <p className="detail-empty">Loading {activeGroup.name} variants...</p>
+              ) : (
+                <div className="item-db-item-grid">
+                  {groupItems.map((i) => (
+                    <button
+                      key={i.id}
+                      type="button"
+                      className="item-db-item"
+                      title={i.name}
+                      onClick={() => {
+                        setSelected({ id: i.id, name: i.name, market_group_id: null, volume: i.volume });
+                        setInfo(null);
+                      }}
+                    >
+                      <img src={typeIconUrl(i.id, 64, i.name)} alt="" className="item-db-item-icon" loading="lazy" />
+                      <span className="item-db-item-name">{i.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+        {selected && (
+          <div className="industry-selected-pick">
+            <img src={typeIconUrl(selected.id, 32, selected.name)} alt="" className="market-browser-row-icon" />
+            <span className="industry-selected-pick-name">{selected.name}</span>
+            <button
+              type="button"
+              className="detail-back"
+              onClick={() => {
+                setSelected(null);
+                setInfo(null);
+              }}
+            >
+              Change
+            </button>
+          </div>
+        )}
 
         {selected && (
           <div className="industry-input-grid">
             <label className="wh-field-label">
               Quantity Held
-              <input
-                type="number"
-                min={1}
+              <NumberStepperInput value={quantityHeld} onChange={setQuantityHeld} min={1} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Reprocessing
+              <NumberStepperInput value={reprocessingLevel} onChange={setReprocessingLevel} min={0} max={5} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Reprocessing Efficiency
+              <NumberStepperInput
+                value={reprocessingEfficiencyLevel}
+                onChange={setReprocessingEfficiencyLevel}
+                min={0}
+                max={5}
                 className="industry-field-input"
-                value={quantityHeld}
-                onChange={(e) => setQuantityHeld(Math.max(1, Number(e.target.value) || 1))}
               />
+            </label>
+            <label className="wh-field-label">
+              Ore/Ice Processing
+              <NumberStepperInput value={oreProcessingLevel} onChange={setOreProcessingLevel} min={0} max={5} className="industry-field-input" />
             </label>
             <label className="wh-field-label">
               Facility
@@ -849,39 +1346,6 @@ function ReprocessingCalculator() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="wh-field-label">
-              Reprocessing
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={reprocessingLevel}
-                onChange={(e) => setReprocessingLevel(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Reprocessing Efficiency
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={reprocessingEfficiencyLevel}
-                onChange={(e) => setReprocessingEfficiencyLevel(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Ore/Ice Processing
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={oreProcessingLevel}
-                onChange={(e) => setOreProcessingLevel(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
             </label>
             <label className="wh-field-label">
               Implant
@@ -984,10 +1448,17 @@ function ReprocessingCalculator() {
 }
 
 function InventionCalculator() {
-  const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selected, setSelected] = useState<TypeSearchMatch | null>(null);
+  // Browsable T1-blueprint picker, same reasoning as Reprocessing's ore
+  // list: nobody has the exact T1 blueprint name for every T2 item they
+  // might want memorized, so pick from a list instead of typing one. Both
+  // levels are pre-filtered server-side to blueprints that actually have
+  // invention data, so nothing shown here can dead-end on "has no
+  // invention data" once clicked (the old shared blueprint-search box
+  // could suggest any manufacturable blueprint, invertible or not).
+  const [groups, setGroups] = useState<GroupSummary[] | null>(null);
+  const [activeGroup, setActiveGroup] = useState<GroupSummary | null>(null);
+  const [groupItems, setGroupItems] = useState<TypeSummary[] | null>(null);
 
   const [detail, setDetail] = useState<BlueprintDetail | null>(null);
   const [outcomeIndex, setOutcomeIndex] = useState(0);
@@ -1004,29 +1475,29 @@ function InventionCalculator() {
   const reportError = useErrorReporter();
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
+    getInventableBlueprintGroups()
+      .then(setGroups)
+      .catch((err) => reportError(`Failed to load invertible blueprint types: ${String(err)}`));
+  }, [reportError]);
+
+  useEffect(() => {
+    if (!activeGroup) {
+      setGroupItems(null);
       return;
     }
     let cancelled = false;
-    const timer = setTimeout(() => {
-      searchBlueprints(trimmed)
-        .then((matches) => {
-          if (!cancelled) {
-            setSuggestions(matches);
-            setSuggestionsOpen(matches.length > 0);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) setSuggestions([]);
-        });
-    }, 150);
+    setGroupItems(null);
+    getInventableBlueprintsInGroup(activeGroup.id)
+      .then((items) => {
+        if (!cancelled) setGroupItems(items);
+      })
+      .catch((err) => {
+        if (!cancelled) reportError(`Failed to load ${activeGroup.name} blueprints: ${String(err)}`);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [query]);
+  }, [activeGroup, reportError]);
 
   async function handleCalculate() {
     if (!selected) return;
@@ -1035,7 +1506,7 @@ function InventionCalculator() {
     try {
       const d = await getBlueprintDetail(selected.id);
       if (!d.invention) {
-        reportError(`${selected.name} has no invention data - it may not be a T1 item that can be invented into a T2 variant.`);
+        reportError(`${selected.name} has no invention data.`);
         return;
       }
       setDetail(d);
@@ -1067,39 +1538,69 @@ function InventionCalculator() {
   return (
     <div className="industry-production">
       <div className="industry-inputs-panel">
-        <div className="kills-add-combobox industry-blueprint-search">
-          <input
-            type="text"
-            placeholder="Search for a T1 blueprint that can be invented (e.g. Rifter Blueprint)..."
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSelected(null);
-              setDetail(null);
-            }}
-            onFocus={() => suggestions.length > 0 && setSuggestionsOpen(true)}
-            onBlur={() => setTimeout(() => setSuggestionsOpen(false), 120)}
-          />
-          {suggestionsOpen && (
-            <div className="gatecheck-slot-results kills-add-suggestions">
-              {suggestions.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setSelected(s);
-                    setQuery(s.name);
-                    setSuggestionsOpen(false);
-                  }}
-                >
-                  <img src={typeIconUrl(s.id, 32, s.name)} alt="" className="market-browser-row-icon" />
-                  {s.name}
-                </button>
-              ))}
+        {!selected &&
+          (!activeGroup ? (
+            <div className="industry-browse-picker">
+              <p className="item-db-breadcrumb">Choose a T1 item to invent from</p>
+              {groups === null ? (
+                <p className="detail-empty">Loading invertible blueprint types...</p>
+              ) : (
+                <div className="item-db-grid">
+                  {groups.map((g) => (
+                    <button key={g.id} type="button" className="item-db-card" onClick={() => setActiveGroup(g)}>
+                      <span className="item-db-card-name">{g.name}</span>
+                      <span className="data-table-tag data-table-tag-neutral">{g.item_count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          ) : (
+            <div className="industry-browse-picker">
+              <button type="button" className="detail-back" onClick={() => setActiveGroup(null)}>
+                <ChevronLeft size={16} strokeWidth={2} /> Back
+              </button>
+              <p className="item-db-breadcrumb">{activeGroup.name} - choose the exact blueprint</p>
+              {groupItems === null ? (
+                <p className="detail-empty">Loading {activeGroup.name} blueprints...</p>
+              ) : (
+                <div className="item-db-item-grid">
+                  {groupItems.map((i) => (
+                    <button
+                      key={i.id}
+                      type="button"
+                      className="item-db-item"
+                      title={i.name}
+                      onClick={() => {
+                        setSelected({ id: i.id, name: i.name, market_group_id: null, volume: i.volume });
+                        setDetail(null);
+                      }}
+                    >
+                      <img src={typeIconUrl(i.id, 64, i.name)} alt="" className="item-db-item-icon" loading="lazy" />
+                      <span className="item-db-item-name">{i.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+        {selected && (
+          <div className="industry-selected-pick">
+            <img src={typeIconUrl(selected.id, 32, selected.name)} alt="" className="market-browser-row-icon" />
+            <span className="industry-selected-pick-name">{selected.name}</span>
+            <button
+              type="button"
+              className="detail-back"
+              onClick={() => {
+                setSelected(null);
+                setDetail(null);
+              }}
+            >
+              Change
+            </button>
+          </div>
+        )}
 
         {selected && (
           <button type="button" className="kills-sync-btn" onClick={handleCalculate} disabled={calculating}>
@@ -1109,6 +1610,30 @@ function InventionCalculator() {
 
         {invention && (
           <div className="industry-input-grid">
+            <label className="wh-field-label">
+              Encryption Skill
+              <NumberStepperInput value={encryptionLevel} onChange={setEncryptionLevel} min={0} max={5} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Datacore Skill 1
+              <NumberStepperInput value={datacore1Level} onChange={setDatacore1Level} min={0} max={5} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Datacore Skill 2
+              <NumberStepperInput value={datacore2Level} onChange={setDatacore2Level} min={0} max={5} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Advanced Industry
+              <NumberStepperInput value={advancedIndustryLevel} onChange={setAdvancedIndustryLevel} min={0} max={5} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Facility Time Modifier
+              <NumberStepperInput value={facilityModifier} onChange={setFacilityModifier} min={0} step={0.01} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Rig Time Bonus %
+              <NumberStepperInput value={rigBonusPct} onChange={setRigBonusPct} min={0} max={100} step={1} className="industry-field-input" />
+            </label>
             {invention.outcomes.length > 1 && (
               <label className="wh-field-label">
                 Invent Into
@@ -1122,39 +1647,6 @@ function InventionCalculator() {
               </label>
             )}
             <label className="wh-field-label">
-              Encryption Skill
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={encryptionLevel}
-                onChange={(e) => setEncryptionLevel(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Datacore Skill 1
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={datacore1Level}
-                onChange={(e) => setDatacore1Level(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Datacore Skill 2
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={datacore2Level}
-                onChange={(e) => setDatacore2Level(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
               Decryptor
               <select className="industry-field-input" value={decryptorKey} onChange={(e) => setDecryptorKey(e.target.value)}>
                 {DECRYPTORS.map((d) => (
@@ -1163,40 +1655,6 @@ function InventionCalculator() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="wh-field-label">
-              Advanced Industry
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={advancedIndustryLevel}
-                onChange={(e) => setAdvancedIndustryLevel(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Facility Time Modifier
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className="industry-field-input"
-                value={facilityModifier}
-                onChange={(e) => setFacilityModifier(Math.max(0, Number(e.target.value) || 0))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Rig Time Bonus %
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                className="industry-field-input"
-                value={rigBonusPct}
-                onChange={(e) => setRigBonusPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
-              />
             </label>
           </div>
         )}
@@ -1276,10 +1734,14 @@ const RESEARCH_TYPE_LABEL: Record<ResearchType, string> = {
 };
 
 function ResearchCalculator() {
-  const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selected, setSelected] = useState<TypeSearchMatch | null>(null);
+  // Browsable picker, same reasoning as Reprocessing/Invention above -
+  // ME/TE research applies to a much wider set (essentially every
+  // manufacturable blueprint, not just T1), but the interaction is the
+  // same: pick the item family, then the exact blueprint.
+  const [groups, setGroups] = useState<GroupSummary[] | null>(null);
+  const [activeGroup, setActiveGroup] = useState<GroupSummary | null>(null);
+  const [groupItems, setGroupItems] = useState<TypeSummary[] | null>(null);
 
   const [detail, setDetail] = useState<BlueprintDetail | null>(null);
   const [researchType, setResearchType] = useState<ResearchType>("research_me");
@@ -1295,29 +1757,29 @@ function ResearchCalculator() {
   const reportError = useErrorReporter();
 
   useEffect(() => {
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
+    getResearchableBlueprintGroups()
+      .then(setGroups)
+      .catch((err) => reportError(`Failed to load researchable blueprint types: ${String(err)}`));
+  }, [reportError]);
+
+  useEffect(() => {
+    if (!activeGroup) {
+      setGroupItems(null);
       return;
     }
     let cancelled = false;
-    const timer = setTimeout(() => {
-      searchBlueprints(trimmed)
-        .then((matches) => {
-          if (!cancelled) {
-            setSuggestions(matches);
-            setSuggestionsOpen(matches.length > 0);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) setSuggestions([]);
-        });
-    }, 150);
+    setGroupItems(null);
+    getResearchableBlueprintsInGroup(activeGroup.id)
+      .then((items) => {
+        if (!cancelled) setGroupItems(items);
+      })
+      .catch((err) => {
+        if (!cancelled) reportError(`Failed to load ${activeGroup.name} blueprints: ${String(err)}`);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
-  }, [query]);
+  }, [activeGroup, reportError]);
 
   // ME researches one level at a time (0-10); TE researches in steps of 2
   // (0-20, 10 jobs total) - switching type re-scales current/target level
@@ -1340,7 +1802,7 @@ function ResearchCalculator() {
     try {
       const d = await getBlueprintDetail(selected.id);
       if (!d.research_me && !d.research_te) {
-        reportError(`${selected.name} has no research data - only manufacturable blueprints can be ME/TE researched.`);
+        reportError(`${selected.name} has no research data.`);
         return;
       }
       setDetail(d);
@@ -1370,39 +1832,69 @@ function ResearchCalculator() {
   return (
     <div className="industry-production">
       <div className="industry-inputs-panel">
-        <div className="kills-add-combobox industry-blueprint-search">
-          <input
-            type="text"
-            placeholder="Search for a blueprint to research..."
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSelected(null);
-              setDetail(null);
-            }}
-            onFocus={() => suggestions.length > 0 && setSuggestionsOpen(true)}
-            onBlur={() => setTimeout(() => setSuggestionsOpen(false), 120)}
-          />
-          {suggestionsOpen && (
-            <div className="gatecheck-slot-results kills-add-suggestions">
-              {suggestions.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setSelected(s);
-                    setQuery(s.name);
-                    setSuggestionsOpen(false);
-                  }}
-                >
-                  <img src={typeIconUrl(s.id, 32, s.name)} alt="" className="market-browser-row-icon" />
-                  {s.name}
-                </button>
-              ))}
+        {!selected &&
+          (!activeGroup ? (
+            <div className="industry-browse-picker">
+              <p className="item-db-breadcrumb">Choose a blueprint type to research</p>
+              {groups === null ? (
+                <p className="detail-empty">Loading researchable blueprint types...</p>
+              ) : (
+                <div className="item-db-grid">
+                  {groups.map((g) => (
+                    <button key={g.id} type="button" className="item-db-card" onClick={() => setActiveGroup(g)}>
+                      <span className="item-db-card-name">{g.name}</span>
+                      <span className="data-table-tag data-table-tag-neutral">{g.item_count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          ) : (
+            <div className="industry-browse-picker">
+              <button type="button" className="detail-back" onClick={() => setActiveGroup(null)}>
+                <ChevronLeft size={16} strokeWidth={2} /> Back
+              </button>
+              <p className="item-db-breadcrumb">{activeGroup.name} - choose the exact blueprint</p>
+              {groupItems === null ? (
+                <p className="detail-empty">Loading {activeGroup.name} blueprints...</p>
+              ) : (
+                <div className="item-db-item-grid">
+                  {groupItems.map((i) => (
+                    <button
+                      key={i.id}
+                      type="button"
+                      className="item-db-item"
+                      title={i.name}
+                      onClick={() => {
+                        setSelected({ id: i.id, name: i.name, market_group_id: null, volume: i.volume });
+                        setDetail(null);
+                      }}
+                    >
+                      <img src={typeIconUrl(i.id, 64, i.name)} alt="" className="item-db-item-icon" loading="lazy" />
+                      <span className="item-db-item-name">{i.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+        {selected && (
+          <div className="industry-selected-pick">
+            <img src={typeIconUrl(selected.id, 32, selected.name)} alt="" className="market-browser-row-icon" />
+            <span className="industry-selected-pick-name">{selected.name}</span>
+            <button
+              type="button"
+              className="detail-back"
+              onClick={() => {
+                setSelected(null);
+                setDetail(null);
+              }}
+            >
+              Change
+            </button>
+          </div>
+        )}
 
         {selected && (
           <button type="button" className="kills-sync-btn" onClick={handleCalculate} disabled={calculating}>
@@ -1413,6 +1905,34 @@ function ResearchCalculator() {
         {detail && (
           <div className="industry-input-grid">
             <label className="wh-field-label">
+              Current Level
+              <NumberStepperInput value={currentLevel} onChange={setCurrentLevel} min={0} max={maxLevel} step={step} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Target Level
+              <NumberStepperInput value={targetLevel} onChange={setTargetLevel} min={0} max={maxLevel} step={step} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              {researchType === "research_me" ? "Metallurgy" : "Research"} Skill
+              <NumberStepperInput value={researchSkillLevel} onChange={setResearchSkillLevel} min={0} max={5} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Advanced Industry
+              <NumberStepperInput value={advancedIndustryLevel} onChange={setAdvancedIndustryLevel} min={0} max={5} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Facility Time Modifier
+              <NumberStepperInput value={facilityModifier} onChange={setFacilityModifier} min={0} step={0.01} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Implant Time Modifier
+              <NumberStepperInput value={implantModifier} onChange={setImplantModifier} min={0} step={0.01} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
+              Rig Time Bonus %
+              <NumberStepperInput value={rigBonusPct} onChange={setRigBonusPct} min={0} max={100} step={1} className="industry-field-input" />
+            </label>
+            <label className="wh-field-label">
               Research Type
               <select className="industry-field-input" value={researchType} onChange={(e) => setResearchType(e.target.value as ResearchType)}>
                 {(Object.keys(RESEARCH_TYPE_LABEL) as ResearchType[]).map((t) => (
@@ -1421,86 +1941,6 @@ function ResearchCalculator() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="wh-field-label">
-              Current Level
-              <input
-                type="number"
-                min={0}
-                max={maxLevel}
-                step={step}
-                className="industry-field-input"
-                value={currentLevel}
-                onChange={(e) => setCurrentLevel(Math.max(0, Math.min(maxLevel, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Target Level
-              <input
-                type="number"
-                min={0}
-                max={maxLevel}
-                step={step}
-                className="industry-field-input"
-                value={targetLevel}
-                onChange={(e) => setTargetLevel(Math.max(0, Math.min(maxLevel, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              {researchType === "research_me" ? "Metallurgy" : "Research"} Skill
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={researchSkillLevel}
-                onChange={(e) => setResearchSkillLevel(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Advanced Industry
-              <input
-                type="number"
-                min={0}
-                max={5}
-                className="industry-field-input"
-                value={advancedIndustryLevel}
-                onChange={(e) => setAdvancedIndustryLevel(Math.max(0, Math.min(5, Number(e.target.value) || 0)))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Facility Time Modifier
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className="industry-field-input"
-                value={facilityModifier}
-                onChange={(e) => setFacilityModifier(Math.max(0, Number(e.target.value) || 0))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Implant Time Modifier
-              <input
-                type="number"
-                min={0}
-                step={0.01}
-                className="industry-field-input"
-                value={implantModifier}
-                onChange={(e) => setImplantModifier(Math.max(0, Number(e.target.value) || 0))}
-              />
-            </label>
-            <label className="wh-field-label">
-              Rig Time Bonus %
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                className="industry-field-input"
-                value={rigBonusPct}
-                onChange={(e) => setRigBonusPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
-              />
             </label>
           </div>
         )}

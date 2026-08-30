@@ -47,7 +47,8 @@ pub fn run() {
             let handle = app.handle().clone();
             let client = handle.state::<commands::AppState>().http_client.clone();
             tauri::async_runtime::spawn(map::run_jump_history_sampler(handle.clone(), client.clone()));
-            tauri::async_runtime::spawn(kill_history::run_kill_history_recorder(handle, client));
+            tauri::async_runtime::spawn(kill_history::run_kill_history_recorder(handle.clone(), client.clone()));
+            tauri::async_runtime::spawn(kill_history::run_startup_backfill(handle, client));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -162,10 +163,16 @@ pub fn run() {
             commands::get_system_positions,
             commands::plan_gate_check,
             commands::get_gate_activity,
+            commands::get_likely_gate_camps,
+            commands::get_system_kill_heat,
             commands::get_system_gates,
             commands::get_item_categories,
             commands::get_category_groups,
             commands::get_group_items,
+            commands::get_inventable_blueprint_groups,
+            commands::get_inventable_blueprints_in_group,
+            commands::get_researchable_blueprint_groups,
+            commands::get_researchable_blueprints_in_group,
             commands::get_item_detail,
             commands::get_ship_stats,
             commands::get_jump_drive_info,

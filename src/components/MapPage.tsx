@@ -1,25 +1,27 @@
 import { useState } from "react";
 import MapView from "./MapView";
 import GateCheck from "./GateCheck";
-import WarsPage from "./WarsPage";
+import LikelyGateCamps from "./LikelyGateCamps";
 import type { SystemSummary } from "./SystemKillboard";
+import type { GateSummary } from "./GateKillboard";
 import type { SessionCharacter } from "../lib/eve";
 
-type MapTab = "map" | "gatecheck" | "wars";
+type MapTab = "map" | "gatecheck" | "likelycamps";
 
 const TABS: { id: MapTab; label: string }[] = [
   { id: "map", label: "Map" },
   { id: "gatecheck", label: "Gate Check" },
-  { id: "wars", label: "Wars" },
+  { id: "likelycamps", label: "Likely Gate Camps" },
 ];
 
 interface MapPageProps {
   onSelectKill: (killmailId: number) => void;
   onSelectSystem: (system: SystemSummary) => void;
+  onSelectGate: (gate: GateSummary) => void;
   characters: SessionCharacter[];
 }
 
-function MapPage({ onSelectKill, onSelectSystem, characters }: MapPageProps) {
+function MapPage({ onSelectKill, onSelectSystem, onSelectGate, characters }: MapPageProps) {
   const [tab, setTab] = useState<MapTab>("map");
 
   return (
@@ -41,9 +43,9 @@ function MapPage({ onSelectKill, onSelectSystem, characters }: MapPageProps) {
         {tab === "map" ? (
           <MapView onSelectKill={onSelectKill} onSelectSystem={onSelectSystem} characters={characters} />
         ) : tab === "gatecheck" ? (
-          <GateCheck onSelectSystem={onSelectSystem} />
+          <GateCheck onSelectSystem={onSelectSystem} onSelectGate={onSelectGate} />
         ) : (
-          <WarsPage characters={characters} />
+          <LikelyGateCamps onSelectGate={onSelectGate} />
         )}
       </div>
     </main>

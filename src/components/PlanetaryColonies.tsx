@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   getCharacterPlanets,
   getCharacterPlanetDetail,
@@ -7,6 +7,7 @@ import {
   type PlanetPin,
 } from "../lib/eve";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { useNotificationCenter } from "../hooks/useNotificationCenter";
 import { formatTimeElapsedFull, formatTimeRemainingFull, formatEveDateTime } from "../lib/format";
 import { typeIconUrl } from "../lib/format";
 import { useSortableRows, useTextFilter, useSelectFilter } from "../hooks/useSortableRows";
@@ -48,6 +49,12 @@ const STATUS_CLASS: Record<ColonyStatus, string> = {
   no_extractors: "data-table-tag data-table-tag-neutral",
 };
 
+/** How often colonies are silently re-checked in the background so a
+ * restart-needed notification can actually fire without the user having to
+ * sit on this page - an extractor's shortest possible cycle is measured in
+ * hours, so this doesn't need to be frequent to still catch it promptly. */
+const PI_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
 interface PlanetaryColoniesProps {
   characters: SessionCharacter[];
 }
@@ -58,8 +65,17 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [reauthCharacters, setReauthCharacters] = useState<Set<number>>(new Set());
   const reportError = useErrorReporter();
+  const { addNotification } = useNotificationCenter();
+  // Last-seen status per colony, so a poll can tell "just went idle" (worth
+  // a notification) apart from "already was idle" (not new information).
+  // Null specifically means "haven't established a baseline yet" - the
+  // very first load of a fresh character list should never itself fire a
+  // notification for colonies that were already sitting idle before the
+  // app ever checked them.
+  const prevStatusRef = useRef<Map<string, ColonyStatus> | null>(null);
 
   useEffect(() => {
+    prevStatusRef.current = null;
     if (characters.length === 0) {
       setColonies([]);
       return;
@@ -116,15 +132,32 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
       );
 
       if (cancelled) return;
+
+      const previous = prevStatusRef.current;
+      if (previous) {
+        for (const row of rows) {
+          if (row.status === "idle" && previous.get(row.key) !== "idle") {
+            addNotification(
+              "Planetary colony needs restart",
+              `${row.characterName}'s ${row.planet.planet_name} (${row.planet.solar_system_name}) - an extractor cycle just finished.`,
+            );
+          }
+        }
+      }
+      prevStatusRef.current = new Map(rows.map((r) => [r.key, r.status]));
+
       setColonies(rows);
       setReauthCharacters(needsReauth);
       setLoading(false);
     }
 
     loadAll();
+    const interval = setInterval(loadAll, PI_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [characters, reportError]);
 
   const colonyText = useTextFilter(colonies ?? [], (r) => [r.characterName, r.planet.planet_name, r.planet.solar_system_name]);
@@ -280,7 +313,6 @@ function PlanetaryColonies({ characters }: PlanetaryColoniesProps) {
                                     <div className="pi-colony-pin-head">
                                       <img className="pi-pill-icon" src={typeIconUrl(pin.type_id)} alt="" />
                                       <span className="pi-colony-pin-name">{pin.type_name}</span>
-                                      {pin.is_extractor && <span className="data-table-tag data-table-tag-accent">Extractor</span>}
                                       {pin.is_factory && <span className="data-table-tag data-table-tag-neutral">Factory</span>}
                                     </div>
                                     {pin.is_extractor && pin.product_type_name && (

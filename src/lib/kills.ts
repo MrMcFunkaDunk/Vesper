@@ -176,6 +176,24 @@ export function getRecentActivityKills(): Promise<KillEntry[]> {
   return invoke("get_recent_activity_kills");
 }
 
+export interface SystemKillHeat {
+  system_id: number;
+  system_name: string;
+  region_name: string;
+  kill_count: number;
+  last_kill_time: string;
+}
+
+/** Real per-system kill counts for the last rolling hour, queried straight
+ * off the local kill-history store with no size cap - unlike the live
+ * ticker feed (mergeKillFeeds' MAX_LIVE_KILLS caps that at 150 kills New
+ * Eden-wide), this can't silently undercount a busy system just because a
+ * lot happened elsewhere in the same hour. Backs the Map's heat glow,
+ * hover-tooltip kill count, and Top Active panel. */
+export function getSystemKillHeat(): Promise<SystemKillHeat[]> {
+  return invoke("get_system_kill_heat");
+}
+
 /** The zKillboard-style "Kill Reports" filters, backed by VESPER's own
  * locally-recorded kill history (see kill_history.rs) rather than the live
  * feed alone - "ganked" in particular only exists because of this local

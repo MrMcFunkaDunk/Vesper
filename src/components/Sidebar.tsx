@@ -12,7 +12,6 @@ import {
   Map as MapIcon,
   Factory,
   Wrench,
-  Swords,
   Calendar as CalendarIcon,
   Waypoints,
   Users,
@@ -33,7 +32,6 @@ import planetaryIndustryIcon from "../assets/sidebar-icons/planetary-industry.pn
 import mapIcon from "../assets/sidebar-icons/map.png";
 import industryIcon from "../assets/sidebar-icons/industry.png";
 import fittingsFleetsIcon from "../assets/sidebar-icons/fittings-fleets.png";
-import warsIcon from "../assets/sidebar-icons/wars.png";
 import calendarIcon from "../assets/sidebar-icons/calendar.png";
 import pathWormholeFinderIcon from "../assets/sidebar-icons/path-wormhole-finder.png";
 import multiboxingIcon from "../assets/sidebar-icons/multiboxing.png";
@@ -66,7 +64,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     id: "map",
-    label: "Map",
+    label: "Map & Gate Checker",
     icon: MapIcon,
     image: mapIcon,
     description:
@@ -123,13 +121,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Wrench,
     image: fittingsFleetsIcon,
     description: "An in-app fit builder with saved fits and fleet composition tooling.",
-  },
-  {
-    id: "wars",
-    label: "Wars",
-    icon: Swords,
-    image: warsIcon,
-    description: "Active wars for the corporations and alliances you care about.",
   },
   {
     id: "calendar",

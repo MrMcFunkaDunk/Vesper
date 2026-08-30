@@ -1,5 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { usePersistentState } from "./usePersistentState";
+import { useNotificationSoundVolume } from "./useNotificationSoundVolume";
+import { playNotificationPing } from "../lib/sound";
 
 const STORAGE_KEY = "vesper.notificationCenter";
 /** Bounds how many notifications pile up in localStorage - old ones fall off
@@ -43,6 +45,7 @@ export function useNotificationCenter(): NotificationCenterState {
 
 export function NotificationCenterProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = usePersistentState<NotificationItem[]>(STORAGE_KEY, []);
+  const [notificationVolume] = useNotificationSoundVolume();
 
   function addNotification(title: string, message?: string) {
     const item: NotificationItem = {
@@ -53,6 +56,7 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
       read: false,
     };
     setNotifications((prev) => [item, ...prev].slice(0, MAX_NOTIFICATIONS));
+    playNotificationPing(notificationVolume);
   }
 
   function markRead(id: string) {

@@ -162,19 +162,27 @@ export function formatSecurity(value: number): string {
  * spread further apart in hue than RIFT's own choices, since those three
  * specifically read as near-identical dark reds otherwise. Keyed by
  * integer tenths to avoid any floating-point equality risk. */
+/** Returns a CSS variable reference (--sec-N) rather than a raw hex value -
+ * each theme in App.css redefines the full --sec-0..--sec-10/--sec-min set,
+ * since the original hex table here was tuned to read against this app's
+ * own dark panels and goes nearly invisible on a light background (--sec-5's
+ * pale yellow, for instance) or clashes with a differently-toned theme.
+ * Returning a var() reference means every already-rendered security badge
+ * repaints instantly on a theme switch, with no re-render needed - the same
+ * mechanism every other themed color already uses. */
 const SECURITY_COLOR_BY_TENTH: Record<number, string> = {
-  10: "#2C75E1",
-  9: "#399AEB",
-  8: "#4ECEF8",
-  7: "#60DBA3",
-  6: "#71E754",
-  5: "#F5FF83",
-  4: "#DC6C06",
-  3: "#CE440F",
-  2: "#E51A26",
-  1: "#E5264F",
+  10: "var(--sec-10)",
+  9: "var(--sec-9)",
+  8: "var(--sec-8)",
+  7: "var(--sec-7)",
+  6: "var(--sec-6)",
+  5: "var(--sec-5)",
+  4: "var(--sec-4)",
+  3: "var(--sec-3)",
+  2: "var(--sec-2)",
+  1: "var(--sec-1)",
 };
-const SECURITY_COLOR_MIN = "#C23D8A";
+const SECURITY_COLOR_MIN = "var(--sec-min)";
 
 /** Coarse 3-tier band, kept only for things like the Tracked Systems chip
  * background tint where a flat high/low/null tone (matching the other
@@ -220,6 +228,18 @@ export function securityColor(value: number): string {
   return SECURITY_COLOR_BY_TENTH[tenths] ?? SECURITY_COLOR_MIN;
 }
 
+/** Canvas equivalent of securityColor(): a <canvas> 2D context can't use a
+ * "var(--sec-N)" string - ctx.fillStyle silently ignores any value it can't
+ * parse as a literal color, since canvas isn't part of the CSSOM and never
+ * resolves custom properties. Resolves the same tier to the active theme's
+ * actual current hex value instead, read straight off :root. Safe to call
+ * on every draw - MapView's draw() already re-runs constantly, and this
+ * getComputedStyle lookup is cheap next to everything else it does. */
+export function securityColorResolved(value: number): string {
+  const varName = securityColor(value).slice(4, -1);
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || "#808080";
+}
+
 /** CSS class for a standing value's positive/negative/neutral color bucket. */
 export function standingClass(value: number): string {
   if (value > 0) return "standing-text-positive";
@@ -238,4 +258,34 @@ export function formatDateHeading(iso: string): string {
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   if (sameDay(date, yesterday)) return "Yesterday";
   return new Intl.DateTimeFormat("en-US", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(date);
+}
+
+/** CCP's own item/agent description text carries an in-game-only markup
+ * dialect (color tags, "showinfo" links that open a window in the actual
+ * client) - ESI returns it completely raw, verified live (a real item's
+ * description came back with literal "<color='0xFF33FFFF'>" and
+ * "<a href=showinfo:16264>Blue Ice</a>" in the string, not parsed HTML).
+ * Strips the markup down to the plain text a player actually wants to
+ * read, keeping the tagged text itself (an ore's name, a number) rather
+ * than discarding it along with the tag it was wrapped in. */
+export function cleanEveDescription(raw: string): string {
+  return raw
+    // <a href=showinfo:16264>Blue Ice</a> -> Blue Ice (also covers the
+    // showinfo:TYPEID//ITEMID two-argument form some descriptions use).
+    .replace(/<a\s+href=showinfo:\d+(?:\/\/\d+)?>(.*?)<\/a>/gi, "$1")
+    .replace(/<color=[^>]*>/gi, "")
+    .replace(/<\/color>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    // Any other tag this dialect uses (<b>, <i>, <u>, <font ...>, etc.) -
+    // strip the tag, keep its contents.
+    .replace(/<\/?[a-z][^>]*>/gi, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    // Tag stripping above can leave a run of now-empty lines behind -
+    // collapse 3+ consecutive blank lines down to one.
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

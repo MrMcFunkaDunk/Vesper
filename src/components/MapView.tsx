@@ -3,12 +3,12 @@ import { Search, X, Crosshair, MapPin, BarChart3, RefreshCw } from "lucide-react
 import SystemStatsPanel from "./SystemStatsPanel";
 import { getMapData, getCharacterHomeSystems, getPlayerStructures, type MapData, type MapSystem, type PlayerStructureInfo } from "../lib/map";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { securityColor, formatSecurity, formatUtcTime, formatIskCompact, formatExactTime } from "../lib/format";
+import { securityColor, securityColorResolved, formatSecurity, formatUtcTime, formatIskCompact, formatExactTime } from "../lib/format";
 import { useRecentActivity } from "../hooks/useRecentActivity";
 import { useLocationTracking } from "../hooks/useLocationTracking";
 import { useMapDisplayPrefs } from "../hooks/useMapDisplayPrefs";
 import { RADIUS_OPTIONS } from "./TopBar";
-import type { KillEntry } from "../lib/kills";
+import { getSystemKillHeat, type KillEntry, type SystemKillHeat } from "../lib/kills";
 import type { SystemSummary } from "./SystemKillboard";
 import { getCharacterLocation, type SessionCharacter } from "../lib/eve";
 
@@ -35,7 +35,6 @@ const TOP_ACTIVITY_LIMIT = 5;
 /** Captured once when this module first loads (i.e. app startup), not per Map-page visit - the ticker below is deliberately blank until a kill with a timestamp after this point streams in, rather than showing whatever backlog/snapshot was already sitting in the shared recent-activity feed from earlier in the day. */
 const APP_LOADED_AT = Date.now();
 
-const JUMP_COLOR = "rgba(230, 236, 245, 0.08)";
 const MIN_ZOOM_RATIO = 0.5;
 const MAX_ZOOM_RATIO = 400;
 const LABEL_ZOOM_RATIO = 12;
@@ -80,17 +79,21 @@ const LEGEND_ITEMS: (ServiceIcon & { name: string })[] = [
  * gradient spans from very dark (1.0 blue, 0.0 near-black red) to very
  * bright (0.5 yellow), so a single fixed text color would be unreadable
  * at one end or the other. */
-function legendTextColor(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return luminance > 140 ? "#0a0a0c" : "#f4f4f6";
-}
+/** securityColor() now returns a "var(--sec-N)" reference rather than a raw
+ * hex (so the whole security scale can be redefined per theme and repaint
+ * instantly on a switch - see format.ts) - there's no hex left here to
+ * compute real luminance from. This is a fixed approximation of which tiers
+ * read as the lighter/darker half of the scale, good enough for legend-chip
+ * text contrast without needing an actual color read-back. Every theme's
+ * --sec-* set keeps the same "high-sec runs light, low/null runs darker and
+ * more saturated" shape as the original RIFT-derived scale, so this stays
+ * valid regardless of which theme is active. */
+const SECURITY_LEGEND_LIGHT_TIERS = new Set([8, 7, 6, 5]);
 
 const SECURITY_LEGEND = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0].map((tenth) => {
   const color = securityColor(tenth / 10);
-  return { tenth, label: (tenth / 10).toFixed(1), color, textColor: legendTextColor(color) };
+  const textColor = SECURITY_LEGEND_LIGHT_TIERS.has(tenth) ? "var(--sec-legend-on-light)" : "var(--sec-legend-on-dark)";
+  return { tenth, label: (tenth / 10).toFixed(1), color, textColor };
 });
 
 /** A classic map-pin silhouette (round head + tapered tail) with its tip
@@ -124,7 +127,7 @@ function drawPin(ctx: CanvasRenderingContext2D, tipX: number, tipY: number, head
 /** A character's portrait clipped to a circle, for the map's home-base pins
  * - falls back to a plain ring while the image is still loading (or if it
  * never loads) so the marker's position is still visible either way. */
-function drawPortrait(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, image: HTMLImageElement | null) {
+function drawPortrait(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, image: HTMLImageElement | null, inkColor: string) {
   if (image && image.complete && image.naturalWidth > 0) {
     ctx.save();
     ctx.beginPath();
@@ -136,12 +139,14 @@ function drawPortrait(ctx: CanvasRenderingContext2D, cx: number, cy: number, rad
   } else {
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(230, 236, 245, 0.2)";
+    ctx.fillStyle = inkColor;
+    ctx.globalAlpha = 0.2;
     ctx.fill();
+    ctx.globalAlpha = 1;
   }
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.strokeStyle = "#e6ecf5";
+  ctx.strokeStyle = inkColor;
   ctx.lineWidth = 1.5;
   ctx.stroke();
 }
@@ -207,8 +212,10 @@ function computeSystemIcons(data: MapData): Map<number, ServiceIcon[]> {
   return icons;
 }
 
-/** Kills older than this no longer count toward "recent activity" anywhere on the map (hover tooltip, top-active panel, heat ring). */
-const HEAT_WINDOW_MS = 60 * 60 * 1000;
+// The last-hour window itself now lives server-side (kill_history.rs's
+// SYSTEM_HEAT_WINDOW_MINUTES) since getSystemKillHeat's aggregate query
+// already scopes to it - this only controls how often the map re-polls
+// that aggregate, not the window length.
 const HEAT_REFRESH_MS = 30_000;
 /** Exponential-saturation divisor for turning a raw kill count into a 0-1
  * brightness intensity - never hard-caps (100+ kills is still technically
@@ -286,17 +293,19 @@ interface SystemHeat {
  * kills, so it reads as "what to avoid" rather than just "what just
  * happened" - but only actively *pulses* while something's happening right
  * now (see PULSE_RECENCY_MS), so a still-hot-but-quiet-for-a-while system
- * doesn't look identical to one where kills are landing this second. */
-function computeSystemHeat(kills: KillEntry[], now: number): Map<number, SystemHeat> {
-  const heat = new Map<number, SystemHeat>();
-  for (const kill of kills) {
-    const killTime = new Date(kill.time).getTime();
-    const age = now - killTime;
-    if (age < 0 || age >= HEAT_WINDOW_MS) continue;
-    const existing = heat.get(kill.system_id);
-    heat.set(kill.system_id, { count: (existing?.count ?? 0) + 1, mostRecentAt: Math.max(existing?.mostRecentAt ?? 0, killTime) });
+ * doesn't look identical to one where kills are landing this second.
+ * Built from the backend's own last-hour aggregate (getSystemKillHeat)
+ * rather than the live ticker feed - that feed is capped at 150 kills New
+ * Eden-wide (mergeKillFeeds' MAX_LIVE_KILLS), so a busy hour anywhere else
+ * in the game used to silently starve a genuinely hot system of its true
+ * count here. The aggregate is already filtered server-side to the rolling
+ * hour, so no age check is needed on this end. */
+function computeSystemHeat(heat: SystemKillHeat[]): Map<number, SystemHeat> {
+  const result = new Map<number, SystemHeat>();
+  for (const entry of heat) {
+    result.set(entry.system_id, { count: entry.kill_count, mostRecentAt: new Date(entry.last_kill_time).getTime() });
   }
-  return heat;
+  return result;
 }
 
 /** How recently a system's last kill has to have landed for its heat to
@@ -330,21 +339,25 @@ interface TopActivityEntry {
   count: number;
 }
 
-/** Ranks systems and regions by kill count within the last hour, for the "Top Active" overlay panel. */
-function computeTopActivity(kills: KillEntry[], now: number): { systems: TopActivityEntry[]; regions: TopActivityEntry[] } {
-  const systemCounts = new Map<string, number>();
+/** Ranks systems and regions by kill count within the last hour, for the
+ * "Top Active" overlay panel - same backend aggregate as computeSystemHeat
+ * above, already scoped to the rolling hour server-side. */
+function computeTopActivity(heat: SystemKillHeat[]): { systems: TopActivityEntry[]; regions: TopActivityEntry[] } {
   const regionCounts = new Map<string, number>();
-  for (const kill of kills) {
-    const age = now - new Date(kill.time).getTime();
-    if (age < 0 || age >= HEAT_WINDOW_MS) continue;
-    systemCounts.set(kill.system_name, (systemCounts.get(kill.system_name) ?? 0) + 1);
-    if (kill.region_name) {
-      regionCounts.set(kill.region_name, (regionCounts.get(kill.region_name) ?? 0) + 1);
+  for (const entry of heat) {
+    if (entry.region_name) {
+      regionCounts.set(entry.region_name, (regionCounts.get(entry.region_name) ?? 0) + entry.kill_count);
     }
   }
-  const topN = (counts: Map<string, number>): TopActivityEntry[] =>
-    [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, TOP_ACTIVITY_LIMIT).map(([name, count]) => ({ name, count }));
-  return { systems: topN(systemCounts), regions: topN(regionCounts) };
+  const systems = [...heat]
+    .sort((a, b) => b.kill_count - a.kill_count)
+    .slice(0, TOP_ACTIVITY_LIMIT)
+    .map((entry) => ({ name: entry.system_name, count: entry.kill_count }));
+  const regions = [...regionCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, TOP_ACTIVITY_LIMIT)
+    .map(([name, count]) => ({ name, count }));
+  return { systems, regions };
 }
 
 interface Transform {
@@ -492,6 +505,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     systems: [],
     regions: [],
   });
+  /** Same data as heatMapRef, just in React state - the ref alone (updated
+   * inside resync, read by the 150ms draw loop) doesn't trigger a re-render,
+   * so the hover tooltip's reactive kill-count memo below needs its own
+   * state copy to notice when a resync actually changes it. */
+  const [systemHeat, setSystemHeat] = useState<Map<number, SystemHeat>>(new Map());
   const [homeSystemCount, setHomeSystemCount] = useState(0);
   const { legendOpen, setLegendOpen, showServiceIcons, setShowServiceIcons } = useMapDisplayPrefs();
   // Ticks forward periodically purely to force the nearby-feed expiry check
@@ -703,7 +721,30 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     const dataMaxY = (height - translateY + marginPx) / scale;
     const inView = (x: number, y: number) => x >= dataMinX && x <= dataMaxX && y >= dataMinY && y <= dataMaxY;
 
-    ctx.strokeStyle = JUMP_COLOR;
+    // Resolved once per draw rather than baked into literal rgba() strings:
+    // everything below that used to assume "white/near-white always reads
+    // fine, the canvas is always a dark background" (jump lines, selection
+    // rings, the selected-system pin, system/region name labels) went
+    // invisible the moment the Light theme's near-white --bg made that
+    // assumption false. --text is already the correct high-contrast ink for
+    // the active theme's background, so reusing it here (with globalAlpha
+    // standing in for what used to be the rgba() alpha channel) keeps every
+    // one of these legible on every theme, not just the original dark one.
+    const inkColor = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || "#e6ecf5";
+    // Dark-on-light reads far fainter than the equivalent light-on-dark at
+    // the same alpha (the original 0.08/0.75/0.85 numbers were tuned by eye
+    // against the dark theme's near-black canvas) - low enough on Light that
+    // the jump lines and region label sat right at the edge of visibility,
+    // making ordinary redraw/antialiasing jitter during mouse movement read
+    // as actual flicker. Bumped for Light specifically rather than changing
+    // the numbers everyone else already looks right at.
+    const isLightTheme = document.documentElement.dataset.theme === "light";
+    const jumpLineAlpha = isLightTheme ? 0.22 : 0.08;
+    const nameLabelAlpha = isLightTheme ? 0.92 : 0.75;
+    const regionLabelAlpha = isLightTheme ? 1 : 0.85;
+
+    ctx.strokeStyle = inkColor;
+    ctx.globalAlpha = jumpLineAlpha;
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (const jump of data.jumps) {
@@ -715,6 +756,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       ctx.lineTo(toScreenX(b.x), toScreenY(b.y));
     }
     ctx.stroke();
+    ctx.globalAlpha = 1;
 
     // Constellation boundaries - a faint hull behind everything else, only
     // once zoomed in enough that individual systems (not just region names)
@@ -800,7 +842,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       // never gets lost underneath "something's happening here right now".
       // Same now/systemId pulse as the glow above, so they breathe together.
       const isDotActive = heatEntryForDot != null && now - heatEntryForDot.mostRecentAt < PULSE_RECENCY_MS;
-      ctx.fillStyle = securityColor(system.security);
+      ctx.fillStyle = securityColorResolved(system.security);
       ctx.globalAlpha = isDotActive ? pulseWave(now, system.id, 0.04) : 1;
       ctx.beginPath();
       ctx.arc(
@@ -813,13 +855,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       ctx.fill();
       ctx.globalAlpha = 1;
       if (isSelected) {
-        ctx.strokeStyle = "#ffffff";
+        ctx.strokeStyle = inkColor;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       } else if (isHovered) {
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
+        ctx.strokeStyle = inkColor;
+        ctx.globalAlpha = 0.65;
         ctx.lineWidth = 1;
         ctx.stroke();
+        ctx.globalAlpha = 1;
       }
 
       // A pulsing outline just outside the dot itself, separate from the
@@ -873,7 +917,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       // system is unmistakable at a glance, distinct from the tracked
       // current-location marker.
       if (isSelected) {
-        drawPin(ctx, sx, sy - dotRadius * 2.2 - 2, 6, "#ffffff");
+        drawPin(ctx, sx, sy - dotRadius * 2.2 - 2, 6, inkColor);
       }
 
       // Home-base house markers - always drawn (not gated by zoom) so you
@@ -905,7 +949,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         let px = sx + dotRadius + portraitRadius + 3;
         const py = sy + dotRadius + portraitRadius + 3;
         for (const pin of locationPins) {
-          drawPortrait(ctx, px, py, portraitRadius, pin.image);
+          drawPortrait(ctx, px, py, portraitRadius, pin.image, inkColor);
           renderedPinsRef.current.push({ px, py, radius: portraitRadius, character: pin.character, kind: "location" });
           px += portraitRadius * 2 + 3;
         }
@@ -924,13 +968,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
         const secText = formatSecurity(system.security);
         ctx.font = `600 ${labelFontSize}px Inter, sans-serif`;
-        ctx.fillStyle = securityColor(system.security);
+        ctx.fillStyle = securityColorResolved(system.security);
         ctx.fillText(secText, labelX, labelY);
         const secWidth = ctx.measureText(secText).width;
 
         ctx.font = `${labelFontSize}px Inter, sans-serif`;
-        ctx.fillStyle = "rgba(230, 236, 245, 0.75)";
+        ctx.fillStyle = inkColor;
+        ctx.globalAlpha = nameLabelAlpha;
         ctx.fillText(system.name, labelX + secWidth + labelGap, labelY);
+        ctx.globalAlpha = 1;
 
         // DOTLAN-style key icons (Refinery/Factory/Cloning/etc) - a row of
         // small colored squares under the name, same region-level-or-closer
@@ -1001,7 +1047,8 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       // show each region's name at its centroid instead, so there's never
       // a gap where the map has no labels at all.
       ctx.font = "600 12px Inter, sans-serif";
-      ctx.fillStyle = "rgba(230, 236, 245, 0.85)";
+      ctx.fillStyle = inkColor;
+      ctx.globalAlpha = regionLabelAlpha;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       for (const region of data.regions) {
@@ -1010,17 +1057,38 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         ctx.fillText(region.name, toScreenX(center.x), toScreenY(center.y));
       }
       ctx.textAlign = "left";
+      ctx.globalAlpha = 1;
     }
   }
 
-  /** Coalesces any number of draw() requests within the same frame into a single call, matching zKillboard's own requestDraw pattern. Without this, high-frequency events like mousemove over the map's dense system clusters can each trigger their own full (expensive) redraw, backing up the main thread badly enough that frames visibly drop content like the heat rings. */
+  /** Coalesces any number of draw() requests within the same tick into a single call, matching zKillboard's own requestDraw pattern. Without this, high-frequency events like mousemove over the map's dense system clusters can each trigger their own full (expensive) redraw, backing up the main thread badly enough that frames visibly drop content like the heat rings.
+   *
+   * Scheduled through both requestAnimationFrame AND a short setTimeout
+   * fallback, whichever fires first - not setTimeout alone. A setTimeout-only
+   * version fixed the original "blank until mousemove" bug (rAF is exactly
+   * what Chromium suspends the moment the window loses OS focus - see
+   * ensureAnimating below) but broke normal on-screen interaction instead:
+   * setTimeout(0) isn't paced to the display's actual vsync the way rAF is,
+   * so painting through it while actively moving the mouse (dozens of
+   * uncoalesced redraws a second, each one landing at a slightly different
+   * point in the frame) made the very faint (8% alpha) jump-connection
+   * lines visibly flicker in and out - high-contrast content like the dots
+   * and labels was well above the threshold where that showed. rAF is the
+   * fast path for exactly the case that can see it (mousemove only reaches
+   * this app while it has real input focus), and the 120ms setTimeout is
+   * purely the backstop for when rAF itself is the thing not firing -
+   * whichever wins the race clears drawScheduledRef, so only one actually
+   * draws. */
   function requestDraw() {
     if (drawScheduledRef.current) return;
     drawScheduledRef.current = true;
-    requestAnimationFrame(() => {
+    const runOnce = () => {
+      if (!drawScheduledRef.current) return;
       drawScheduledRef.current = false;
       draw();
-    });
+    };
+    requestAnimationFrame(runOnce);
+    setTimeout(runOnce, 120);
   }
 
   // Driven by setInterval rather than a self-rescheduling requestAnimationFrame:
@@ -1063,16 +1131,28 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     }, 150);
   }
 
-  /** Recomputes heat/top-activity off the current kill list and forces one
-   * fresh draw - the single source of truth for "make the map correct and
-   * pulsing right now", reused by the mount effect, the periodic refresh,
-   * regaining window focus/visibility, and the manual resync button below. */
+  /** Recomputes heat/top-activity off the backend's own last-hour aggregate
+   * (getSystemKillHeat, not the capped live ticker feed - see
+   * computeSystemHeat's comment) and forces one fresh draw - the single
+   * source of truth for "make the map correct and pulsing right now",
+   * reused by the mount effect, the periodic refresh, regaining window
+   * focus/visibility, and the manual resync button below. Not triggered off
+   * every incoming live kill any more (that's what made the old
+   * array-filtering version prone to the 150-kill global cap in the first
+   * place) - the 30s interval below plus the focus/visibility effect keep
+   * it fresh enough for a "last hour" stat. */
   function resync() {
-    const now = Date.now();
-    heatMapRef.current = computeSystemHeat(kills, now);
-    if (hasRecentHeat(heatMapRef.current, now)) ensureAnimating();
-    setTopActivity(computeTopActivity(kills, now));
-    requestDraw();
+    getSystemKillHeat()
+      .then((heat) => {
+        const now = Date.now();
+        const nextHeatMap = computeSystemHeat(heat);
+        heatMapRef.current = nextHeatMap;
+        setSystemHeat(nextHeatMap);
+        if (hasRecentHeat(nextHeatMap, now)) ensureAnimating();
+        setTopActivity(computeTopActivity(heat));
+        requestDraw();
+      })
+      .catch((err) => reportError(`Failed to load system kill heat: ${String(err)}`));
   }
 
   useEffect(() => {
@@ -1088,7 +1168,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     const interval = setInterval(resync, HEAT_REFRESH_MS);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kills]);
+  }, []);
 
   // Belt-and-braces beyond the setInterval fix above: if the window's real
   // OS focus (or visibility) was lost long enough that anything did still
@@ -1107,7 +1187,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       document.removeEventListener("visibilitychange", handleVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kills]);
+  }, []);
 
   // Kept in a ref (not read directly off currentSystem in draw()) for the
   // same reason as tickerHoveredIdRef: the mouse/wheel event listeners below
@@ -1462,11 +1542,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   // including ones triggered by unrelated state changes like a mousemove
   // that didn't even change which system is hovered.
   const hoveredSystemId = activeHover?.system.id;
+  // Backed by the same backend aggregate as the heat map (see
+  // computeSystemHeat's comment) rather than filtering the capped live
+  // ticker feed - a single hot gate could otherwise show a bigger number
+  // than this "whole system" count, since the ticker feed only ever holds
+  // the most recent 150 kills New Eden-wide.
   const hoveredKillCount = useMemo(() => {
     if (hoveredSystemId == null) return 0;
-    const now = Date.now();
-    return kills.filter((k) => k.system_id === hoveredSystemId && now - new Date(k.time).getTime() < HEAT_WINDOW_MS).length;
-  }, [kills, hoveredSystemId]);
+    return systemHeat.get(hoveredSystemId)?.count ?? 0;
+  }, [systemHeat, hoveredSystemId]);
 
   // getPlayerStructures() already resolves owner corp/alliance per
   // structure (see the effect above) - reused here instead of a second

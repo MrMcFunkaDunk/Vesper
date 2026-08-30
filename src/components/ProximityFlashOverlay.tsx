@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocationTracking } from "../hooks/useLocationTracking";
 import { useSoundEnabled } from "../hooks/useSoundEnabled";
+import { useSoundVolume } from "../hooks/useSoundVolume";
 import { playProximityAlert } from "../lib/sound";
 
 const PULSE_DURATION_MS = 1800;
@@ -23,6 +24,7 @@ const PULSE_DURATION_MS = 1800;
 function ProximityFlashOverlay() {
   const { pulseToken, soundToken } = useLocationTracking();
   const [soundEnabled] = useSoundEnabled();
+  const [soundVolume] = useSoundVolume();
   const [activeToken, setActiveToken] = useState<number | null>(null);
   const lastSeenRef = useRef(pulseToken);
   // Same remount-safety concern as pulseToken above: soundToken never resets
@@ -41,8 +43,8 @@ function ProximityFlashOverlay() {
   useEffect(() => {
     if (soundToken === lastSoundSeenRef.current) return;
     lastSoundSeenRef.current = soundToken;
-    if (soundEnabled) playProximityAlert();
-  }, [soundToken, soundEnabled]);
+    if (soundEnabled) playProximityAlert(soundVolume);
+  }, [soundToken, soundEnabled, soundVolume]);
 
   if (activeToken === null) return null;
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Pin, PinOff } from "lucide-react";
+import { ChevronRight, Pin, PinOff, Star } from "lucide-react";
 import { getMapData, regionHubColor, regionLabelWithHub, TRADE_HUB_REGIONS, type MapData } from "../lib/map";
 import { isPriceWidgetOpen, openPriceWidget, closePriceWidget } from "../lib/priceWidget";
 import { useErrorReporter } from "../hooks/useErrorReporter";
@@ -21,6 +21,7 @@ import {
 import { formatIsk, formatSecurity, securityColor, formatTimeRemaining, typeIconUrl } from "../lib/format";
 import type { SessionCharacter } from "../lib/eve";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
+import { useMarketFavourites } from "../hooks/useMarketFavourites";
 
 /** CCP's own per-category art, extracted once from the official (now
  * deprecated but still hosted) Image Export Collection and bundled as
@@ -248,6 +249,8 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [itemTab, setItemTab] = useState<"orders" | "history">("orders");
   const [description, setDescription] = useState<string | null>(null);
+  const { favourites, isFavourite, toggleFavourite } = useMarketFavourites();
+  const [favouritesOpen, setFavouritesOpen] = useState(false);
 
   const [marketGroups, setMarketGroups] = useState<MarketGroupNode[] | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
@@ -496,6 +499,38 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
 
       <div className="market-browser-layout">
         <div className="market-browser-tree">
+          <div className="market-browser-favourites">
+            <button
+              type="button"
+              className={`market-browser-favourites-toggle${favouritesOpen ? " market-browser-favourites-toggle-active" : ""}`}
+              onClick={() => setFavouritesOpen((v) => !v)}
+            >
+              <Star size={14} strokeWidth={2} fill={favouritesOpen ? "currentColor" : "none"} />
+              My Favourites
+              {favourites.length > 0 && <span className="market-browser-favourites-count">{favourites.length}</span>}
+            </button>
+            {favouritesOpen && (
+              favourites.length === 0 ? (
+                <p className="market-browser-favourites-empty">
+                  No favourites yet - open an item below and click the star next to its name to add it here.
+                </p>
+              ) : (
+                <div className="market-browser-favourites-list">
+                  {favourites.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => pickType({ id: f.id, name: f.name, slot_type: null, volume: 0 })}
+                    >
+                      <img src={typeIconUrl(f.id, 32, f.name)} alt="" className="market-browser-row-icon" />
+                      {f.name}
+                    </button>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+
           <div className="kills-add-combobox market-browser-search">
             <input
               type="text"
@@ -555,6 +590,15 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
                   </span>
                   <h3>{selectedType.name}</h3>
                 </div>
+                <button
+                  type="button"
+                  className={`market-browser-favourite-star${isFavourite(selectedType.id) ? " market-browser-favourite-star-active" : ""}`}
+                  onClick={() => toggleFavourite({ id: selectedType.id, name: selectedType.name })}
+                  title={isFavourite(selectedType.id) ? "Remove from My Favourites" : "Add to My Favourites"}
+                  aria-label={isFavourite(selectedType.id) ? "Remove from My Favourites" : "Add to My Favourites"}
+                >
+                  <Star size={18} strokeWidth={2} fill={isFavourite(selectedType.id) ? "currentColor" : "none"} />
+                </button>
               </div>
 
               {description && <p className="market-browser-item-description">{description}</p>}

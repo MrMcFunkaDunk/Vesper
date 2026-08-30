@@ -896,6 +896,142 @@ pub async fn get_group_items(app: tauri::AppHandle, client: &reqwest::Client, gr
     .map_err(|e| format!("group items task failed: {e}"))?
 }
 
+/// Every T1 blueprint group with at least one blueprint that actually has
+/// invention data (activity_id = ACTIVITY_INVENTION) - the Invention tab's
+/// browsable picker. Deliberately not get_category_groups(9): the plain
+/// Blueprint category also holds T2/T3/faction/capital blueprint groups
+/// (and mixed groups where only some members are T1) that have no
+/// invention recipe at all, so a raw category browse would dead-end on
+/// "has no invention data" for a lot of what it shows. This filters that
+/// out at the source instead.
+pub async fn get_inventable_blueprint_groups(app: tauri::AppHandle, client: &reqwest::Client) -> Result<Vec<GroupSummary>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<GroupSummary>, String> {
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open market database: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT g.id, g.name, COUNT(DISTINCT t.id) AS item_count \
+                 FROM item_groups g \
+                 JOIN types t ON t.group_id = g.id \
+                 JOIN activities a ON a.type_id = t.id AND a.activity_id = ?1 \
+                 GROUP BY g.id \
+                 ORDER BY g.name",
+            )
+            .map_err(|e| format!("failed to query inventable blueprint groups: {e}"))?;
+        let rows = stmt
+            .query_map([ACTIVITY_INVENTION], |row| Ok(GroupSummary { id: row.get(0)?, name: row.get(1)?, item_count: row.get(2)? }))
+            .map_err(|e| format!("failed to query inventable blueprint groups: {e}"))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read group row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("inventable blueprint groups task failed: {e}"))?
+}
+
+/// Every blueprint within one group that actually has invention data -
+/// same filtering reasoning as get_inventable_blueprint_groups, applied
+/// one level down so every item this returns is a safe pick.
+pub async fn get_inventable_blueprints_in_group(app: tauri::AppHandle, client: &reqwest::Client, group_id: i64) -> Result<Vec<TypeSummary>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<TypeSummary>, String> {
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open market database: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT t.id, t.name, t.slot_type, t.volume \
+                 FROM types t \
+                 JOIN activities a ON a.type_id = t.id AND a.activity_id = ?1 \
+                 WHERE t.group_id = ?2 \
+                 ORDER BY t.name",
+            )
+            .map_err(|e| format!("failed to query inventable blueprints: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![ACTIVITY_INVENTION, group_id], |row| {
+                Ok(TypeSummary { id: row.get(0)?, name: row.get(1)?, slot_type: row.get(2)?, volume: row.get(3)? })
+            })
+            .map_err(|e| format!("failed to query inventable blueprints: {e}"))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read blueprint row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("inventable blueprints task failed: {e}"))?
+}
+
+/// Every blueprint group with at least one blueprint that has ME or TE
+/// research data - the Research tab's browsable picker. Unlike the
+/// invention/reprocessing pickers this is a much broader net (ME/TE
+/// research applies to essentially every manufacturable blueprint, T1
+/// through capital - reactions are the one activity that never gets it,
+/// confirmed by industryMath.ts's own reaction-ME provenance notes), but
+/// the same "confirm against real recipe data, not the whole category"
+/// reasoning still applies: category 9 alone would also surface a
+/// handful of legacy/unpublished blueprint rows that only exist in the
+/// raw SDE activity dump with no corresponding `types` row at all (no
+/// name to show), which this filters out by construction.
+pub async fn get_researchable_blueprint_groups(app: tauri::AppHandle, client: &reqwest::Client) -> Result<Vec<GroupSummary>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<GroupSummary>, String> {
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open market database: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT g.id, g.name, COUNT(DISTINCT t.id) AS item_count \
+                 FROM item_groups g \
+                 JOIN types t ON t.group_id = g.id \
+                 JOIN activities a ON a.type_id = t.id AND a.activity_id IN (?1, ?2) \
+                 GROUP BY g.id \
+                 ORDER BY g.name",
+            )
+            .map_err(|e| format!("failed to query researchable blueprint groups: {e}"))?;
+        let rows = stmt
+            .query_map([ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE], |row| {
+                Ok(GroupSummary { id: row.get(0)?, name: row.get(1)?, item_count: row.get(2)? })
+            })
+            .map_err(|e| format!("failed to query researchable blueprint groups: {e}"))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read group row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("researchable blueprint groups task failed: {e}"))?
+}
+
+/// Every blueprint within one group that has ME or TE research data -
+/// same filtering reasoning as get_researchable_blueprint_groups.
+pub async fn get_researchable_blueprints_in_group(app: tauri::AppHandle, client: &reqwest::Client, group_id: i64) -> Result<Vec<TypeSummary>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<TypeSummary>, String> {
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open market database: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT t.id, t.name, t.slot_type, t.volume \
+                 FROM types t \
+                 JOIN activities a ON a.type_id = t.id AND a.activity_id IN (?1, ?2) \
+                 WHERE t.group_id = ?3 \
+                 ORDER BY t.name",
+            )
+            .map_err(|e| format!("failed to query researchable blueprints: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![ACTIVITY_RESEARCH_ME, ACTIVITY_RESEARCH_TE, group_id], |row| {
+                Ok(TypeSummary { id: row.get(0)?, name: row.get(1)?, slot_type: row.get(2)?, volume: row.get(3)? })
+            })
+            .map_err(|e| format!("failed to query researchable blueprints: {e}"))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read blueprint row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("researchable blueprints task failed: {e}"))?
+}
+
 #[derive(Serialize, Clone)]
 pub struct AttributeValue {
     pub attribute_id: i64,

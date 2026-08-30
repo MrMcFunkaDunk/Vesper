@@ -414,9 +414,41 @@ pub async fn get_region_kills(state: State<'_, AppState>, region_id: i64) -> Res
     kills::fetch_region_kills(&state.http_client, region_id).await
 }
 
+/// Page 1 merges the local kill-history store (always current, fed by the
+/// live killmail.stream connection) with a live zKillboard REST call (the
+/// original source, kept as a safety net for anything the local store
+/// hasn't recorded - see route::get_gate_activity for the same reasoning,
+/// applied here for the same trust reasons: a killboard page that silently
+/// missed a real recent kill because it trusted only one source is worse
+/// than one that's briefly slower). Deeper pages stay REST-only - the local
+/// store's depth is bounded by how long this app's own recorder has been
+/// running, not the years of history a system's full killboard can hold.
 #[tauri::command]
-pub async fn get_system_kills_history(state: State<'_, AppState>, system_id: i64, page: i64) -> Result<Vec<kills::KillEntry>, String> {
-    kills::fetch_system_kills_history(&state.http_client, system_id, page).await
+pub async fn get_system_kills_history(app: AppHandle, state: State<'_, AppState>, system_id: i64, page: i64) -> Result<Vec<kills::KillEntry>, String> {
+    if page != 1 {
+        return kills::fetch_system_kills_history(&state.http_client, system_id, page).await;
+    }
+
+    let (local_result, rest_result) = futures::future::join(
+        kill_history::get_system_kills_local(&app, system_id),
+        kills::fetch_system_kills_history(&state.http_client, system_id, page),
+    )
+    .await;
+
+    let mut seen_killmail_ids = std::collections::HashSet::new();
+    let mut merged: Vec<kills::KillEntry> = Vec::new();
+    for kill in local_result.unwrap_or_default() {
+        if seen_killmail_ids.insert(kill.killmail_id) {
+            merged.push(kill);
+        }
+    }
+    for kill in rest_result? {
+        if seen_killmail_ids.insert(kill.killmail_id) {
+            merged.push(kill);
+        }
+    }
+    merged.sort_by(|a, b| b.time.cmp(&a.time));
+    Ok(merged)
 }
 
 #[tauri::command]
@@ -444,8 +476,34 @@ pub async fn get_alliance_kills(state: State<'_, AppState>, alliance_id: i64, pa
 }
 
 #[tauri::command]
-pub async fn get_location_kills(state: State<'_, AppState>, location_id: i64) -> Result<Vec<kills::KillEntry>, String> {
-    kills::fetch_location_kills(&state.http_client, location_id).await
+/// Merges the local kill-history store (always current, fed by the live
+/// killmail.stream connection) with a live zKillboard REST call - same
+/// reasoning and pattern as get_system_kills_history's page 1 and
+/// route::get_gate_activity: neither source alone is trusted, since the
+/// local store only knows what's happened since this app's own recorder
+/// was last running, and the REST call alone carries zKillboard's own
+/// documented CDN cache lag.
+pub async fn get_location_kills(app: AppHandle, state: State<'_, AppState>, location_id: i64) -> Result<Vec<kills::KillEntry>, String> {
+    let (local_result, rest_result) = futures::future::join(
+        kill_history::get_gate_kills_local(&app, location_id),
+        kills::fetch_location_kills(&state.http_client, location_id),
+    )
+    .await;
+
+    let mut seen_killmail_ids = std::collections::HashSet::new();
+    let mut merged: Vec<kills::KillEntry> = Vec::new();
+    for kill in local_result.unwrap_or_default() {
+        if seen_killmail_ids.insert(kill.killmail_id) {
+            merged.push(kill);
+        }
+    }
+    for kill in rest_result? {
+        if seen_killmail_ids.insert(kill.killmail_id) {
+            merged.push(kill);
+        }
+    }
+    merged.sort_by(|a, b| b.time.cmp(&a.time));
+    Ok(merged)
 }
 
 #[tauri::command]
@@ -742,8 +800,18 @@ pub async fn plan_gate_check(
 }
 
 #[tauri::command]
-pub async fn get_gate_activity(state: State<'_, AppState>, system_ids: Vec<i64>) -> Result<Vec<route::GateKillEvent>, String> {
-    Ok(route::get_gate_activity(&state.http_client, &system_ids).await)
+pub async fn get_gate_activity(app: AppHandle, state: State<'_, AppState>, system_ids: Vec<i64>) -> Result<Vec<route::GateKillEvent>, String> {
+    Ok(route::get_gate_activity(&app, &state.http_client, &system_ids).await)
+}
+
+#[tauri::command]
+pub async fn get_likely_gate_camps(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<kill_history::LikelyGateCamp>, String> {
+    kill_history::get_likely_gate_camps(app, state.http_client.clone()).await
+}
+
+#[tauri::command]
+pub async fn get_system_kill_heat(app: AppHandle) -> Result<Vec<kill_history::SystemKillHeat>, String> {
+    kill_history::get_system_kill_heat(app).await
 }
 
 #[tauri::command]
@@ -764,6 +832,26 @@ pub async fn get_category_groups(app: AppHandle, state: State<'_, AppState>, cat
 #[tauri::command]
 pub async fn get_group_items(app: AppHandle, state: State<'_, AppState>, group_id: i64) -> Result<Vec<market::TypeSummary>, String> {
     market::get_group_items(app, &state.http_client, group_id).await
+}
+
+#[tauri::command]
+pub async fn get_inventable_blueprint_groups(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<market::GroupSummary>, String> {
+    market::get_inventable_blueprint_groups(app, &state.http_client).await
+}
+
+#[tauri::command]
+pub async fn get_inventable_blueprints_in_group(app: AppHandle, state: State<'_, AppState>, group_id: i64) -> Result<Vec<market::TypeSummary>, String> {
+    market::get_inventable_blueprints_in_group(app, &state.http_client, group_id).await
+}
+
+#[tauri::command]
+pub async fn get_researchable_blueprint_groups(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<market::GroupSummary>, String> {
+    market::get_researchable_blueprint_groups(app, &state.http_client).await
+}
+
+#[tauri::command]
+pub async fn get_researchable_blueprints_in_group(app: AppHandle, state: State<'_, AppState>, group_id: i64) -> Result<Vec<market::TypeSummary>, String> {
+    market::get_researchable_blueprints_in_group(app, &state.http_client, group_id).await
 }
 
 #[tauri::command]
