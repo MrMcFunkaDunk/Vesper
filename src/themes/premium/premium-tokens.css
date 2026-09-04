@@ -1,0 +1,306 @@
+/* ============================================================================
+   PREMIUM DECK TOKENS - Bulkhead / Cold Ballast / Command Deck
+   ============================================================================
+   Every token any standard theme in App.css also defines (surfaces, text,
+   accent/status, kill-mail colors, ISK, standings, tracked-list chip
+   colors, the 10-step security gradient) plus a second layer of NEW tokens
+   the construction system in premium-structure.css and the other files in
+   this folder reads from - --deck-plate, --deck-frame, --deck-bezel,
+   --deck-cavity, the --deck-lamp-off-* set, and --deck-hazard. Nothing
+   here has any effect unless
+   :root[data-theme="bulkhead"|"cold-ballast"|"command-deck"] is set - see
+   useTheme.ts.
+   ============================================================================ */
+
+/* BULKHEAD - gritty industrial freighter: rust, hazard amber, a reactor
+   overdue for a teardown. Security gradient runs muddy green (safe) into
+   hazard amber into klaxon red - the same shape every theme's scale uses,
+   filtered through worn industrial paint instead of a clean spectrum. */
+:root[data-theme="bulkhead"] {
+  color-scheme: dark;
+  --bg: #17181a;
+  --bg-elevated: #1f2123;
+  --bg-elevated-2: #292b2d;
+  --border: #3a3b3a;
+  --border-active: rgba(230, 178, 60, 0.5);
+
+  --text: #d9d6c9;
+  --text-secondary: #b3b0a3;
+  --text-muted: #82806f;
+
+  --accent: #d98c2b;
+  --accent-soft: rgba(217, 140, 43, 0.16);
+  --accent-contrast: #1a1006;
+  --metal: #8a8878;
+  --success: #7a9b4e;
+  --success-soft: rgba(122, 155, 78, 0.16);
+  --warning: #e6b23c;
+  --warning-soft: rgba(230, 178, 60, 0.16);
+  --danger: #c23b30;
+  --danger-soft: rgba(194, 59, 48, 0.16);
+
+  --kill-corp: #6f8a9e;
+  --kill-alliance: #9c7a5e;
+  --kill-ship: #d98c2b;
+
+  --isk: #e6b23c;
+  --isk-soft: rgba(230, 178, 60, 0.16);
+
+  --standing-positive: #6f97b0;
+  --standing-positive-soft: rgba(111, 151, 176, 0.14);
+  --standing-negative: #b5564a;
+  --standing-negative-soft: rgba(181, 86, 74, 0.14);
+  --standing-neutral: #8a8878;
+
+  --constellation: #9c7a5e;
+  --constellation-soft: rgba(156, 122, 94, 0.16);
+  --region: #6f8a9e;
+  --region-soft: rgba(111, 138, 158, 0.16);
+  --gate: #d98c2b;
+  --gate-soft: rgba(217, 140, 43, 0.16);
+
+  --sec-10: #4a7a9e;
+  --sec-9: #5c8a72;
+  --sec-8: #6f9b5e;
+  --sec-7: #7a9b4e;
+  --sec-6: #9ba34a;
+  --sec-5: #c9a63f;
+  --sec-4: #d98c2b;
+  --sec-3: #c26a2b;
+  --sec-2: #b5502f;
+  --sec-1: #c23b30;
+  --sec-min: #8a3550;
+  --sec-legend-on-light: #14100a;
+  --sec-legend-on-dark: #d9d6c9;
+
+  --slot-low: #e0c27a;
+  --slot-low-soft: rgba(224, 194, 122, 0.12);
+  --slot-mid: #8fb0c4;
+  --slot-mid-soft: rgba(143, 176, 196, 0.12);
+  --slot-high: #c98a7e;
+  --slot-high-soft: rgba(201, 138, 126, 0.12);
+
+  --grid-line: rgba(230, 178, 60, 0.035);
+
+  /* Square everything - every var(--radius-sm)/var(--radius-md) consumer
+     app-wide goes hard-edged for free, with no per-component work. Every
+     pill-shaped chip/tag/badge (~49 consumers app-wide) now runs through
+     --radius-pill instead of a literal 999px, so it flattens here too -
+     circular avatars/portraits/status-dots use a literal 50%, deliberately
+     left untouched (a round portrait reads as a photo ID/porthole on every
+     deck, not a web-app affordance to square off). */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-pill: 0px;
+  --font-display: "Oswald", sans-serif;
+  --font-label: "Oswald", sans-serif;
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 20px rgba(230, 178, 60, 0.28);
+
+  /* Construction layers - hull surface, mounting frame, bezel ring,
+     recessed cavity - see premium-structure.css's PANEL CONSTRUCTION
+     section for how these stack. */
+  --deck-plate: #1c1e20;
+  --deck-frame: #3a3b3a;
+  --deck-bezel: #4a4b47;
+  --deck-cavity: #0e0f10;
+  --deck-rivet: #5c5a4c;
+  --deck-hazard: #e6b23c;
+  --deck-hazard-dark: #17181a;
+  --deck-bevel-dark: rgba(0, 0, 0, 0.65);
+  --deck-bevel-light: rgba(255, 255, 255, 0.05);
+  --deck-notch: 12px;
+  /* An unlit lamp's dark, desaturated material - see StatusLamp - one per
+     tone since a muddy off-green reads differently than a muddy off-red. */
+  --deck-lamp-off-online: #2a3320;
+  --deck-lamp-off-warning: #362c14;
+  --deck-lamp-off-danger: #331615;
+  --deck-lamp-off-neutral: #24231f;
+}
+
+/* COLD BALLAST - submarine ops / bio-lab: pressure hulls, tank glass,
+   chilled clinical light. Security gradient runs frozen teal (safe) into
+   sodium amber into bleeding coral, instead of green-to-red. Its own
+   geometry is narrower and more vertical than Bulkhead's - see
+   cold-ballast.css - so the construction tokens below lean thinner/darker
+   than Bulkhead's equivalents rather than reusing the same shape recolored. */
+:root[data-theme="cold-ballast"] {
+  color-scheme: dark;
+  --bg: #0a0f14;
+  --bg-elevated: #101923;
+  --bg-elevated-2: #16212e;
+  --border: #223140;
+  --border-active: rgba(53, 201, 201, 0.5);
+
+  --text: #cfe9e9;
+  --text-secondary: #9fc4c4;
+  --text-muted: #64878c;
+
+  --accent: #35c9c9;
+  --accent-soft: rgba(53, 201, 201, 0.14);
+  --accent-contrast: #041012;
+  --metal: #5c7880;
+  --success: #4fd18a;
+  --success-soft: rgba(79, 209, 138, 0.16);
+  --warning: #e0b34a;
+  --warning-soft: rgba(224, 179, 74, 0.16);
+  --danger: #ff5464;
+  --danger-soft: rgba(255, 84, 100, 0.16);
+
+  --kill-corp: #4a96c9;
+  --kill-alliance: #7a8ad1;
+  --kill-ship: #35c9c9;
+
+  --isk: #e0b34a;
+  --isk-soft: rgba(224, 179, 74, 0.16);
+
+  --standing-positive: #4fd1c9;
+  --standing-positive-soft: rgba(79, 209, 201, 0.12);
+  --standing-negative: #ff6e7a;
+  --standing-negative-soft: rgba(255, 110, 122, 0.12);
+  --standing-neutral: #6f9498;
+
+  --constellation: #7a8ad1;
+  --constellation-soft: rgba(122, 138, 209, 0.16);
+  --region: #4a96c9;
+  --region-soft: rgba(74, 150, 201, 0.16);
+  --gate: #4fd18a;
+  --gate-soft: rgba(79, 209, 138, 0.16);
+
+  --sec-10: #2f8fd1;
+  --sec-9: #35b0c9;
+  --sec-8: #35c9c9;
+  --sec-7: #4fd1a8;
+  --sec-6: #4fd18a;
+  --sec-5: #a8d14f;
+  --sec-4: #e0b34a;
+  --sec-3: #e08a4a;
+  --sec-2: #ff6e7a;
+  --sec-1: #ff5464;
+  --sec-min: #c9457a;
+  --sec-legend-on-light: #04100f;
+  --sec-legend-on-dark: #cfe9e9;
+
+  --slot-low: #e0d18f;
+  --slot-low-soft: rgba(224, 209, 143, 0.12);
+  --slot-mid: #7fc9e0;
+  --slot-mid-soft: rgba(127, 201, 224, 0.12);
+  --slot-high: #e08fa0;
+  --slot-high-soft: rgba(224, 143, 160, 0.12);
+
+  --grid-line: rgba(53, 201, 201, 0.035);
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-pill: 0px;
+  --font-display: "Orbitron", sans-serif;
+  --font-label: "Saira Condensed", sans-serif;
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 20px rgba(53, 201, 201, 0.3);
+
+  --deck-plate: #0d1319;
+  --deck-frame: #223140;
+  --deck-bezel: #2c4454;
+  --deck-cavity: #050a0e;
+  --deck-rivet: #35505f;
+  --deck-hazard: #35c9c9;
+  --deck-hazard-dark: #0a0f14;
+  --deck-bevel-dark: rgba(0, 0, 0, 0.7);
+  --deck-bevel-light: rgba(53, 201, 201, 0.08);
+  --deck-notch: 10px;
+  --deck-lamp-off-online: #163024;
+  --deck-lamp-off-warning: #302816;
+  --deck-lamp-off-danger: #351620;
+  --deck-lamp-off-neutral: #10222b;
+}
+
+/* COMMAND DECK - bridge glass / warm switch banks: HUD blue readouts
+   deliberately paired against warm amber physical switches. Security
+   gradient runs HUD blue (safe) into aviation caution orange into alert
+   red - the "master caution" annunciator palette, not a nature-inspired
+   green-to-red. Its geometry is the most precise/regular of the three
+   (segmented console framing) - see command-deck.css. */
+:root[data-theme="command-deck"] {
+  color-scheme: dark;
+  --bg: #0b0e17;
+  --bg-elevated: #131a2b;
+  --bg-elevated-2: #1b2440;
+  --border: #2a3558;
+  --border-active: rgba(79, 125, 255, 0.5);
+
+  --text: #e8ecf7;
+  --text-secondary: #b0b8d4;
+  --text-muted: #7480a0;
+
+  --accent: #4f7dff;
+  --accent-soft: rgba(79, 125, 255, 0.14);
+  --accent-contrast: #060814;
+  --metal: #6a739c;
+  --success: #57d38c;
+  --success-soft: rgba(87, 211, 140, 0.16);
+  --warning: #ff9d3d;
+  --warning-soft: rgba(255, 157, 61, 0.16);
+  --danger: #ff4f5e;
+  --danger-soft: rgba(255, 79, 94, 0.16);
+
+  --kill-corp: #4f7dff;
+  --kill-alliance: #9d7dff;
+  --kill-ship: #ff9d3d;
+
+  --isk: #ff9d3d;
+  --isk-soft: rgba(255, 157, 61, 0.16);
+
+  --standing-positive: #4fb2ff;
+  --standing-positive-soft: rgba(79, 178, 255, 0.12);
+  --standing-negative: #ff6e7c;
+  --standing-negative-soft: rgba(255, 110, 124, 0.12);
+  --standing-neutral: #7480a0;
+
+  --constellation: #9d7dff;
+  --constellation-soft: rgba(157, 125, 255, 0.16);
+  --region: #4f7dff;
+  --region-soft: rgba(79, 125, 255, 0.16);
+  --gate: #ff9d3d;
+  --gate-soft: rgba(255, 157, 61, 0.16);
+
+  --sec-10: #3d6bff;
+  --sec-9: #4f7dff;
+  --sec-8: #4fa8ff;
+  --sec-7: #57c9d3;
+  --sec-6: #57d38c;
+  --sec-5: #cbe05a;
+  --sec-4: #ff9d3d;
+  --sec-3: #ff8050;
+  --sec-2: #ff6060;
+  --sec-1: #ff4f5e;
+  --sec-min: #d94f8a;
+  --sec-legend-on-light: #05070c;
+  --sec-legend-on-dark: #e8ecf7;
+
+  --slot-low: #ffd18f;
+  --slot-low-soft: rgba(255, 209, 143, 0.12);
+  --slot-mid: #8fb8ff;
+  --slot-mid-soft: rgba(143, 184, 255, 0.12);
+  --slot-high: #ff9db0;
+  --slot-high-soft: rgba(255, 157, 176, 0.12);
+
+  --grid-line: rgba(79, 125, 255, 0.04);
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-pill: 0px;
+  --font-display: "Exo 2", sans-serif;
+  --font-label: "Saira Condensed", sans-serif;
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 20px rgba(79, 125, 255, 0.3);
+
+  --deck-plate: #0f1526;
+  --deck-frame: #2a3558;
+  --deck-bezel: #3c4a7a;
+  --deck-cavity: #060814;
+  --deck-rivet: #4a5a8a;
+  --deck-hazard: #ff9d3d;
+  --deck-hazard-dark: #0b0e17;
+  --deck-bevel-dark: rgba(0, 0, 0, 0.6);
+  --deck-bevel-light: rgba(143, 175, 255, 0.07);
+  --deck-notch: 14px;
+  --deck-lamp-off-online: #16301f;
+  --deck-lamp-off-warning: #302013;
+  --deck-lamp-off-danger: #301218;
+  --deck-lamp-off-neutral: #171d33;
+}

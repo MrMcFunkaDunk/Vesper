@@ -123,7 +123,7 @@ function BattleReportsFeed({ onSelectKill, onSelectCharacter, onSelectSystem, on
                     )}
                   </span>
                   <span className="battle-report-stats">
-                    {battle.kills.length} kills · {formatIsk(battle.totalValue)} destroyed
+                    {battle.kills.length} kills · <span className="kill-stats-destroyed">{formatIsk(battle.totalValue)}</span> destroyed
                   </span>
                   <span className="battle-report-time">
                     {formatExactTime(battle.startTime)} - {formatExactTime(battle.endTime)}

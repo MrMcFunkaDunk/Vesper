@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Copy, CornerDownRight, Factory, Minus, Plus, Star, X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Copy, CornerDownRight, Factory, Star, X } from "lucide-react";
+import { NumberStepperInput } from "./NumberStepperInput";
 import {
   searchBlueprints,
   getBlueprintDetail,
@@ -18,6 +19,7 @@ import {
   getInventableBlueprintsInGroup,
   getResearchableBlueprintGroups,
   getResearchableBlueprintsInGroup,
+  getItemDetail,
   type GroupSummary,
   type TypeSummary,
 } from "../lib/market";
@@ -44,16 +46,12 @@ import {
 } from "../lib/industryMath";
 import { formatIsk, typeIconUrl } from "../lib/format";
 import { searchSystemsLive, TRADE_HUB_REGIONS, type SystemSearchMatch } from "../lib/map";
-import { getCharacterMiningLedger, type CharacterMiningLedger, type SessionCharacter } from "../lib/eve";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useIndustryDefaults } from "../hooks/useIndustryDefaults";
 import { useBlueprintFavourites, type BlueprintFavourite } from "../hooks/useBlueprintFavourites";
 import HelpBadge from "./HelpBadge";
-import { useSortableRows } from "../hooks/useSortableRows";
-import { SortableTh } from "./SortableTh";
 import { HELP_CONTENT } from "../lib/helpContent";
-import CharacterSelectorStrip from "./CharacterSelectorStrip";
 
 // EVE's real "Asteroid" item category - confirmed against the local SDE
 // cache (every group filed under it is a mineable ore or ice variant,
@@ -71,8 +69,10 @@ const COSTS_SIDEBAR_HELP = {
   title: "Costs",
   what: "Every cost figure for the current build in one place - the material cost from the Build Steps tree, plus (once a system is picked and Calculate Build Cost run) the real job-installation cost the in-game Industry window itself would charge.",
   how: [
-    "Total Cost, Per Unit, and Build Time always reflect the Build Steps tree - Total Cost folds in Job Cost automatically the moment a system's been picked.",
-    "Selected Total only counts whatever's still ticked in the Build Steps tree - untick anything you already have in a hangar to see the cost of just what's left to buy or build.",
+    "Per Unit is a fixed property of the item itself - Build Cost, Job Cost, and Build Time here never move when you change Runs, since that's what building just one costs regardless of batch size.",
+    "The block below it is the full batch for however many Runs you've set - the same Build Cost/Job Cost/Build Time, scaled up, plus a Total Job Run Cost for the whole order.",
+    "Blueprint Cost - what buying the blueprint/BPC itself cost you - is entered next to the search box above, before or after calculating. Once set, it shows as its own line in both boxes and counts toward Total Job Run Cost alongside Build Cost and Job Cost.",
+    "Job Cost per Run further down is always for a single run too, regardless of how many Runs you've set - untick the checkboxes in the Build Steps tree instead to price just what you actually still need to buy or build, then Copy to Clipboard for a ready-to-paste Multibuy list.",
   ],
   gives: [
     "Estimated Item Value (EIV): the game's own valuation of this build's base (0% ME) materials at real Trade Hub prices - not reduced by your actual ME level.",
@@ -113,7 +113,7 @@ const IMPLANT_LABEL: Record<ImplantTier, string> = {
   rx804: "RX-804 (+4%)",
 };
 
-type IndustryTab = "production" | "reprocessing" | "invention" | "research" | "mining";
+type IndustryTab = "production" | "reprocessing" | "invention" | "research";
 
 type StructureTier = "npc_station" | "engineering_complex";
 
@@ -161,18 +161,26 @@ function isBuildRow(node: BuildTreeNode): boolean {
   return node.activity != null && node.shouldBuild;
 }
 
-/** Each nesting level gets a progressively stronger tint toward --accent
- * off the theme's own --bg-elevated, so a deeper tier visibly reads as
- * "one step further in" rather than every level looking like the exact
- * same box regardless of depth. Relative to whatever the active theme's
- * own accent/surface colors actually are (via color-mix), rather than a
- * hardcoded blue, so it stays sane across every theme this app ships
- * (including the more saturated seasonal ones) instead of just adding a
- * fixed color on top. Capped so a genuinely deep BOM doesn't end up solid
- * accent-colored by the time it bottoms out at raw materials. */
+/** Each nesting level gets progressively darker/more recessed off the
+ * theme's own --bg-elevated. Mixing toward --bg (tried first) turned out
+ * not to work on every theme - Cold Ballast's --bg (#0a0f14) and
+ * --bg-elevated (#101923) are both already near-black and barely differ
+ * from each other, so no percentage between two almost-identical dark
+ * values could ever produce real contrast. Mixing toward literal black
+ * instead gives a genuinely large range to work with regardless of how
+ * close together a given theme's own tokens happen to be - confirmed live
+ * against Cold Ballast specifically, the theme that exposed the bug.
+ * Reads as "one step further back/down" the deeper a tier goes - the same
+ * real-world metaphor a recessed panel or a folder nested further into a
+ * drawer uses. Capped so a genuinely deep BOM doesn't bottom out solid
+ * black by the time it reaches raw materials. */
 function tierTint(depth: number): string {
-  const percent = Math.min(depth * 6, 30);
-  return `color-mix(in srgb, var(--accent) ${percent}%, var(--bg-elevated))`;
+  // 12%/tier capped at 65% - strong enough that adjacent tiers are
+  // actually distinguishable at a glance in a real, deeply-nested BOM
+  // (four or five tiers visible at once), not just barely-different
+  // shades of the same box.
+  const percent = Math.min(depth * 12, 65);
+  return `color-mix(in srgb, black ${percent}%, var(--bg-elevated))`;
 }
 
 /** Every checkable row's identity - the type_id chain from the tree root
@@ -187,11 +195,11 @@ function rowPath(parentPath: string, typeId: number): string {
 
 /** Every ancestor of path, root-first, path itself included last - e.g.
  * "root>20125>11145" -> ["root", "root>20125", "root>20125>11145"]. Used
- * when expanding a row: unticking just that one row isn't enough if any
- * ancestor above it is still ticked, since sumCheckedCost's short-circuit
- * stops at the FIRST ticked ancestor it meets going down from the root -
- * a still-ticked grandparent would keep swallowing this whole branch
- * regardless of what gets ticked/unticked below it. */
+ * when expanding the root's own row: clears out any stale ticked state on
+ * the row being drilled into and everything above it - root's own path is
+ * never consulted by sumVisibleTickedCost/collectCheckedItems either way
+ * (they start at its direct Tier 1 children), so this just keeps
+ * checkedPaths tidy rather than changing what actually gets counted. */
 function ancestorPaths(path: string): string[] {
   const parts = path.split(">");
   const result: string[] = [];
@@ -199,27 +207,6 @@ function ancestorPaths(path: string): string[] {
     result.push(parts.slice(0, i + 1).join(">"));
   }
   return result;
-}
-
-/** Sums the real hub buy cost (per-unit hub price x quantity needed - the
- * same figure each row's own hub-total column shows) for every checked
- * row, not node.totalCost - that field is the galaxy-wide-index-based
- * build/buy assessment, which is a different number from "what would this
- * actually cost to buy at the trade hub right now", and hub cost is what
- * ticking a row is meant to represent. A checked node short-circuits
- * rather than also recursing into its children (its own hub cost already
- * stands for that whole branch), so only an *unchecked* node keeps walking
- * down - its children might still be individually opted back in below it.
- * This is what makes "everything ticked by default" a coherent number
- * with no double-counting, and lets unticking one row cleanly drop just
- * that row's cost (see the cascade-clear in toggleChecked). */
-function sumCheckedCost(node: BuildTreeNode, path: string, checked: Set<string>, hubPrices: Map<number, number>): number {
-  if (checked.has(path)) return (hubPrices.get(node.typeId) ?? node.buyCostPerUnit) * node.quantityNeeded;
-  let sum = 0;
-  for (const child of node.materials) {
-    sum += sumCheckedCost(child, rowPath(path, child.typeId), checked, hubPrices);
-  }
-  return sum;
 }
 
 /** Every path in node's own subtree, itself included - used both to seed
@@ -244,25 +231,172 @@ function collectAllTypeIds(node: BuildTreeNode, into: Set<number> = new Set()): 
   return into;
 }
 
-/** Every checked row's name + quantity, for the Multibuy clipboard export -
- * same short-circuit rule as sumCheckedCost (a checked node contributes
- * itself and stops, since its own quantityNeeded already accounts for
- * everything under it), and summed by type_id in case the same material
- * ends up checked at more than one point in the tree, so the pasted list
- * doesn't show the same item on two separate lines. */
-function collectCheckedItems(
+/** Walks root's whole subtree once, bucketing every descendant by tier
+ * depth (root's own direct materials are Tier 1) instead of returning a
+ * tree BuildTreeFlatList would have to recurse into itself - that's the
+ * exact "each level nests its own box" shape this replaces. A Map (not a
+ * plain object) so insertion order - the order tiers are actually
+ * discovered in, which since root is walked breadth-first-by-recursion is
+ * already shallowest-first - is the iteration order, with no separate
+ * sort-the-keys step needed. Each tier's own rows are build-first sorted
+ * (isBuildRow) before being pushed, matching the ordering the old nested
+ * view used within one parent's children - now applied across every
+ * parent contributing to that tier, not just siblings under one node.
+ * Each row also carries its own parentName/parentPath - a tier below the
+ * first mixes materials from however many different parents contributed to
+ * it (Life Support Backup Unit's own materials sitting right next to Auto-
+ * Integrity Preservation Seal's), and the recursive walk here processes one
+ * parent's whole contribution to a tier before moving to the next parent -
+ * so consecutive rows sharing a parentName are already guaranteed to be
+ * genuinely one contiguous group, not coincidentally adjacent. */
+function flattenByTier(
+  root: BuildTreeNode,
+  rootPath: string,
+): [number, { node: BuildTreeNode; path: string; parentName: string; parentPath: string }[]][] {
+  const tiers = new Map<number, { node: BuildTreeNode; path: string; parentName: string; parentPath: string }[]>();
+  function walk(node: BuildTreeNode, path: string, depth: number) {
+    const sorted = [...node.materials].sort((a, b) => Number(isBuildRow(b)) - Number(isBuildRow(a)));
+    for (const child of sorted) {
+      const childPath = rowPath(path, child.typeId);
+      if (!tiers.has(depth)) tiers.set(depth, []);
+      tiers.get(depth)!.push({ node: child, path: childPath, parentName: node.name, parentPath: path });
+      walk(child, childPath, depth + 1);
+    }
+  }
+  walk(root, rootPath, 1);
+  return Array.from(tiers.entries());
+}
+
+/** Does `node` have at least one of its own direct materials still ticked
+ * right now - the switch between "build it from what's ticked below" and
+ * "just use its plain Buy Cost", independent of whether its tier happens
+ * to be open on screen. Opening a tier is just looking; ticking/unticking
+ * what's under it is deciding. Untick every one of a buildable's own
+ * materials and it falls straight back to the exact number it showed
+ * before its tier was ever opened - re-tick any of them and the rollup
+ * comes right back - all without needing to touch the buildable's own
+ * checkbox, which stays free to mean something else entirely - unticking
+ * a buildable's own checkbox directly removes it (and everything under
+ * it) from cost outright, a stronger statement than "don't buy it
+ * pre-made" (see sumVisibleTickedCost's own comment). */
+function hasTickedMaterials(node: BuildTreeNode, path: string, checked: Set<string>): boolean {
+  return node.materials.some((child) => checked.has(rowPath(path, child.typeId)));
+}
+
+/** What `node`'s own Total column is showing right now - its plain Buy
+ * Cost whenever its own tier is closed OR none of its own materials are
+ * ticked (an estimate, not a real breakdown backing it - see
+ * .industry-build-cost-pending), or the rollup of just its ticked
+ * materials once its tier is open AND at least one of them is ticked, or
+ * a leaf's own totalCost always, since a leaf has neither a tier nor
+ * materials of its own to defer to. Recurses through tickedMaterialsRollup
+ * below however many tiers deep the BOM actually goes - reverting a Tier 4
+ * item back to its own Buy Cost now correctly ripples all the way up
+ * through Tier 3, 2 and 1, not just one level. Used here so
+ * sumVisibleTickedCost below always agrees with what the tree itself is
+ * showing - it used to use node.totalCost directly (the fully-recursive
+ * theoretical best cost, computed once up front regardless of the UI's own
+ * tier/tick state), which silently assumed every tier was already open
+ * (and everything under it ticked) even when it visibly wasn't, so the
+ * Costs sidebar's Build Cost disagreed with the tree's own Tier 1 total. */
+function effectiveNodeCost(node: BuildTreeNode, path: string, depth: number, collapsedTiers: Set<number>, checked: Set<string>): number {
+  if (node.materials.length === 0) return node.totalCost;
+  const tierOpen = !collapsedTiers.has(depth + 1);
+  if (!tierOpen || !hasTickedMaterials(node, path, checked)) return node.buyCostPerUnit * node.quantityNeeded;
+  return tickedMaterialsRollup(node, path, depth, collapsedTiers, checked);
+}
+
+/** The sum of `node`'s own direct materials that are actually ticked right
+ * now - an unticked material drops out of the rollup entirely, the same
+ * "untick it and it stops counting" rule every other row already follows,
+ * just applied to what a parent rolls up instead of to a row's own
+ * standalone cost. Each ticked child is priced via effectiveNodeCost
+ * itself (mutually recursive with it) - a child that's ALSO a buildable
+ * with its own tier open and its own ticked materials resolves the exact
+ * same way, all the way down however many tiers the BOM goes, instead of
+ * stopping one level down and falling back to a single precomputed
+ * "assume everything below is optimal" number the way this used to.
+ * Shared by BuildTreeRow's own Total column render and effectiveNodeCost
+ * above, so the two can never compute this differently from each other
+ * again (see that function's own comment for the bug this shared
+ * implementation originally fixed). depth here is the depth of `node`
+ * itself - children sit one tier below it. */
+function tickedMaterialsRollup(node: BuildTreeNode, path: string, depth: number, collapsedTiers: Set<number>, checked: Set<string>): number {
+  return node.materials.reduce((sum, child) => {
+    const childPath = rowPath(path, child.typeId);
+    if (!checked.has(childPath)) return sum;
+    return sum + effectiveNodeCost(child, childPath, depth + 1, collapsedTiers, checked);
+  }, 0);
+}
+
+/** Build Cost, wherever it's ticked, is the sum of Tier 1's own contributions
+ * - unticked entirely (contributes nothing, subtree and all - see below),
+ * or effectiveNodeCost's own number, which already resolves down through
+ * whatever's ticked beneath it on its own, however deep that goes. A
+ * ticked node's own effective cost IS its entire contribution: recursing
+ * any further into its children on top of that would double-count the
+ * same real-world purchase (a buildable and the materials that make it up
+ * can't both be on the same bill). An unticked node contributes nothing at
+ * all, subtree included - "I already have this, however it'd otherwise be
+ * sourced" is a stronger, more encompassing statement than "just don't buy
+ * the pre-made version", which is what ticking/unticking its own materials
+ * instead is for (see hasTickedMaterials/effectiveNodeCost). This used to
+ * walk the whole tree top-down and stop recursing at the first TICKED
+ * ancestor instead - which meant a Tier 2+ checkbox had no effect at all
+ * unless its Tier 1 ancestor was ALSO unticked first, since ticking the
+ * ancestor short-circuited before ever looking at its children's own
+ * state. Ticking/unticking anywhere now always does something, immediately. */
+function sumVisibleTickedCost(root: BuildTreeNode, rootPath: string, checked: Set<string>, collapsedTiers: Set<number>): number {
+  let sum = 0;
+  for (const child of root.materials) {
+    const path = rowPath(rootPath, child.typeId);
+    if (checked.has(path)) sum += effectiveNodeCost(child, path, 1, collapsedTiers, checked);
+  }
+  return sum;
+}
+
+/** Every real, still-wanted item's name + quantity, for the Multibuy
+ * clipboard export - same "a ticked node IS its own contribution, an
+ * unticked one contributes nothing at all" rule sumVisibleTickedCost
+ * follows, just collecting items instead of summing cost. A ticked
+ * buildable whose own tier is open (and has ticked materials of its own)
+ * isn't itself the thing to go buy - its now-active materials are, so this
+ * recurses into them instead of listing the buildable itself; everything
+ * else (a leaf, or a buildable that's reverted to its plain Buy Cost) IS
+ * the thing to list. Summed by type_id in case the same material ends up
+ * checked at more than one point in the tree, so the pasted list doesn't
+ * show the same item on two separate lines. */
+function collectEffectiveItems(
   node: BuildTreeNode,
   path: string,
+  depth: number,
+  collapsedTiers: Set<number>,
   checked: Set<string>,
   into: Map<number, { name: string; quantity: number }>,
-): Map<number, { name: string; quantity: number }> {
-  if (checked.has(path)) {
+): void {
+  const tierOpen = !collapsedTiers.has(depth + 1);
+  const usesRollup = node.materials.length > 0 && tierOpen && hasTickedMaterials(node, path, checked);
+  if (!usesRollup) {
     const existing = into.get(node.typeId);
     into.set(node.typeId, { name: node.name, quantity: (existing?.quantity ?? 0) + node.quantityNeeded });
-    return into;
+    return;
   }
   for (const child of node.materials) {
-    collectCheckedItems(child, rowPath(path, child.typeId), checked, into);
+    const childPath = rowPath(path, child.typeId);
+    if (checked.has(childPath)) collectEffectiveItems(child, childPath, depth + 1, collapsedTiers, checked, into);
+  }
+}
+
+function collectCheckedItems(
+  root: BuildTreeNode,
+  rootPath: string,
+  checked: Set<string>,
+  collapsedTiers: Set<number>,
+): Map<number, { name: string; quantity: number }> {
+  const into = new Map<number, { name: string; quantity: number }>();
+  for (const child of root.materials) {
+    const path = rowPath(rootPath, child.typeId);
+    if (checked.has(path)) collectEffectiveItems(child, path, 1, collapsedTiers, checked, into);
   }
   return into;
 }
@@ -272,46 +406,78 @@ interface BuildTreeRowProps {
   depth: number;
   path: string;
   checkedPaths: Set<string>;
-  /** Lifted to the parent (not local useState) so a "Collapse All" button
-   * up there can close every open tier at once instead of only being able
-   * to reach whichever single row's own local state it happens to be. */
-  expandedPaths: Set<string>;
   onToggle: (node: BuildTreeNode, path: string) => void;
-  onExpandToggle: (node: BuildTreeNode, path: string, expanding: boolean) => void;
-  /** Real per-unit sell prices at the selected Trade Hub, keyed by type_id -
-   * falls back to the node's own galaxy-wide index price (buyCostPerUnit)
-   * for anything the hub has no live sell orders for. */
-  hubPrices: Map<number, number>;
+  /** Only the root (depth 0) actually expands/collapses in place - every
+   * other row is rendered flat now (see BuildTreeFlatList) and passes
+   * neither of these. */
+  expanded?: boolean;
+  onExpandToggle?: (node: BuildTreeNode, path: string, expanding: boolean) => void;
+  /** type_id -> group_name (e.g. "Mineral"), shown on hover over the row's
+   * own icon+name. Missing entries (lookup still in flight, or failed)
+   * just mean no tooltip - never block rendering the row itself on it. */
+  itemGroupNames: Map<number, string>;
+  /** Which tier depths are currently collapsed - lifted all the way up to
+   * ProductionCalculator (not owned locally by BuildTreeFlatList) so both
+   * a row's own reveal state AND its Total column's rollup of its
+   * children can react to tier state, all the way up to the root. See
+   * nextTierExpanded/effectiveMaterialsTotal below for how each is used. */
+  collapsedTiers: Set<number>;
 }
 
-function BuildTreeRow({ node, depth, path, checkedPaths, expandedPaths, onToggle, onExpandToggle, hubPrices }: BuildTreeRowProps) {
-  const expanded = expandedPaths.has(path);
+/** Renders exactly one row's own content - never its children. The root
+ * (depth 0) is the only row that still expands/collapses in place (its own
+ * chevron, its own onClick); every other row is always a flat, non-
+ * expandable line now - see BuildTreeFlatList, which renders the whole
+ * rest of the BOM as one flat box grouped by tier instead of each row
+ * nesting its own separately-boxed children the way this used to work.
+ * Real testing found the old nested-box-within-box presentation genuinely
+ * hard to read once a BOM went more than two or three tiers deep - one
+ * flat box with a line between tiers reads far more clearly. */
+function BuildTreeRow({
+  node,
+  depth,
+  path,
+  checkedPaths,
+  onToggle,
+  expanded,
+  onExpandToggle,
+  itemGroupNames,
+  collapsedTiers,
+}: BuildTreeRowProps) {
   const indent = 10 + depth * 18;
+  const groupName = itemGroupNames.get(node.typeId);
   const hasChildren = node.materials.length > 0;
-  // node itself already carries hub-based prices by the time it gets here
-  // (see repriceTree, applied once at the tree root) - hubPrices is only
-  // still needed here for the one thing that isn't part of the tree
-  // itself: direct-children's totals for directMaterialsHubTotal below.
   const buyTotal = node.buyCostPerUnit * node.quantityNeeded;
-  const buildTotal = node.buildCostPerUnit != null ? node.buildCostPerUnit * node.quantityNeeded : null;
-  const buildIsCheaper = buildTotal != null && buildTotal < buyTotal;
-  /** For a row with its own materials, node.totalCost (the recursive
-   * build-vs-buy optimum, i.e. buildTotal or buyTotal above) isn't the only
-   * useful number - "what would just the direct ingredients one level down
-   * cost", not optimizing any further than that, is a different, still
-   * useful comparison for this item's own next production step. Leaf rows
-   * (no materials) keep showing their own real totalCost instead. */
-  const directMaterialsHubTotal = node.materials.reduce(
-    (sum, child) => sum + (hubPrices.get(child.typeId) ?? child.buyCostPerUnit) * child.quantityNeeded,
-    0,
-  );
-  // Build materials first, buy materials after - a stable sort so
-  // materials within the same group keep the build-tree's own original
-  // ordering rather than shuffling alphabetically or by quantity.
-  const sortedMaterials = useMemo(
-    () => [...node.materials].sort((a, b) => Number(isBuildRow(b)) - Number(isBuildRow(a))),
-    [node.materials],
-  );
+  /** The root has no "tier below its own tier" concept the way every other
+   * row does (it isn't part of any tier itself), so its own breakdown is
+   * always considered open. Every other row waits on collapsedTiers not
+   * having its own next tier (depth + 1) in it. */
+  const nextTierExpanded = depth === 0 || !collapsedTiers.has(depth + 1);
+  /** A leaf (no materials) has no "tier below" to wait on - it always
+   * shows its own real Total. A buildable row's Total instead starts out
+   * as its own Buy Cost (all that's known about it before its tier is
+   * open) and is replaced by the real build breakdown - see the Total
+   * column render below - once that tier opens AND at least one of its
+   * own materials is still ticked (see hasTickedMaterials). Untick every
+   * one of them and this row falls straight back to Buy Cost, exactly as
+   * if the tier had never been opened - the tier stays visually open (it's
+   * still worth looking at), it just stops backing this row's own number. */
+  const showBreakdown = !hasChildren || (nextTierExpanded && hasTickedMaterials(node, path, checkedPaths));
+  /** Once a buildable's own tier opens (and something under it is ticked),
+   * its Total stops being its plain Buy Cost and becomes the real
+   * materials rollup instead - comparing that new number back against the
+   * Buy Cost it just replaced is exactly "is building this actually
+   * cheaper than just buying it, now that I can see the real breakdown",
+   * so it's colored the same way any other before/after price change
+   * would be: green if opening the tier saved money, red if it actually
+   * costs more than buying outright would have. A leaf never has this
+   * comparison (its Total never changes state), and neither does a
+   * buildable whose tier is closed or has nothing ticked under it right
+   * now (nothing's currently backing a breakdown to compare against). */
+  const resolvedTotal = hasChildren && showBreakdown ? tickedMaterialsRollup(node, path, depth, collapsedTiers, checkedPaths) : null;
+  const totalValue = !showBreakdown ? buyTotal : (resolvedTotal ?? node.totalCost);
+  const totalIsCheaper = resolvedTotal != null && resolvedTotal < buyTotal;
+  const totalIsCostlier = resolvedTotal != null && resolvedTotal > buyTotal;
 
   return (
     <div className="market-tree-node industry-build-node">
@@ -326,19 +492,19 @@ function BuildTreeRow({ node, depth, path, checkedPaths, expandedPaths, onToggle
             className="industry-build-checkbox"
             checked={checkedPaths.has(path)}
             onChange={() => onToggle(node, path)}
-            aria-label={`Include ${node.name} in the selected total`}
+            aria-label={`Include ${node.name} in the Multibuy clipboard export`}
           />
         )}
         <button
           type="button"
           className="industry-build-row-body"
           onClick={() => {
-            if (!hasChildren) return;
+            if (depth !== 0 || !hasChildren || !onExpandToggle) return;
             onExpandToggle(node, path, !expanded);
           }}
         >
-          <img src={typeIconUrl(node.typeId, 32, node.name)} alt="" className="market-browser-row-icon" />
-          <span className="market-browser-tree-item-label">
+          <img src={typeIconUrl(node.typeId, 32, node.name)} alt="" className="market-browser-row-icon" title={groupName} />
+          <span className="market-browser-tree-item-label" title={groupName}>
             {node.name}
             {node.activity != null && (
               <Factory
@@ -354,113 +520,218 @@ function BuildTreeRow({ node, depth, path, checkedPaths, expandedPaths, onToggle
           <span className="industry-build-qty-col" title="Total Quantity: the total number of units required for this stage of the build.">
             x{node.quantityNeeded.toLocaleString()}
           </span>
+          {/* Total always shows a number - a buildable row starts out
+              showing its own Buy Cost here (grey/muted: an estimate, not
+              yet the real breakdown) and this same slot is replaced by the
+              combined cost of the tier below once that tier is actually
+              open, propagating the same "replace the estimate with the
+              real number" rule all the way up to the root's own Total. A
+              leaf material has no tier below to wait on, so it always
+              shows its own real totalCost here. */}
           <span
-            className={`industry-build-cost-option${buildIsCheaper ? " industry-build-cost-cheaper" : ""}`}
+            className={`industry-build-cost${!showBreakdown ? " industry-build-cost-pending" : ""}${totalIsCheaper ? " industry-build-cost-cheaper" : ""}${totalIsCostlier ? " industry-build-cost-costlier" : ""}`}
             title={
-              buildTotal != null
-                ? "Build Cost: what it would cost to build the full quantity needed from its own materials, at real Trade Hub prices."
-                : "Build Cost: no blueprint or reaction formula exists for this item - it can only be bought."
+              !showBreakdown
+                ? "Total: the Trade Hub cost of buying the full quantity needed outright - shown until the tier below is open, then replaced by the real cost to build this instead."
+                : resolvedTotal != null
+                  ? `Total: the combined Trade Hub cost of all required materials from the tier directly below - ${
+                      totalIsCheaper ? "cheaper" : totalIsCostlier ? "more expensive" : "the same"
+                    } than the ${formatIsk(buyTotal)} it'd cost to just buy this outright.`
+                  : "Total: this item's own assessed cost - the cheaper of building it from its own materials or buying it outright."
             }
           >
-            {buildTotal != null ? formatIsk(buildTotal) : "—"}
+            {formatIsk(totalValue)}
           </span>
-          <span
-            className={`industry-build-cost-option${buildIsCheaper ? "" : " industry-build-cost-cheaper"}`}
-            title="Buy Cost: the Trade Hub cost of buying the full quantity needed outright, right now."
-          >
-            {formatIsk(buyTotal)}
-          </span>
-          <span
-            className="industry-build-cost"
-            title={
-              hasChildren
-                ? "Total Material Cost: the combined Trade Hub cost of all required materials from the tier directly below, using the full quantities needed for the build."
-                : "Total Cost: the cheaper of Build Cost and Buy Cost above - this item's own assessed cost."
-            }
-          >
-            {formatIsk(hasChildren ? directMaterialsHubTotal : node.totalCost)}
-          </span>
-          {hasChildren && (
+          {depth === 0 && hasChildren && (
             <ChevronRight size={13} strokeWidth={2} className={`market-tree-chevron${expanded ? " market-tree-chevron-open" : ""}`} />
           )}
         </button>
       </div>
-      {expanded && hasChildren && (
-        <div className="market-tree-children industry-build-children" style={{ background: tierTint(depth + 1) }}>
-          <CornerDownRight size={13} strokeWidth={2} className="industry-build-tier-connector" aria-hidden="true" />
-          {sortedMaterials.map((child) => (
-            <BuildTreeRow
-              key={child.typeId}
-              node={child}
-              depth={depth + 1}
-              path={rowPath(path, child.typeId)}
-              checkedPaths={checkedPaths}
-              expandedPaths={expandedPaths}
-              onToggle={onToggle}
-              onExpandToggle={onExpandToggle}
-              hubPrices={hubPrices}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-interface NumberStepperInputProps {
-  value: number;
-  onChange: (value: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  className?: string;
-  title?: string;
+/** Everything under the root, flattened into one box and grouped by tier
+ * (root's direct materials = Tier 1, their own materials = Tier 2, and so
+ * on) instead of each row nesting its own separately-boxed, separately-
+ * indented children the recursive version used to render. Walks the whole
+ * subtree once up front (flattenByTier) rather than each BuildTreeRow
+ * recursing into its own children at render time - the data is the exact
+ * same recursive BuildTreeNode tree either way, only how it's laid out on
+ * screen changes. */
+/** A tri-state "select all" checkbox - ticked when every one of `paths` is
+ * checked, unticked when none are, indeterminate (the dash state, not
+ * exposed as a plain HTML attribute so it's set imperatively via ref) when
+ * it's a mix. Clicking always moves to one of the two solid states: tick
+ * everything if it wasn't already all ticked, untick everything if it was. */
+function GroupCheckbox({
+  paths,
+  checkedPaths,
+  onToggleGroup,
+  label,
+}: {
+  paths: string[];
+  checkedPaths: Set<string>;
+  onToggleGroup: (paths: string[], checked: boolean) => void;
+  label: string;
+}) {
+  const checkedCount = paths.filter((p) => checkedPaths.has(p)).length;
+  const allChecked = paths.length > 0 && checkedCount === paths.length;
+  return (
+    <input
+      type="checkbox"
+      className="industry-build-checkbox"
+      checked={allChecked}
+      ref={(el) => {
+        if (el) el.indeterminate = checkedCount > 0 && checkedCount < paths.length;
+      }}
+      onChange={(e) => {
+        e.stopPropagation();
+        onToggleGroup(paths, !allChecked);
+      }}
+      onClick={(e) => e.stopPropagation()}
+      aria-label={label}
+    />
+  );
 }
 
-/** Every plain number input across the Industry tabs used the browser's own
- * up/down spinner arrows - replaced everywhere with explicit +/- buttons
- * instead, which are easier to hit precisely and read at a glance than the
- * native control's tiny hit targets. min/max are clamped the same way each
- * field's own onChange already did (an empty/invalid field falls back to 0
- * before clamping, which lands on the same floor every existing field's own
- * fallback constant already matched its min at). */
-function NumberStepperInput({ value, onChange, min, max, step = 1, className, title }: NumberStepperInputProps) {
-  function clamp(next: number): number {
-    let result = next;
-    if (min != null) result = Math.max(min, result);
-    if (max != null) result = Math.min(max, result);
-    return result;
-  }
+function BuildTreeFlatList({
+  root,
+  rootPath,
+  checkedPaths,
+  onToggle,
+  onToggleGroup,
+  itemGroupNames,
+  collapsedTiers,
+  onToggleTier,
+}: {
+  root: BuildTreeNode;
+  rootPath: string;
+  checkedPaths: Set<string>;
+  onToggle: (node: BuildTreeNode, path: string) => void;
+  /** Ticks or unticks every path in the given list at once - backs both
+   * the per-parent-group and per-tier "select all" checkboxes below. */
+  onToggleGroup: (paths: string[], checked: boolean) => void;
+  itemGroupNames: Map<number, string>;
+  /** Lifted to ProductionCalculator (not owned locally here) so the root's
+   * own Total - rendered by its own separate BuildTreeRow call up there,
+   * outside this component entirely - can react to the same tier state
+   * every row's own Total already does. */
+  collapsedTiers: Set<number>;
+  onToggleTier: (tierDepth: number) => void;
+}) {
+  const tiers = useMemo(() => flattenByTier(root, rootPath), [root, rootPath]);
 
   return (
-    <div className="industry-number-stepper" title={title}>
-      <button
-        type="button"
-        className="industry-number-stepper-btn"
-        onClick={() => onChange(clamp(value - step))}
-        disabled={min != null && value <= min}
-        aria-label="Decrease"
-      >
-        <Minus size={12} strokeWidth={2.5} />
-      </button>
-      <input
-        type="number"
-        className={className}
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(e) => onChange(clamp(Number(e.target.value) || 0))}
-      />
-      <button
-        type="button"
-        className="industry-number-stepper-btn"
-        onClick={() => onChange(clamp(value + step))}
-        disabled={max != null && value >= max}
-        aria-label="Increase"
-      >
-        <Plus size={12} strokeWidth={2.5} />
-      </button>
+    <div className="market-tree-children industry-build-children">
+      <CornerDownRight size={13} strokeWidth={2} className="industry-build-tier-connector" aria-hidden="true" />
+      {tiers.map(([tierDepth, rows], tierIndex) => {
+        const tierCollapsed = collapsedTiers.has(tierDepth);
+        const tierPaths = rows.map((r) => r.path);
+        const tierTitle = (
+          <div className="industry-build-tier-title-row">
+            <GroupCheckbox
+              paths={tierPaths}
+              checkedPaths={checkedPaths}
+              onToggleGroup={onToggleGroup}
+              label={`Select all materials in Tier ${tierDepth}`}
+            />
+            <button type="button" className="industry-build-tier-title-btn" onClick={() => onToggleTier(tierDepth)}>
+              <ChevronRight size={12} strokeWidth={2.5} className={`market-tree-chevron${tierCollapsed ? "" : " market-tree-chevron-open"}`} />
+              <span className="industry-build-section-title">Tier {tierDepth}</span>
+            </button>
+          </div>
+        );
+        return (
+          // tierTint(tierDepth) here, not on the flat box as a whole - one
+          // flat box replaces the old nested-box-per-tier structure, but the
+          // "deeper tier reads as progressively darker" signal that structure
+          // carried is still worth keeping, just applied per tier-group
+          // inside the one box instead of per nested box.
+          <div key={tierDepth} className="industry-build-tier-group" style={{ background: tierTint(tierDepth) }}>
+            {/* Tier 1 needs no divider of its own - it's always first, right
+                after the tier connector above. Every tier after it is
+                breaking away from the one before, so it gets a rule line. */}
+            {tierIndex === 0 ? tierTitle : <div className="industry-build-materials-divider">{tierTitle}</div>}
+            {!tierCollapsed &&
+              (() => {
+                // Running sum for the group currently being walked - reset
+                // the moment a new parent starts, so by the group's last row
+                // it holds exactly that parent's own materials total. Each
+                // row's own contribution is effectiveNodeCost (0 if it's
+                // unticked - matches tickedMaterialsRollup dropping an
+                // unticked material out of its own parent's rollup), not
+                // node.totalCost - the same number that row's own Total
+                // column is showing right now (see that function's own
+                // comment), so this subtotal can never disagree with what's
+                // sitting directly above it.
+                let groupSum = 0;
+                return rows.map(({ node, path, parentName, parentPath }, rowIndex) => {
+                  const isGroupStart = rowIndex === 0 || rows[rowIndex - 1].parentPath !== parentPath;
+                  const isGroupEnd = rowIndex === rows.length - 1 || rows[rowIndex + 1].parentPath !== parentPath;
+                  if (isGroupStart) groupSum = 0;
+                  if (checkedPaths.has(path)) groupSum += effectiveNodeCost(node, path, tierDepth, collapsedTiers, checkedPaths);
+                  // Every row from here up to (not including) the next
+                  // parent boundary - flattenByTier's walk order already
+                  // guarantees they're contiguous, so this is a plain
+                  // forward scan, not a full re-group of the tier.
+                  const groupPaths: string[] = [];
+                  if (isGroupStart) {
+                    for (let j = rowIndex; j < rows.length && rows[j].parentPath === parentPath; j++) {
+                      groupPaths.push(rows[j].path);
+                    }
+                  }
+                  return (
+                    <Fragment key={path}>
+                      {/* Tier 1 has exactly one parent (root) by construction -
+                          a "for X" header there would just repeat the page's
+                          own title. Every tier after it mixes materials from
+                          however many different parents contributed to it, so
+                          a small header at each parent boundary is what
+                          actually answers "what is this batch of rows even
+                          for" - flattenByTier's own walk order already
+                          guarantees every one parent's rows are contiguous, so
+                          a plain "did the parent change" check is enough. */}
+                      {tierIndex > 0 && isGroupStart && (
+                        <p className="industry-build-parent-header">
+                          <GroupCheckbox
+                            paths={groupPaths}
+                            checkedPaths={checkedPaths}
+                            onToggleGroup={onToggleGroup}
+                            label={`Select all materials for ${parentName}`}
+                          />
+                          For {parentName}
+                        </p>
+                      )}
+                      <BuildTreeRow
+                        node={node}
+                        depth={tierDepth}
+                        path={path}
+                        checkedPaths={checkedPaths}
+                        onToggle={onToggle}
+                        itemGroupNames={itemGroupNames}
+                        collapsedTiers={collapsedTiers}
+                      />
+                      {/* A quick per-parent visual, not a real column - a
+                          plain-language "does this batch add up to roughly
+                          what I'd expect" check, right under the same
+                          numbers it's summing. */}
+                      {tierIndex > 0 && isGroupEnd && (
+                        <div className="industry-build-parent-subtotal" style={{ paddingLeft: 10 + tierDepth * 18 }}>
+                          <span />
+                          <span className="industry-build-parent-subtotal-label">Materials Total</span>
+                          <span />
+                          <span className="industry-build-parent-subtotal-value">{formatIsk(groupSum)}</span>
+                          <span />
+                        </div>
+                      )}
+                    </Fragment>
+                  );
+                });
+              })()}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -470,6 +741,13 @@ function ProductionCalculator() {
   const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selected, setSelected] = useState<TypeSearchMatch | null>(null);
+  /** Set right before loadFavourite assigns query/systemQuery directly -
+   * lets the two debounced search effects below tell "the user is typing"
+   * apart from "a favourite just restored an already-known selection", so
+   * loading one doesn't pop a suggestions dropdown back open over a
+   * blueprint/system that's already correctly selected. */
+  const skipBlueprintSearch = useRef(false);
+  const skipSystemSearch = useRef(false);
 
   const [defaultTradeHub] = useDefaultTradeHub();
   const { defaults: industryDefaults } = useIndustryDefaults();
@@ -518,9 +796,9 @@ function ProductionCalculator() {
    * string so the field can be edited freely (cleared, mid-typing, etc.)
    * without fighting a parsed number's re-formatting. Market/adjusted
    * pricing rarely covers blueprints at all (most aren't sold as market
-   * orders, only via contracts - see blueprintEffectiveCost below), so this
-   * is the practical way to get a real figure in: look the price up on
-   * contracts yourself and type it in. */
+   * orders, only via contracts), so this is the practical way to get a
+   * real figure in: look the price up on contracts yourself and type it
+   * in. */
   const [blueprintManualCost, setBlueprintManualCost] = useState("");
   /** Which Build Steps rows are ticked, keyed by rowPath (see BuildTreeRow) -
    * lets someone check off just the handful of items they still need
@@ -536,6 +814,12 @@ function ProductionCalculator() {
   const [hubRegionId, setHubRegionId] = useState(defaultTradeHub);
   const [hubPrices, setHubPrices] = useState<Map<number, number>>(new Map());
   const [hubPricesLoading, setHubPricesLoading] = useState(false);
+  /** typeId -> group_name (e.g. "Mineral", "Composite"), shown on hover
+   * over a row's own icon+name. getItemDetail is a per-type lookup (local
+   * SDE data, not a network call), so this fetches every distinct type in
+   * the tree once, the same batch-then-cache pattern hubPrices already
+   * uses, rather than one call per row per hover. */
+  const [itemGroupNames, setItemGroupNames] = useState<Map<number, string>>(new Map());
   const reportError = useErrorReporter();
 
   /** Saves (or updates) the currently-selected blueprint's whole setup -
@@ -558,6 +842,7 @@ function ProductionCalculator() {
       hubRegionId,
       systemId: system?.id ?? null,
       systemName: system?.name ?? null,
+      blueprintCost: blueprintManualCost,
     });
     setJustFavourited(true);
     window.setTimeout(() => setJustFavourited(false), 1500);
@@ -566,20 +851,31 @@ function ProductionCalculator() {
   /** Loads a saved favourite's whole setup back in - just the inputs, not
    * an automatic recalculation, so this stays a simple, safe state
    * assignment rather than needing handleCalculate to read values that
-   * haven't actually landed in state yet by the time it'd run. */
+   * haven't actually landed in state yet by the time it'd run. The
+   * blueprint/system are restored as real selections, not just text in
+   * their fields - skipBlueprintSearch/skipSystemSearch stop the normal
+   * debounced-search effects from popping their suggestions dropdowns
+   * back open over a selection that's already correct, which otherwise
+   * looked like the blueprint/system hadn't actually been picked yet. */
   function loadFavourite(fav: BlueprintFavourite) {
+    skipBlueprintSearch.current = true;
     setQuery(fav.name);
+    setSuggestionsOpen(false);
     setSelected({ id: fav.typeId, name: fav.name, market_group_id: null, volume: 0 });
     setRuns(fav.runs);
     setMaterialEfficiency(fav.materialEfficiency);
     setTimeEfficiency(fav.timeEfficiency);
     setStructure(fav.structure === "npc_station" ? "npc_station" : "engineering_complex");
     setFacilityTax(fav.facilityTax);
-    // ?? fallbacks: a favourite saved before these two fields existed won't
-    // have them in its stored JSON at all, not just at their zero-value default.
+    // ?? fallbacks: a favourite saved before these fields existed won't
+    // have them in its stored JSON at all, not just at their zero-value
+    // or empty-string default.
     setStructureRoleBonusPct(fav.structureRoleBonusPct ?? 0);
     setIsAlphaClone(fav.isAlphaClone ?? false);
     setHubRegionId(fav.hubRegionId);
+    setBlueprintManualCost(fav.blueprintCost ?? "");
+    skipSystemSearch.current = true;
+    setSystemSuggestionsOpen(false);
     if (fav.systemId != null && fav.systemName != null) {
       setSystem({ id: fav.systemId, name: fav.systemName, security: 0 });
       setSystemQuery(fav.systemName);
@@ -593,6 +889,10 @@ function ProductionCalculator() {
   }
 
   useEffect(() => {
+    if (skipBlueprintSearch.current) {
+      skipBlueprintSearch.current = false;
+      return;
+    }
     const trimmed = query.trim();
     if (trimmed.length < 2) {
       setSuggestions([]);
@@ -618,6 +918,10 @@ function ProductionCalculator() {
   }, [query]);
 
   useEffect(() => {
+    if (skipSystemSearch.current) {
+      skipSystemSearch.current = false;
+      return;
+    }
     const trimmed = systemQuery.trim();
     if (trimmed.length < 2) {
       setSystemSuggestions([]);
@@ -680,13 +984,40 @@ function ProductionCalculator() {
     };
   }, [tree, hubRegionId]);
 
+  useEffect(() => {
+    if (!tree) {
+      setItemGroupNames(new Map());
+      return;
+    }
+    const typeIds = Array.from(collectAllTypeIds(tree));
+    if (typeIds.length === 0) {
+      setItemGroupNames(new Map());
+      return;
+    }
+    let cancelled = false;
+    Promise.all(
+      typeIds.map((typeId) =>
+        getItemDetail(typeId)
+          .then((detail) => [typeId, detail.group_name] as const)
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const next = new Map<number, string>();
+      for (const r of results) if (r) next.set(r[0], r[1]);
+      setItemGroupNames(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tree]);
+
   async function handleCalculate() {
     if (!selected) return;
     setCalculating(true);
     setTree(null);
     setJobCost(null);
     setBlueprintCost(null);
-    setBlueprintManualCost("");
     setCheckedPaths(new Set());
     setExpandedPaths(new Set());
     try {
@@ -725,6 +1056,12 @@ function ProductionCalculator() {
       // "Selected total" reads as the real total until something's
       // unticked, rather than looking like nothing's selected yet.
       setCheckedPaths(collectPaths(result, rowPath("root", result.typeId), new Set()));
+      // Tier 1 is always visible the moment the root's own row is
+      // expanded - every tier past it starts closed, so a deep BOM
+      // doesn't dump every raw material on screen unprompted; drilling
+      // further in is an explicit choice made one tier at a time.
+      const tierDepths = flattenByTier(result, rowPath("root", result.typeId)).map(([depth]) => depth);
+      setCollapsedTiers(new Set(tierDepths.filter((depth) => depth !== 1)));
 
       if (system) {
         const costIndices = await getIndustrySystemCostIndices();
@@ -752,27 +1089,14 @@ function ProductionCalculator() {
     }
   }
 
-  /** Toggles a tree row. Unticking cascades down through the whole
-   * subtree (not just this one path) - otherwise the still-ticked
-   * children would simply take over the sum via sumCheckedCost's
-   * short-circuit rule, and the row would look unticked while its cost
-   * silently kept counting. Ticking a row back on only needs to add that
-   * one path back - its subtree is irrelevant to the sum once the parent
-   * itself is ticked, whatever state the descendants are still in. */
-  function toggleChecked(node: BuildTreeNode, path: string) {
-    setCheckedPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) {
-        for (const p of collectPaths(node, path, new Set())) next.delete(p);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }
-
-  /** The blueprint row has no subtree, so a plain flip is enough - no cascade needed. */
-  function toggleBlueprintChecked(path: string) {
+  /** Toggles a single tree row - no cascade into its subtree needed. A
+   * descendant's own ticked state only ever gets consulted once its
+   * ancestor chain is both ticked and has its tier open all the way down
+   * to it (see effectiveNodeCost/hasTickedMaterials) - so touching a row
+   * that isn't visible yet would just be reaching down and silently
+   * changing something the user can't even see, for no actual effect on
+   * cost right now. */
+  function toggleChecked(_node: BuildTreeNode, path: string) {
     setCheckedPaths((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
@@ -781,19 +1105,29 @@ function ProductionCalculator() {
     });
   }
 
-  /** Opening a row to look inside it is itself a decision - it means
-   * "I'm building this from its own materials, not treating it as one
-   * unit" - so expanding automatically unticks the row and ticks its
-   * direct children (their own totalCost stands in for the parent's),
-   * and collapsing it back reverses that (re-tick the row, untick its
-   * children) since going back to the rolled-up view means the drill-down
-   * is done. Only direct children are touched on the way down - a
-   * grandchild's own state only matters once its own parent is expanded
-   * too. Expanding also unticks every ancestor above this row, not just
-   * the row itself: sumCheckedCost stops at the first ticked ancestor it
-   * finds coming down from the root, so leaving one ticked above this row
-   * (e.g. the root product, ticked by default) would keep swallowing
-   * whatever gets ticked/unticked in here regardless. */
+  /** Ticks or unticks a whole batch of rows at once - the group ("For X")
+   * and tier ("Tier N") select-all checkboxes both just hand this the
+   * paths of every row they cover. */
+  function toggleCheckedPaths(paths: string[], checked: boolean) {
+    setCheckedPaths((prev) => {
+      const next = new Set(prev);
+      for (const p of paths) {
+        if (checked) next.add(p);
+        else next.delete(p);
+      }
+      return next;
+    });
+  }
+
+  /** This only ever fires for the root's own row now (see BuildTreeRow's
+   * click gate) - opening it to look inside is itself a decision, so
+   * expanding ticks its direct children (Tier 1 becomes what actually
+   * gets priced - see sumVisibleTickedCost) and collapsing it back
+   * reverses that, matching the rolled-up view collapsing back to.
+   * ancestorPaths here just clears any stale ticked state on the row and
+   * whatever's above it, tidying checkedPaths rather than changing what's
+   * actually counted (root's own ticked state was never consulted
+   * anyway). */
   function handleExpandToggle(node: BuildTreeNode, path: string, expanding: boolean) {
     setExpandedPaths((prev) => {
       const next = new Set(prev);
@@ -832,17 +1166,50 @@ function ProductionCalculator() {
    * an empty hubPrices map (nothing fetched yet) just means every node
    * falls back, so this is never null while tree itself isn't. */
   const pricedTree = useMemo(() => (tree ? repriceTree(tree, hubPrices) : null), [tree, hubPrices]);
+  // The root is the only row that still expands/collapses in place - see
+  // BuildTreeRow's own comment for why every other row is flat now.
+  const rootPath = pricedTree ? rowPath("root", pricedTree.typeId) : "root";
+  const rootExpanded = expandedPaths.has(rootPath);
+  // Which tiers are currently collapsed - lifted up here (not owned by
+  // BuildTreeFlatList) so the root's own Total, computed by its own
+  // separate BuildTreeRow call below, can roll up the same tier-aware
+  // child costs every other row's own Total already does.
+  const [collapsedTiers, setCollapsedTiers] = useState<Set<number>>(new Set());
+  function toggleTier(tierDepth: number) {
+    setCollapsedTiers((prev) => {
+      const next = new Set(prev);
+      if (next.has(tierDepth)) next.delete(tierDepth);
+      else next.add(tierDepth);
+      return next;
+    });
+  }
+  /** Build Cost, wherever it's shown in the Costs sidebar, is this - not
+   * pricedTree.totalCost directly - so it always agrees with what the
+   * Build Steps tree itself is showing: it starts out matching the tree's
+   * own Tier 1 total (every Tier 1 material ticked by default, each
+   * contributing whatever its own row currently shows - Buy Cost until
+   * its tier opens, the real build breakdown after), moves in lockstep as
+   * tiers get opened or closed, and only diverges from that tree total
+   * once something actually gets unticked. */
+  const tickedBuildCost = useMemo(
+    () => (pricedTree ? sumVisibleTickedCost(pricedTree, rootPath, checkedPaths, collapsedTiers) : 0),
+    [pricedTree, rootPath, checkedPaths, collapsedTiers],
+  );
 
-  const BLUEPRINT_ROW_PATH = "blueprint";
   // A manual entry always wins once typed, even "0" - only a genuinely
   // empty field falls back to the (usually unhelpful, market-order-based)
   // fetched price, so clearing the field back out restores that fallback.
+  // Entered up front next to the blueprint search, before Calculate Build
+  // Cost even runs, and survives calculation from then on (handleCalculate
+  // used to reset it to blank on every run - fixed alongside this move).
   const blueprintEffectiveCost = blueprintManualCost.trim() !== "" ? Number(blueprintManualCost) || 0 : (blueprintCost?.cost ?? 0);
-  const selectedTotal = useMemo(() => {
-    let sum = checkedPaths.has(BLUEPRINT_ROW_PATH) ? blueprintEffectiveCost : 0;
-    if (pricedTree) sum += sumCheckedCost(pricedTree, rowPath("root", pricedTree.typeId), checkedPaths, hubPrices);
-    return sum;
-  }, [pricedTree, blueprintEffectiveCost, checkedPaths, hubPrices]);
+  /** What acquiring the blueprint/BPC itself cost - a real expense of the
+   * job, folded into both Build Cost boxes (Per Unit divides it by
+   * quantityNeeded, the full-batch box shows it flat) as its own Blueprint
+   * Cost line. No more opt-in checkbox now that it's entered up front
+   * instead of ticked in the Build Steps tree - typing a real cost in *is*
+   * the opt-in. */
+  const blueprintCostIncluded = blueprintEffectiveCost;
 
   /** Name\tQuantity per line - the same tab-separated shape EVE's own
    * inventory/contract copy produces, which is exactly what the game's
@@ -850,10 +1217,15 @@ function ProductionCalculator() {
    * so the same material checked in two branches doesn't show up twice. */
   function handleCopyToClipboard() {
     const items = new Map<number, { name: string; quantity: number }>();
-    if (blueprintCost && checkedPaths.has(BLUEPRINT_ROW_PATH)) {
+    if (blueprintCost) {
       items.set(blueprintCost.typeId, { name: blueprintCost.name, quantity: 1 });
     }
-    if (pricedTree) collectCheckedItems(pricedTree, rowPath("root", pricedTree.typeId), checkedPaths, items);
+    if (pricedTree) {
+      for (const [typeId, item] of collectCheckedItems(pricedTree, rowPath("root", pricedTree.typeId), checkedPaths, collapsedTiers)) {
+        const existing = items.get(typeId);
+        items.set(typeId, { name: item.name, quantity: (existing?.quantity ?? 0) + item.quantity });
+      }
+    }
     if (items.size === 0) return;
     const text = Array.from(items.values())
       .map((i) => `${i.name}\t${i.quantity}`)
@@ -910,37 +1282,59 @@ function ProductionCalculator() {
             ))}
         </div>
 
-        <div className="kills-add-combobox industry-blueprint-search">
-          <input
-            type="text"
-            placeholder="Search for a blueprint or reaction formula..."
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setSelected(null);
-              setTree(null);
-            }}
-            onFocus={() => suggestions.length > 0 && setSuggestionsOpen(true)}
-            onBlur={() => setTimeout(() => setSuggestionsOpen(false), 120)}
-          />
-          {suggestionsOpen && (
-            <div className="gatecheck-slot-results kills-add-suggestions">
-              {suggestions.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setSelected(s);
-                    setQuery(s.name);
-                    setSuggestionsOpen(false);
-                  }}
-                >
-                  <img src={typeIconUrl(s.id, 32, s.name)} alt="" className="market-browser-row-icon" />
-                  {s.name}
-                </button>
-              ))}
+        <div className="industry-blueprint-search-row">
+          <div className="industry-blueprint-search-field">
+            <span>Blueprint</span>
+            <div className="kills-add-combobox industry-blueprint-search">
+              <input
+                type="text"
+                placeholder="Search for a blueprint or reaction formula..."
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setSelected(null);
+                  setTree(null);
+                  setBlueprintManualCost("");
+                }}
+                onFocus={() => suggestions.length > 0 && setSuggestionsOpen(true)}
+                onBlur={() => setTimeout(() => setSuggestionsOpen(false), 120)}
+              />
+              {suggestionsOpen && (
+                <div className="gatecheck-slot-results kills-add-suggestions">
+                  {suggestions.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setSelected(s);
+                        setQuery(s.name);
+                        setSuggestionsOpen(false);
+                      }}
+                    >
+                      <img src={typeIconUrl(s.id, 32, s.name)} alt="" className="market-browser-row-icon" />
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+          </div>
+
+          {selected && (
+            <label className="wh-field-label industry-blueprint-cost-inline">
+              Blueprint Cost
+              <input
+                type="number"
+                min={0}
+                step="any"
+                className="industry-field-input"
+                placeholder="0.00"
+                value={blueprintManualCost}
+                onChange={(e) => setBlueprintManualCost(e.target.value)}
+                title="What buying this blueprint/BPC cost you - most real prices come from contracts, not the market, so this is manual. Set it before or after calculating; it's added into Build Cost either way."
+              />
+            </label>
           )}
         </div>
 
@@ -1048,6 +1442,17 @@ function ProductionCalculator() {
                 </div>
               )}
             </div>
+            {pricedTree && (
+              <div
+                className="market-stat-card industry-ship-cost-card"
+                title="What buying this outright, brand new, would cost at the Trade Hub right now - the real market price of the finished item itself, not its component materials. Scales with the same quantity Build Cost does, so the two are directly comparable."
+              >
+                <span className="market-stat-label">Brand New Ship Cost from Market</span>
+                <span className="market-stat-value market-stat-value-isk">
+                  {formatIsk(pricedTree.buyCostPerUnit * pricedTree.quantityNeeded)}
+                </span>
+              </div>
+            )}
           </div>
         )}
 
@@ -1058,7 +1463,7 @@ function ProductionCalculator() {
             </button>
             <button
               type="button"
-              className={`detail-back${isFavourite(selected.id) ? " industry-favourite-setup-active" : ""}`}
+              className={`kills-sync-btn${isFavourite(selected.id) ? " industry-favourite-setup-active" : ""}`}
               onClick={handleFavouriteSetup}
               title="Save these runs/ME/TE/structure/tax/trade hub/system settings against this blueprint, so picking it from My Favourites restores them exactly"
             >
@@ -1085,53 +1490,36 @@ function ProductionCalculator() {
               <span />
               <span className="industry-build-header-label-left">Material</span>
               <span title="Total Quantity: the total number of units required for this stage of the build.">Qty</span>
-              <span title="Build Cost: what it would cost to build the full quantity needed from its own materials, at real Trade Hub prices.">
-                Build Cost
-              </span>
-              <span title="Buy Cost: the Trade Hub cost of buying the full quantity needed outright, right now.">Buy Cost</span>
-              <span title="Total: the cheaper of Build/Buy for a raw material, or the combined cost of just the materials one tier below for anything buildable.">
+              <span title="Total: the Trade Hub cost of buying the full quantity needed outright, until the tier below is open - then it's replaced by the real combined cost of that tier's materials instead.">
                 Total
               </span>
               <span />
             </div>
           </div>
           <div className="market-browser-tree-list">
-            {blueprintCost && (
-              <div className="market-tree-node industry-build-node">
-                <div className="market-browser-tree-item industry-build-row industry-build-row-blueprint">
-                  <input
-                    type="checkbox"
-                    className="industry-build-checkbox"
-                    checked={checkedPaths.has(BLUEPRINT_ROW_PATH)}
-                    onChange={() => toggleBlueprintChecked(BLUEPRINT_ROW_PATH)}
-                    aria-label={`Include ${blueprintCost.name} in the selected total`}
-                  />
-                  <img src={typeIconUrl(blueprintCost.typeId, 32, blueprintCost.name)} alt="" className="market-browser-row-icon" />
-                  <span className="market-browser-tree-item-label">{blueprintCost.name}</span>
-                  <span className="industry-build-decision industry-build-decision-buy">Buy</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="any"
-                    className="industry-build-cost-input"
-                    placeholder={formatIsk(blueprintCost.cost)}
-                    value={blueprintManualCost}
-                    onChange={(e) => setBlueprintManualCost(e.target.value)}
-                    title="Blueprints are rarely sold on the market - most real prices come from contracts. Type in what you found there."
-                  />
-                </div>
-              </div>
-            )}
             <BuildTreeRow
               node={pricedTree}
               depth={0}
-              path={rowPath("root", pricedTree.typeId)}
+              path={rootPath}
               checkedPaths={checkedPaths}
-              expandedPaths={expandedPaths}
-              onToggle={toggleChecked}
+              expanded={rootExpanded}
               onExpandToggle={handleExpandToggle}
-              hubPrices={hubPrices}
+              onToggle={toggleChecked}
+              itemGroupNames={itemGroupNames}
+              collapsedTiers={collapsedTiers}
             />
+            {rootExpanded && pricedTree.materials.length > 0 && (
+              <BuildTreeFlatList
+                root={pricedTree}
+                rootPath={rootPath}
+                checkedPaths={checkedPaths}
+                onToggle={toggleChecked}
+                onToggleGroup={toggleCheckedPaths}
+                itemGroupNames={itemGroupNames}
+                collapsedTiers={collapsedTiers}
+                onToggleTier={toggleTier}
+              />
+            )}
           </div>
         </div>
       )}
@@ -1144,32 +1532,80 @@ function ProductionCalculator() {
             <HelpBadge content={COSTS_SIDEBAR_HELP} align="left" />
           </div>
 
+          {/* Per-unit figures - a fixed property of the item itself, so they
+              never move when the Runs input above changes, unlike the
+              batch block below which scales with it. Build Time here is
+              per-run (a job's duration doesn't depend on how many units
+              one run outputs), everything else is per-unit - see the
+              batch block's own comment for why those two denominators
+              (runs vs. quantityNeeded) aren't always the same number. */}
           <div className="industry-job-cost-block">
-            <div className="industry-job-cost-row industry-job-cost-eiv">
-              <span>Total Cost</span>
+            <p className="industry-job-cost-section-label">Per Unit</p>
+            <div className="industry-job-cost-row">
+              <span>Build Cost</span>
+              <span className="industry-job-cost-value">{formatIsk(tickedBuildCost / pricedTree.quantityNeeded)}</span>
+            </div>
+            {blueprintCostIncluded > 0 && (
+              <div className="industry-job-cost-row">
+                <span>Blueprint Cost</span>
+                <span className="industry-job-cost-value">{formatIsk(blueprintCostIncluded / pricedTree.quantityNeeded)}</span>
+              </div>
+            )}
+            {jobCost && (
+              <div className="industry-job-cost-row">
+                <span>Job Cost</span>
+                <span className="industry-job-cost-value">{formatIsk(jobCost.totalJobCost / pricedTree.quantityNeeded)}</span>
+              </div>
+            )}
+            <div className="industry-job-cost-row industry-job-cost-subtotal">
+              <span>Total Job Run Cost</span>
               <span className="industry-job-cost-value industry-job-cost-value-total">
-                {formatIsk(pricedTree.totalCost + (jobCost?.totalJobCost ?? 0))}
+                {formatIsk((tickedBuildCost + blueprintCostIncluded + (jobCost?.totalJobCost ?? 0)) / pricedTree.quantityNeeded)}
               </span>
             </div>
-            {jobCost && <p className="industry-job-cost-included-note">(incl. Job Cost)</p>}
+            {pricedTree.timeSeconds != null && (
+              <div className="industry-job-cost-row">
+                <span>Build Time</span>
+                <span>{formatDuration(pricedTree.timeSeconds / runs)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* The full batch - scales with Runs. quantityNeeded (the output
+              item count) isn't always equal to runs - a blueprint can output
+              more than one unit per run (ammo, charges) - so this uses
+              quantityNeeded for the item-count label but the underlying
+              totals are already tree-wide, not re-derived from runs. */}
+          <div className="industry-job-cost-block">
+            <p className="industry-job-cost-section-label">
+              {runs} Run{runs === 1 ? "" : "s"} ({pricedTree.quantityNeeded.toLocaleString()} item{pricedTree.quantityNeeded === 1 ? "" : "s"})
+            </p>
             <div className="industry-job-cost-row">
-              <span>Per Unit</span>
-              <span className="industry-job-cost-value">
-                {formatIsk((pricedTree.totalCost + (jobCost?.totalJobCost ?? 0)) / pricedTree.quantityNeeded)}
+              <span>Build Cost</span>
+              <span className="industry-job-cost-value">{formatIsk(tickedBuildCost)}</span>
+            </div>
+            {blueprintCostIncluded > 0 && (
+              <div className="industry-job-cost-row">
+                <span>Blueprint Cost</span>
+                <span className="industry-job-cost-value">{formatIsk(blueprintCostIncluded)}</span>
+              </div>
+            )}
+            {jobCost && (
+              <div className="industry-job-cost-row">
+                <span>Job Cost</span>
+                <span className="industry-job-cost-value">{formatIsk(jobCost.totalJobCost)}</span>
+              </div>
+            )}
+            <div className="industry-job-cost-row industry-job-cost-subtotal">
+              <span>Total Job Run Cost</span>
+              <span className="industry-job-cost-value industry-job-cost-value-total">
+                {formatIsk(tickedBuildCost + blueprintCostIncluded + (jobCost?.totalJobCost ?? 0))}
               </span>
             </div>
             {pricedTree.timeSeconds != null && (
               <div className="industry-job-cost-row">
                 <span>Build Time</span>
                 <span>{formatDuration(pricedTree.timeSeconds)}</span>
-              </div>
-            )}
-            {checkedPaths.size > 0 && (
-              <div className="industry-job-cost-row industry-job-cost-subtotal">
-                <span>
-                  Selected Total ({checkedPaths.size} item{checkedPaths.size === 1 ? "" : "s"})
-                </span>
-                <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(selectedTotal)}</span>
               </div>
             )}
           </div>
@@ -1188,12 +1624,22 @@ function ProductionCalculator() {
 
           {jobCost && (
             <>
-              <p className="wh-side-label industry-job-cost-heading">Job Cost{system && ` at ${system.name}`}</p>
+              {/* Every ISK figure below is divided by runs - a single run's
+                  tax bill, fixed regardless of how many runs are queued up,
+                  same as the Per Unit block above. The percentages
+                  (System Cost Index, Facility Tax, SCC Surcharge, Alpha Tax)
+                  are rates, not amounts, so they're shown as-is - EIV scales
+                  linearly with runs (same materials per run x runs), so
+                  dividing its dependent tax amounts back down by runs is
+                  exactly the single-run figure, not an approximation. */}
+              <p className="wh-side-label industry-job-cost-heading">
+                Job Cost per Run{system && ` in System ${system.name}`}
+              </p>
 
               <div className="industry-job-cost-block">
                 <div className="industry-job-cost-row industry-job-cost-eiv">
                   <span>Estimated Item Value (EIV)</span>
-                  <span className="industry-job-cost-value">{formatIsk(jobCost.eiv)}</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.eiv / runs)}</span>
                 </div>
               </div>
 
@@ -1201,17 +1647,17 @@ function ProductionCalculator() {
                 <p className="industry-job-cost-section-label">Job Gross Cost</p>
                 <div className="industry-job-cost-row">
                   <span>System Cost Index ({(jobCost.systemCostIndex * 100).toFixed(2)}% EIV)</span>
-                  <span className="industry-job-cost-value">{formatIsk(jobCost.sciAmount)}</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.sciAmount / runs)}</span>
                 </div>
                 {jobCost.structureRoleBonusPct > 0 && (
                   <div className="industry-job-cost-row industry-job-cost-reduction">
                     <span>Structure Role Bonus (-{jobCost.structureRoleBonusPct}% of SCI)</span>
-                    <span>-{formatIsk(jobCost.roleBonusReduction)}</span>
+                    <span>-{formatIsk(jobCost.roleBonusReduction / runs)}</span>
                   </div>
                 )}
                 <div className="industry-job-cost-row industry-job-cost-subtotal">
                   <span>Total Job Gross Cost</span>
-                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.jobGrossCost)}</span>
+                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.jobGrossCost / runs)}</span>
                 </div>
               </div>
 
@@ -1219,28 +1665,28 @@ function ProductionCalculator() {
                 <p className="industry-job-cost-section-label">Taxes</p>
                 <div className="industry-job-cost-row">
                   <span>Facility Tax ({(jobCost.facilityTaxPct * 100).toFixed(2)}% EIV)</span>
-                  <span className="industry-job-cost-value">{formatIsk(jobCost.facilityTaxAmount)}</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.facilityTaxAmount / runs)}</span>
                 </div>
                 <div className="industry-job-cost-row">
                   <span>SCC Surcharge ({(jobCost.sccSurchargePct * 100).toFixed(2)}% EIV)</span>
-                  <span className="industry-job-cost-value">{formatIsk(jobCost.sccSurchargeAmount)}</span>
+                  <span className="industry-job-cost-value">{formatIsk(jobCost.sccSurchargeAmount / runs)}</span>
                 </div>
                 {jobCost.alphaTaxAmount > 0 && (
                   <div className="industry-job-cost-row">
                     <span>Alpha Clone Tax ({(jobCost.alphaTaxPct * 100).toFixed(2)}% EIV)</span>
-                    <span className="industry-job-cost-value">{formatIsk(jobCost.alphaTaxAmount)}</span>
+                    <span className="industry-job-cost-value">{formatIsk(jobCost.alphaTaxAmount / runs)}</span>
                   </div>
                 )}
                 <div className="industry-job-cost-row industry-job-cost-subtotal">
                   <span>Total Taxes</span>
-                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.totalTaxes)}</span>
+                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.totalTaxes / runs)}</span>
                 </div>
               </div>
 
               <div className="industry-job-cost-block industry-job-cost-total-block">
                 <div className="industry-job-cost-row industry-job-cost-total">
                   <span>Total Job Cost</span>
-                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.totalJobCost)}</span>
+                  <span className="industry-job-cost-value industry-job-cost-value-total">{formatIsk(jobCost.totalJobCost / runs)}</span>
                 </div>
               </div>
             </>
@@ -2160,115 +2606,7 @@ function ResearchCalculator() {
 
 /** Character-only, per D5's scoping - corp mining observer data (refinery
  * -level tracking of a whole team) is skipped for this pass. */
-function MiningLedgerTab({ characters }: { characters: SessionCharacter[] }) {
-  const [selectedId, setSelectedId] = useState<number | null>(characters[0]?.id ?? null);
-  const [ledger, setLedger] = useState<CharacterMiningLedger | null>(null);
-  const [prices, setPrices] = useState<Map<number, number>>(new Map());
-  const reportError = useErrorReporter();
-
-  useEffect(() => {
-    getMarketPrices()
-      .then((list) => {
-        const map = new Map<number, number>();
-        for (const p of list) if (p.average_price != null) map.set(p.type_id, p.average_price);
-        setPrices(map);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    setLedger(null);
-    if (selectedId == null) return;
-    getCharacterMiningLedger(selectedId)
-      .then(setLedger)
-      .catch((err) => reportError(`Failed to load mining ledger: ${String(err)}`));
-  }, [selectedId, reportError]);
-
-  const grouped = useMemo(() => {
-    if (!ledger) return [];
-    const byType = new Map<number, { typeName: string; quantity: number }>();
-    for (const e of ledger.entries) {
-      const existing = byType.get(e.type_id);
-      if (existing) existing.quantity += e.quantity;
-      else byType.set(e.type_id, { typeName: e.type_name, quantity: e.quantity });
-    }
-    return [...byType.entries()]
-      .map(([typeId, v]) => ({ typeId, ...v, value: (prices.get(typeId) ?? 0) * v.quantity }))
-      .sort((a, b) => b.value - a.value);
-  }, [ledger, prices]);
-
-  const totalValue = grouped.reduce((sum, g) => sum + g.value, 0);
-  const distinctDays = ledger ? new Set(ledger.entries.map((e) => e.date)).size : 0;
-  const iskPerDay = distinctDays > 0 ? totalValue / distinctDays : 0;
-  const sortedGrouped = useSortableRows(grouped, {
-    typeName: (g) => g.typeName,
-    quantity: (g) => g.quantity,
-    value: (g) => g.value,
-  }, "value");
-
-  return (
-    <div className="industry-production">
-      {characters.length > 1 && <CharacterSelectorStrip characters={characters} selectedId={selectedId} onSelect={setSelectedId} />}
-      {selectedId == null ? (
-        <p className="detail-empty">No connected characters.</p>
-      ) : !ledger ? (
-        <p className="detail-empty">Loading mining ledger...</p>
-      ) : ledger.needs_reauth ? (
-        <p className="detail-empty">Sign in again to unlock the mining ledger for this character.</p>
-      ) : ledger.entries.length === 0 ? (
-        <p className="detail-empty">No mining activity recorded in the last 90 days.</p>
-      ) : (
-        <>
-          <p className="settings-section-hint">
-            Up to 90 days of mining history from ESI, valued at EVE-wide average price - a rough guide, not a
-            guaranteed sell price.
-          </p>
-          <div className="market-browser-stats">
-            <div className="market-stat-card">
-              <span className="market-stat-label">Total Value</span>
-              <span className="market-stat-value">{formatIsk(totalValue)}</span>
-            </div>
-            <div className="market-stat-card">
-              <span className="market-stat-label">Active Days</span>
-              <span className="market-stat-value">{distinctDays}</span>
-            </div>
-            <div className="market-stat-card">
-              <span className="market-stat-label">ISK / Active Day</span>
-              <span className="market-stat-value">{formatIsk(iskPerDay)}</span>
-            </div>
-          </div>
-          <div className="data-table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <SortableTh label="Ore / Ice" sortKey="typeName" activeKey={sortedGrouped.sortKey} dir={sortedGrouped.sortDir} onSort={sortedGrouped.sort} />
-                  <SortableTh label="Quantity" sortKey="quantity" activeKey={sortedGrouped.sortKey} dir={sortedGrouped.sortDir} onSort={sortedGrouped.sort} numeric />
-                  <SortableTh label="Est. Value" sortKey="value" activeKey={sortedGrouped.sortKey} dir={sortedGrouped.sortDir} onSort={sortedGrouped.sort} numeric />
-                </tr>
-              </thead>
-              <tbody>
-                {sortedGrouped.rows.map((g) => (
-                  <tr key={g.typeId}>
-                    <td>
-                      <span className="asset-item-cell">
-                        <img src={typeIconUrl(g.typeId, 32, g.typeName)} alt="" className="market-browser-row-icon" />
-                        {g.typeName}
-                      </span>
-                    </td>
-                    <td className="data-table-numeric">{g.quantity.toLocaleString()}</td>
-                    <td className="data-table-numeric">{formatIsk(g.value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function IndustryPage({ characters }: { characters: SessionCharacter[] }) {
+function IndustryPage() {
   const [tab, setTab] = useState<IndustryTab>("production");
 
   return (
@@ -2297,9 +2635,6 @@ function IndustryPage({ characters }: { characters: SessionCharacter[] }) {
           <button type="button" className={`character-tab${tab === "research" ? " character-tab-active" : ""}`} onClick={() => setTab("research")}>
             Research
           </button>
-          <button type="button" className={`character-tab${tab === "mining" ? " character-tab-active" : ""}`} onClick={() => setTab("mining")}>
-            Mining Ledger
-          </button>
           <HelpBadge content={HELP_CONTENT[`industry.${tab}`] ?? HELP_CONTENT.industry} />
         </div>
 
@@ -2309,10 +2644,8 @@ function IndustryPage({ characters }: { characters: SessionCharacter[] }) {
           <ReprocessingCalculator />
         ) : tab === "invention" ? (
           <InventionCalculator />
-        ) : tab === "research" ? (
-          <ResearchCalculator />
         ) : (
-          <MiningLedgerTab characters={characters} />
+          <ResearchCalculator />
         )}
       </div>
     </main>

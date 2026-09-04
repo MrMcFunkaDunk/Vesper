@@ -22,6 +22,7 @@ const CalendarPage = lazy(() => import("./components/CalendarPage"));
 const FittingsPage = lazy(() => import("./components/FittingsPage"));
 const PathWormholeFinderPage = lazy(() => import("./components/PathWormholeFinderPage"));
 const IndustryPage = lazy(() => import("./components/IndustryPage"));
+const MiningPage = lazy(() => import("./components/MiningPage"));
 const MultiboxPage = lazy(() => import("./components/MultiboxPage"));
 import type { SystemSummary } from "./components/SystemKillboard";
 import type { CorporationSummary } from "./components/CorporationKillboard";
@@ -41,6 +42,25 @@ import { useDefaultLandingTab } from "./hooks/useDefaultLandingTab";
 import { useReduceMotion } from "./hooks/useReduceMotion";
 import { useTheme } from "./hooks/useTheme";
 import "./App.css";
+// Premium deck themes (Bulkhead/Cold Ballast/Command Deck) live entirely
+// outside App.css, in their own small stylesheet architecture - never
+// capable of altering the six standard themes above. premium-structure.css
+// is scoped behind :root[data-theme="x"] selectors since it retrofits
+// classes standard themes also use; premium-instruments.css isn't scoped
+// the same way, since every class it styles (.annunciator,
+// .mechanical-button, .screen-housing, .premium-dashboard*) belongs to
+// brand-new components under src/components/premium/ that only ever
+// render from behind an isPremiumTheme(theme) check in the first place -
+// see that file's own header for why. Tokens first, then the shared
+// component language every deck reads those tokens through, then the new
+// hardware library + Premium Dashboard, then each deck's own
+// distinguishing geometry.
+import "./themes/premium/premium-tokens.css";
+import "./themes/premium/premium-structure.css";
+import "./themes/premium/premium-instruments.css";
+import "./themes/premium/bulkhead.css";
+import "./themes/premium/cold-ballast.css";
+import "./themes/premium/command-deck.css";
 
 function App() {
   const [activeId, setActiveId] = useDefaultLandingTab(NAV_ITEMS[0].id);
@@ -265,7 +285,9 @@ function App() {
             onSelectSystem={handleOpenSystemKills}
           />
         ) : activeId === "industry" ? (
-          <IndustryPage characters={session.characters} />
+          <IndustryPage />
+        ) : activeId === "mining" ? (
+          <MiningPage characters={session.characters} />
         ) : activeId === "multiboxing" ? (
           <MultiboxPage />
         ) : (

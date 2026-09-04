@@ -68,7 +68,7 @@ function PriceHistoryChart({ points }: { points: MarketHistoryPoint[] }) {
       </svg>
       <div className="market-history-range">
         <span>{recent[0].date}</span>
-        <span>
+        <span className="isk" title={`Average price ranged from ${formatIsk(min)} to ${formatIsk(max)} over this period`}>
           {formatIsk(min)} – {formatIsk(max)} avg
         </span>
         <span>{recent[recent.length - 1].date}</span>

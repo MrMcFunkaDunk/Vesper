@@ -35,6 +35,17 @@ export function formatPercent(part: number, total: number): string {
   return total > 0 ? `${((part / total) * 100).toFixed(1)}%` : "0.0%";
 }
 
+/** Bonus remaps (new-player grants) bypass the normal once-a-year cooldown entirely - checked first regardless of accrued_remap_cooldown_date. Shared by CharacterDetail's standard-theme header and PremiumCharacterHeader's console version, which both render the same attribute-pip row - lives here rather than in either component file so neither has to import from the other. */
+export function remapAvailabilityText(attributes: { bonus_remaps: number; accrued_remap_cooldown_date: string | null }): string {
+  if (attributes.bonus_remaps > 0) {
+    return `${attributes.bonus_remaps} bonus remap${attributes.bonus_remaps === 1 ? "" : "s"} available`;
+  }
+  if (!attributes.accrued_remap_cooldown_date) return "Remap available";
+  const cooldownEnds = new Date(attributes.accrued_remap_cooldown_date).getTime();
+  if (cooldownEnds <= Date.now()) return "Remap available";
+  return `Next remap: ${formatTimeRemaining(attributes.accrued_remap_cooldown_date)}`;
+}
+
 export function formatTimeRemaining(iso: string): string {
   const diffMs = new Date(iso).getTime() - Date.now();
   if (diffMs <= 0) return "finishing soon";

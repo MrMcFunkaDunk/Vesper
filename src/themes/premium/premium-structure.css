@@ -1,0 +1,1913 @@
+/* ============================================================================
+   PREMIUM STRUCTURE - shared component language across all three decks.
+   ============================================================================
+   Every rule reads its actual colors from the --deck-* / --bg / --accent /
+   etc. tokens premium-tokens.css sets per deck, so ONE rule here produces
+   three different-looking results without being written three times over
+   for color alone - only the selector list itself has to repeat per deck
+   (a comma list can't share a compound-selector prefix - see the button
+   block below for the concrete reason). Deck-specific GEOMETRY - the parts
+   that make Bulkhead, Cold Ballast, and Command Deck recognizably
+   different shapes, not just different colors - lives in bulkhead.css /
+   cold-ballast.css / command-deck.css instead of here.
+
+   Nothing in this file (or the other four in this folder) has any effect
+   under a standard theme - every selector is gated on
+   :root[data-theme="bulkhead"|"cold-ballast"|"command-deck"].
+   ============================================================================ */
+
+/* ---------------------------------------------------------------------------
+   TYPE - uppercase, tracked labels everywhere the app already marks
+   something as a "label" via its own class, plus every table header and
+   every button. Deliberately NOT applied to prose (--font-body content -
+   mail bodies, help text, character/system names in running text).
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] th,
+:root[data-theme="cold-ballast"] th,
+:root[data-theme="command-deck"] th,
+:root[data-theme="bulkhead"] button,
+:root[data-theme="cold-ballast"] button,
+:root[data-theme="command-deck"] button,
+:root[data-theme="bulkhead"] .status-chip-label,
+:root[data-theme="cold-ballast"] .status-chip-label,
+:root[data-theme="command-deck"] .status-chip-label,
+:root[data-theme="bulkhead"] .status-chip-value,
+:root[data-theme="cold-ballast"] .status-chip-value,
+:root[data-theme="command-deck"] .status-chip-value,
+:root[data-theme="bulkhead"] .wh-field-label,
+:root[data-theme="cold-ballast"] .wh-field-label,
+:root[data-theme="command-deck"] .wh-field-label,
+:root[data-theme="bulkhead"] .settings-inline-label,
+:root[data-theme="cold-ballast"] .settings-inline-label,
+:root[data-theme="command-deck"] .settings-inline-label,
+:root[data-theme="bulkhead"] .eyebrow,
+:root[data-theme="cold-ballast"] .eyebrow,
+:root[data-theme="command-deck"] .eyebrow,
+:root[data-theme="bulkhead"] .kills-tab,
+:root[data-theme="cold-ballast"] .kills-tab,
+:root[data-theme="command-deck"] .kills-tab,
+:root[data-theme="bulkhead"] .character-tab,
+:root[data-theme="cold-ballast"] .character-tab,
+:root[data-theme="command-deck"] .character-tab,
+:root[data-theme="bulkhead"] .mail-label-chip,
+:root[data-theme="cold-ballast"] .mail-label-chip,
+:root[data-theme="command-deck"] .mail-label-chip,
+:root[data-theme="bulkhead"] .market-stat-label,
+:root[data-theme="cold-ballast"] .market-stat-label,
+:root[data-theme="command-deck"] .market-stat-label,
+:root[data-theme="bulkhead"] .nav-item span,
+:root[data-theme="cold-ballast"] .nav-item span,
+:root[data-theme="command-deck"] .nav-item span {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Numeric/telemetry readouts go monospace - ISK figures, stat values, the
+   EVE Time clock, wallet amounts - the "coordinates/telemetry -> monospace"
+   rule from the brief, kept off --font-label (which stays a condensed
+   sans everywhere else) so only actual NUMBERS pick up fixed-width digits. */
+:root[data-theme="bulkhead"] .status-chip-value,
+:root[data-theme="cold-ballast"] .status-chip-value,
+:root[data-theme="command-deck"] .status-chip-value,
+:root[data-theme="bulkhead"] .eve-time-value,
+:root[data-theme="cold-ballast"] .eve-time-value,
+:root[data-theme="command-deck"] .eve-time-value,
+:root[data-theme="bulkhead"] .capsuleers-online-count,
+:root[data-theme="cold-ballast"] .capsuleers-online-count,
+:root[data-theme="command-deck"] .capsuleers-online-count,
+:root[data-theme="bulkhead"] .market-stat-value,
+:root[data-theme="cold-ballast"] .market-stat-value,
+:root[data-theme="command-deck"] .market-stat-value,
+:root[data-theme="bulkhead"] .wallet-amount-positive,
+:root[data-theme="cold-ballast"] .wallet-amount-positive,
+:root[data-theme="command-deck"] .wallet-amount-positive,
+:root[data-theme="bulkhead"] .wallet-amount-negative,
+:root[data-theme="cold-ballast"] .wallet-amount-negative,
+:root[data-theme="command-deck"] .wallet-amount-negative,
+:root[data-theme="bulkhead"] .industry-job-cost-value,
+:root[data-theme="cold-ballast"] .industry-job-cost-value,
+:root[data-theme="command-deck"] .industry-job-cost-value,
+:root[data-theme="bulkhead"] .data-table-numeric,
+:root[data-theme="cold-ballast"] .data-table-numeric,
+:root[data-theme="command-deck"] .data-table-numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 4px currentColor;
+}
+
+/* ---------------------------------------------------------------------------
+   SHARED READOUT FLICKER - the same CRT-monitor instability
+   (premium-crt-flicker, also used by TelemetryRail in
+   premium-instruments.css) extended to the app's other "hero" numeric
+   readouts: the topbar's status chips, EVE Time, Capsuleers Online, the
+   stat-card figures used across Wallet/Mining/Industry/etc., the
+   Industry job-cost readout, a character's overview ISK balance and
+   Assets-tab total, and a kill detail's Total/Destroyed/Dropped value.
+   Deliberately NOT extended to .data-table-numeric,
+   .wallet-amount-positive/-negative, or any other class that renders once
+   per table row/card in a list of arbitrary length (character cards,
+   fitting cards, market rows) - all of those can appear dozens of times
+   on one screen, and animating every one of them at once (in lockstep,
+   since sibling instances of the same selector share one fixed delay)
+   would violate the "mostly still, a little active" restraint the effect
+   depends on to read as atmosphere instead of noise. Every selector below
+   is guaranteed to render at most once per page. Each gets its own fixed
+   delay (rather than nth-child stagger, since these aren't repeating
+   siblings of each other) so none of them ever flicker in sync.
+   Deliberately scoped here (not in premium-instruments.css, which is
+   unscoped) because every one of these classes is also rendered by the
+   six standard themes - StatusChip, the topbar, wallet/market stat
+   cards all exist there too, and this effect must never reach them.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .status-chip-value,
+:root[data-theme="cold-ballast"] .status-chip-value,
+:root[data-theme="command-deck"] .status-chip-value,
+:root[data-theme="bulkhead"] .eve-time-value,
+:root[data-theme="cold-ballast"] .eve-time-value,
+:root[data-theme="command-deck"] .eve-time-value,
+:root[data-theme="bulkhead"] .capsuleers-online-count,
+:root[data-theme="cold-ballast"] .capsuleers-online-count,
+:root[data-theme="command-deck"] .capsuleers-online-count,
+:root[data-theme="bulkhead"] .market-stat-value,
+:root[data-theme="cold-ballast"] .market-stat-value,
+:root[data-theme="command-deck"] .market-stat-value,
+:root[data-theme="bulkhead"] .industry-job-cost-value,
+:root[data-theme="cold-ballast"] .industry-job-cost-value,
+:root[data-theme="command-deck"] .industry-job-cost-value,
+:root[data-theme="bulkhead"] .detail-stats-isk,
+:root[data-theme="cold-ballast"] .detail-stats-isk,
+:root[data-theme="command-deck"] .detail-stats-isk,
+:root[data-theme="bulkhead"] .asset-total-value,
+:root[data-theme="cold-ballast"] .asset-total-value,
+:root[data-theme="command-deck"] .asset-total-value,
+:root[data-theme="bulkhead"] .kill-stats-total,
+:root[data-theme="cold-ballast"] .kill-stats-total,
+:root[data-theme="command-deck"] .kill-stats-total,
+:root[data-theme="bulkhead"] .kill-stats-destroyed,
+:root[data-theme="cold-ballast"] .kill-stats-destroyed,
+:root[data-theme="command-deck"] .kill-stats-destroyed,
+:root[data-theme="bulkhead"] .kill-stats-dropped,
+:root[data-theme="cold-ballast"] .kill-stats-dropped,
+:root[data-theme="command-deck"] .kill-stats-dropped,
+:root[data-theme="bulkhead"] .wallet-balance-card h2,
+:root[data-theme="cold-ballast"] .wallet-balance-card h2,
+:root[data-theme="command-deck"] .wallet-balance-card h2 {
+  animation: premium-crt-flicker 7s steps(1, end) infinite;
+}
+
+@keyframes premium-crt-flicker {
+  0%,
+  91%,
+  94%,
+  100% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 0.35;
+  }
+  93% {
+    opacity: 0.75;
+  }
+}
+
+:root[data-theme="bulkhead"] .status-chip-value,
+:root[data-theme="cold-ballast"] .status-chip-value,
+:root[data-theme="command-deck"] .status-chip-value {
+  animation-delay: 0s;
+}
+
+:root[data-theme="bulkhead"] .eve-time-value,
+:root[data-theme="cold-ballast"] .eve-time-value,
+:root[data-theme="command-deck"] .eve-time-value {
+  animation-duration: 6.2s;
+  animation-delay: 1.1s;
+}
+
+:root[data-theme="bulkhead"] .capsuleers-online-count,
+:root[data-theme="cold-ballast"] .capsuleers-online-count,
+:root[data-theme="command-deck"] .capsuleers-online-count {
+  animation-duration: 8.4s;
+  animation-delay: 2.3s;
+}
+
+:root[data-theme="bulkhead"] .market-stat-value,
+:root[data-theme="cold-ballast"] .market-stat-value,
+:root[data-theme="command-deck"] .market-stat-value {
+  animation-duration: 7.3s;
+  animation-delay: 0.6s;
+}
+
+:root[data-theme="bulkhead"] .wallet-balance-card h2,
+:root[data-theme="cold-ballast"] .wallet-balance-card h2,
+:root[data-theme="command-deck"] .wallet-balance-card h2 {
+  animation-duration: 8.1s;
+  animation-delay: 2.7s;
+}
+
+:root[data-theme="bulkhead"] .industry-job-cost-value,
+:root[data-theme="cold-ballast"] .industry-job-cost-value,
+:root[data-theme="command-deck"] .industry-job-cost-value {
+  animation-duration: 6.7s;
+  animation-delay: 1.8s;
+}
+
+:root[data-theme="bulkhead"] .detail-stats-isk,
+:root[data-theme="cold-ballast"] .detail-stats-isk,
+:root[data-theme="command-deck"] .detail-stats-isk {
+  animation-duration: 9.1s;
+  animation-delay: 0.4s;
+}
+
+:root[data-theme="bulkhead"] .asset-total-value,
+:root[data-theme="cold-ballast"] .asset-total-value,
+:root[data-theme="command-deck"] .asset-total-value {
+  animation-duration: 7.9s;
+  animation-delay: 2.9s;
+}
+
+:root[data-theme="bulkhead"] .kill-stats-total,
+:root[data-theme="cold-ballast"] .kill-stats-total,
+:root[data-theme="command-deck"] .kill-stats-total {
+  animation-duration: 6.4s;
+  animation-delay: 0.9s;
+}
+
+:root[data-theme="bulkhead"] .kill-stats-destroyed,
+:root[data-theme="cold-ballast"] .kill-stats-destroyed,
+:root[data-theme="command-deck"] .kill-stats-destroyed {
+  animation-duration: 8.8s;
+  animation-delay: 1.5s;
+}
+
+:root[data-theme="bulkhead"] .kill-stats-dropped,
+:root[data-theme="cold-ballast"] .kill-stats-dropped,
+:root[data-theme="command-deck"] .kill-stats-dropped {
+  animation-duration: 7.1s;
+  animation-delay: 3.4s;
+}
+
+/* Same exception as TelemetryRail's own flicker (see
+   premium-instruments.css) - gated on VESPER's own in-app Reduce Motion
+   toggle only, not the OS-level prefers-reduced-motion media query every
+   OTHER animation in this file still respects. This dev machine has that
+   OS setting on independent of any real motion sensitivity, and the
+   whole point of adding this effect a second time was for it to actually
+   be visible. */
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .status-chip-value,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .status-chip-value,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .status-chip-value,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .eve-time-value,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .eve-time-value,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .eve-time-value,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .capsuleers-online-count,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .capsuleers-online-count,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .capsuleers-online-count,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .market-stat-value,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .market-stat-value,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .market-stat-value,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .industry-job-cost-value,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .industry-job-cost-value,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .industry-job-cost-value,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .detail-stats-isk,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .detail-stats-isk,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .detail-stats-isk,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .asset-total-value,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .asset-total-value,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .asset-total-value,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .kill-stats-total,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .kill-stats-total,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .kill-stats-total,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .kill-stats-destroyed,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .kill-stats-destroyed,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .kill-stats-destroyed,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .kill-stats-dropped,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .kill-stats-dropped,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .kill-stats-dropped,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .wallet-balance-card h2,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .wallet-balance-card h2,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .wallet-balance-card h2,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .nav-item-active::before,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .nav-item-active::before,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .nav-item-active::before,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .nav-item-channel,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .nav-item-channel,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .nav-item-channel,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .technical-label,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .technical-label,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .technical-label,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .status-lamp-lit,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .status-lamp-lit,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .status-lamp-lit {
+  animation: none;
+}
+
+/* Technical reference markings (TechnicalLabel component) - small,
+   etched-plate identification text, never mistakeable for real content. */
+:root[data-theme="bulkhead"] .technical-label,
+:root[data-theme="cold-ballast"] .technical-label,
+:root[data-theme="command-deck"] .technical-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  opacity: 0.55;
+  text-transform: uppercase;
+}
+
+:root[data-theme="bulkhead"] .sidebar-footer,
+:root[data-theme="cold-ballast"] .sidebar-footer,
+:root[data-theme="command-deck"] .sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* ---------------------------------------------------------------------------
+   GLOBAL SHELL - console background, ignition flicker on every page mount.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .shell,
+:root[data-theme="cold-ballast"] .shell,
+:root[data-theme="command-deck"] .shell {
+  background-color: var(--bg);
+}
+
+/* Every page's root element is <main className="main main-*"> (confirmed
+   across all 25 page components) - one hook point reaches every single
+   navigation for free. A short opacity/brightness flicker before settling,
+   like a physical MFD re-drawing the instant you switch pages, not a long
+   cinematic boot the user has to sit through - it plays on EVERY mount by
+   design (no session-memory gate), since at 340ms it reads as the screen
+   staying alive and physical rather than as something to wait out. */
+:root[data-theme="bulkhead"] .main,
+:root[data-theme="cold-ballast"] .main,
+:root[data-theme="command-deck"] .main {
+  position: relative;
+  animation: premium-boot-flicker 340ms steps(6, end) 1;
+}
+
+@keyframes premium-boot-flicker {
+  0% {
+    opacity: 0.2;
+    filter: brightness(1.8);
+  }
+  16% {
+    opacity: 1;
+    filter: brightness(0.7);
+  }
+  32% {
+    opacity: 0.4;
+    filter: brightness(1.4);
+  }
+  48% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+  100% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+/* A one-line ignition label flashes over the page for the same instant the
+   flicker plays - the text itself is deck-specific (see each deck's own
+   .main::before { content: ... } in bulkhead.css/cold-ballast.css/
+   command-deck.css), this just owns the shared position/timing/look. */
+:root[data-theme="bulkhead"] .main::before,
+:root[data-theme="cold-ballast"] .main::before,
+:root[data-theme="command-deck"] .main::before {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  text-shadow: 0 0 6px currentColor;
+  pointer-events: none;
+  opacity: 0;
+  animation: premium-boot-label 340ms steps(2, end) 1;
+}
+
+@keyframes premium-boot-label {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   SIDEBAR - a breaker rack, not a rounded nav list. Active items energize a
+   real indicator lamp (a pseudo-element, no JSX change needed) instead of
+   just changing text color; the drag-to-reorder interaction (transform) is
+   left completely alone - see the button block below for why .nav-item is
+   excluded there too.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .sidebar,
+:root[data-theme="cold-ballast"] .sidebar,
+:root[data-theme="command-deck"] .sidebar {
+  background: var(--deck-plate);
+  border-right: 2px solid var(--deck-frame);
+}
+
+:root[data-theme="bulkhead"] .nav-item,
+:root[data-theme="cold-ballast"] .nav-item,
+:root[data-theme="command-deck"] .nav-item {
+  position: relative;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  padding-left: 14px;
+}
+
+:root[data-theme="bulkhead"] .nav-item::before,
+:root[data-theme="cold-ballast"] .nav-item::before,
+:root[data-theme="command-deck"] .nav-item::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--deck-lamp-off-neutral);
+  transition: background 120ms linear, box-shadow 120ms linear;
+}
+
+:root[data-theme="bulkhead"] .nav-item:hover::before,
+:root[data-theme="cold-ballast"] .nav-item:hover::before,
+:root[data-theme="command-deck"] .nav-item:hover::before {
+  background: var(--text-muted);
+}
+
+:root[data-theme="bulkhead"] .nav-item-active,
+:root[data-theme="cold-ballast"] .nav-item-active,
+:root[data-theme="command-deck"] .nav-item-active {
+  border-left-color: var(--accent);
+  background: var(--deck-cavity);
+  /* The energized side rail the nav rebuild asks for - a soft accent
+     bleed off the same edge the lamp/border-left already live on, so the
+     active route reads as "this channel is physically lit up", not just
+     "this text happens to be a different color". Kept off border-left's
+     own width (stays the resting state's 3px) so activating a route never
+     shifts the label/icon over by a pixel. */
+  box-shadow: inset 6px 0 14px -8px var(--accent);
+}
+
+:root[data-theme="bulkhead"] .nav-item-active::before,
+:root[data-theme="cold-ballast"] .nav-item-active::before,
+:root[data-theme="command-deck"] .nav-item-active::before {
+  background: var(--accent);
+  box-shadow: 0 0 5px 2px var(--accent), 0 0 10px 4px var(--accent);
+  animation: premium-crt-flicker 9.5s steps(1, end) infinite;
+}
+
+/* Sidebar rack life - the current route's lamp is the one genuinely "hero"
+   flicker candidate in the nav (only ever one lit at a time, same
+   restraint as every other flicker in this file). The 13 channel tags are
+   different: small, low-opacity corner badges that all render at once, so
+   flickering them in lockstep would read as the whole rack glitching
+   together rather than real equipment. Real racks don't glitch in unison -
+   each indicator runs on its own clock - so instead of one shared
+   animation-delay, every nav position gets its own via :nth-child, spread
+   across the cycle so at most one tag is ever dimming at a time. */
+:root[data-theme="bulkhead"] .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav-item-channel,
+:root[data-theme="command-deck"] .nav-item-channel {
+  animation: premium-crt-flicker-soft 14s steps(1, end) infinite;
+}
+
+@keyframes premium-crt-flicker-soft {
+  0%,
+  92%,
+  100% {
+    opacity: 0.6;
+  }
+  95% {
+    opacity: 0.25;
+  }
+}
+
+:root[data-theme="bulkhead"] .nav button:nth-child(1) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(1) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(1) .nav-item-channel {
+  animation-delay: 0s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(2) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(2) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(2) .nav-item-channel {
+  animation-delay: 1.1s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(3) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(3) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(3) .nav-item-channel {
+  animation-delay: 2.2s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(4) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(4) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(4) .nav-item-channel {
+  animation-delay: 3.3s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(5) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(5) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(5) .nav-item-channel {
+  animation-delay: 4.4s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(6) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(6) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(6) .nav-item-channel {
+  animation-delay: 5.5s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(7) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(7) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(7) .nav-item-channel {
+  animation-delay: 6.6s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(8) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(8) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(8) .nav-item-channel {
+  animation-delay: 7.7s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(9) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(9) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(9) .nav-item-channel {
+  animation-delay: 8.8s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(10) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(10) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(10) .nav-item-channel {
+  animation-delay: 9.9s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(11) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(11) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(11) .nav-item-channel {
+  animation-delay: 11s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(12) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(12) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(12) .nav-item-channel {
+  animation-delay: 12.1s;
+}
+:root[data-theme="bulkhead"] .nav button:nth-child(13) .nav-item-channel,
+:root[data-theme="cold-ballast"] .nav button:nth-child(13) .nav-item-channel,
+:root[data-theme="command-deck"] .nav button:nth-child(13) .nav-item-channel {
+  animation-delay: 13.2s;
+}
+
+/* Etched reference plates (TechnicalLabel) - at most one or two ever
+   render on a given screen (sidebar footer, a page header), so the shared
+   flicker is safe here the same way it's safe on the other "hero" readouts
+   above. */
+:root[data-theme="bulkhead"] .technical-label,
+:root[data-theme="cold-ballast"] .technical-label,
+:root[data-theme="command-deck"] .technical-label {
+  animation: premium-crt-flicker-soft 11s steps(1, end) infinite;
+  animation-delay: 4s;
+}
+
+/* ---------------------------------------------------------------------------
+   STATUS LAMPS (StatusLamp component) - housing, unlit material, lit core,
+   bloom. Rectangular annunciator variant included for future use even
+   though nothing in the app opts into shape="rect" yet.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .status-lamp,
+:root[data-theme="cold-ballast"] .status-lamp,
+:root[data-theme="command-deck"] .status-lamp {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  border: 2px solid var(--deck-cavity);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-circle,
+:root[data-theme="cold-ballast"] .status-lamp-circle,
+:root[data-theme="command-deck"] .status-lamp-circle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+:root[data-theme="bulkhead"] .status-lamp-rect,
+:root[data-theme="cold-ballast"] .status-lamp-rect,
+:root[data-theme="command-deck"] .status-lamp-rect {
+  width: 16px;
+  height: 8px;
+  border-radius: 1px;
+}
+
+:root[data-theme="bulkhead"] .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-core {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.5), transparent 60%);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-unlit.status-lamp-online .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-unlit.status-lamp-online .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-unlit.status-lamp-online .status-lamp-core {
+  background-color: var(--deck-lamp-off-online);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-unlit.status-lamp-warning .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-unlit.status-lamp-warning .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-unlit.status-lamp-warning .status-lamp-core {
+  background-color: var(--deck-lamp-off-warning);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-unlit.status-lamp-danger .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-unlit.status-lamp-danger .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-unlit.status-lamp-danger .status-lamp-core {
+  background-color: var(--deck-lamp-off-danger);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-unlit.status-lamp-neutral .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-unlit.status-lamp-neutral .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-unlit.status-lamp-neutral .status-lamp-core {
+  background-color: var(--deck-lamp-off-neutral);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-lit.status-lamp-online .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-lit.status-lamp-online .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-lit.status-lamp-online .status-lamp-core {
+  background-color: var(--success);
+  box-shadow: 0 0 6px 2px var(--success), 0 0 14px 4px var(--success);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-lit.status-lamp-warning .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-lit.status-lamp-warning .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-lit.status-lamp-warning .status-lamp-core {
+  background-color: var(--warning);
+  box-shadow: 0 0 6px 2px var(--warning), 0 0 14px 4px var(--warning);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-lit.status-lamp-danger .status-lamp-core,
+:root[data-theme="cold-ballast"] .status-lamp-lit.status-lamp-danger .status-lamp-core,
+:root[data-theme="command-deck"] .status-lamp-lit.status-lamp-danger .status-lamp-core {
+  background-color: var(--danger);
+  box-shadow: 0 0 6px 2px var(--danger), 0 0 14px 4px var(--danger);
+}
+
+:root[data-theme="bulkhead"] .status-lamp-blink,
+:root[data-theme="cold-ballast"] .status-lamp-blink,
+:root[data-theme="command-deck"] .status-lamp-blink {
+  animation: premium-lamp-hard-blink 0.9s steps(1, end) infinite;
+}
+
+@keyframes premium-lamp-hard-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.2;
+  }
+}
+
+/* A lit-but-steady lamp (an "on" reading, not an active warning/danger
+   alert - :not(.status-lamp-blink) keeps this off anything already doing
+   the hard blink above, so a lamp never runs two opacity animations at
+   once) still isn't perfectly steady on real equipment - a loose bulb
+   randomly dips rather than blinking cleanly on a beat. Three uneven dips
+   at irregular depths per cycle, not an evenly-spaced pulse, so it reads
+   as "slightly worn hardware" rather than a deliberate signal. Reaches
+   every StatusLamp in the app from one rule: the Dashboard's SYS
+   STATE/ALERT BANK annunciators and the topbar's server-status/character-
+   connection dots (both routed through StatusChip -> StatusLamp) alike. */
+:root[data-theme="bulkhead"] .status-lamp-lit:not(.status-lamp-blink),
+:root[data-theme="cold-ballast"] .status-lamp-lit:not(.status-lamp-blink),
+:root[data-theme="command-deck"] .status-lamp-lit:not(.status-lamp-blink) {
+  animation: premium-lamp-random-flicker 6s steps(1, end) infinite;
+}
+
+@keyframes premium-lamp-random-flicker {
+  0%,
+  18%,
+  19%,
+  20%,
+  47%,
+  48%,
+  71%,
+  100% {
+    opacity: 1;
+  }
+  18.5% {
+    opacity: 0.15;
+  }
+  19.5% {
+    opacity: 0.6;
+  }
+  47.5% {
+    opacity: 0.1;
+  }
+  71.3% {
+    opacity: 0.4;
+  }
+}
+
+/* Three lamps standing right next to each other (a Dashboard annunciator
+   panel) would otherwise all share the animation above's single fixed
+   delay and flicker in perfect lockstep - obviously synchronized reads as
+   broken, not alive. Staggered per position within .screen-housing-display
+   so SYS STATE's three lamps (and ALERT BANK's) each run their own clock,
+   the same "real racks don't glitch in unison" reasoning as the sidebar's
+   channel tags. */
+:root[data-theme="bulkhead"] .screen-housing-display .annunciator:nth-child(1) .status-lamp-lit,
+:root[data-theme="cold-ballast"] .screen-housing-display .annunciator:nth-child(1) .status-lamp-lit,
+:root[data-theme="command-deck"] .screen-housing-display .annunciator:nth-child(1) .status-lamp-lit {
+  animation-delay: 0s;
+}
+
+:root[data-theme="bulkhead"] .screen-housing-display .annunciator:nth-child(2) .status-lamp-lit,
+:root[data-theme="cold-ballast"] .screen-housing-display .annunciator:nth-child(2) .status-lamp-lit,
+:root[data-theme="command-deck"] .screen-housing-display .annunciator:nth-child(2) .status-lamp-lit {
+  animation-delay: 2s;
+}
+
+:root[data-theme="bulkhead"] .screen-housing-display .annunciator:nth-child(3) .status-lamp-lit,
+:root[data-theme="cold-ballast"] .screen-housing-display .annunciator:nth-child(3) .status-lamp-lit,
+:root[data-theme="command-deck"] .screen-housing-display .annunciator:nth-child(3) .status-lamp-lit {
+  animation-delay: 4s;
+}
+
+/* The topbar's own lit dots (server status, character connection) sit far
+   enough apart on screen that lockstep timing wouldn't read as broken the
+   way three adjacent lamps would, but a distinct delay still keeps them
+   from happening to line up with a Dashboard annunciator on the same
+   screen. */
+:root[data-theme="bulkhead"] .status-chip-value .status-lamp-lit,
+:root[data-theme="cold-ballast"] .status-chip-value .status-lamp-lit,
+:root[data-theme="command-deck"] .status-chip-value .status-lamp-lit {
+  animation-delay: 3.1s;
+}
+
+/* ---------------------------------------------------------------------------
+   TOPBAR - the strip of instrument chips (server status, capsuleers-online,
+   connected, EVE time, bell) reads as inset display windows rather than
+   floating pills.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .location-tracker-current,
+:root[data-theme="cold-ballast"] .location-tracker-current,
+:root[data-theme="command-deck"] .location-tracker-current,
+:root[data-theme="bulkhead"] .location-tracker-search,
+:root[data-theme="cold-ballast"] .location-tracker-search,
+:root[data-theme="command-deck"] .location-tracker-search,
+:root[data-theme="bulkhead"] .server-status-badge,
+:root[data-theme="cold-ballast"] .server-status-badge,
+:root[data-theme="command-deck"] .server-status-badge,
+:root[data-theme="bulkhead"] .capsuleers-online-badge,
+:root[data-theme="cold-ballast"] .capsuleers-online-badge,
+:root[data-theme="command-deck"] .capsuleers-online-badge,
+:root[data-theme="bulkhead"] .account-trigger,
+:root[data-theme="cold-ballast"] .account-trigger,
+:root[data-theme="command-deck"] .account-trigger,
+:root[data-theme="bulkhead"] .eve-time-clock,
+:root[data-theme="cold-ballast"] .eve-time-clock,
+:root[data-theme="command-deck"] .eve-time-clock,
+:root[data-theme="bulkhead"] .notification-bell-trigger,
+:root[data-theme="cold-ballast"] .notification-bell-trigger,
+:root[data-theme="command-deck"] .notification-bell-trigger {
+  background: var(--deck-cavity);
+  border: 1px solid var(--deck-frame);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme="bulkhead"] .topbar,
+:root[data-theme="cold-ballast"] .topbar,
+:root[data-theme="command-deck"] .topbar {
+  background: var(--deck-plate);
+  border-bottom: 2px solid var(--deck-frame);
+}
+
+/* ---------------------------------------------------------------------------
+   BUTTON PHYSICS - a real raised keycap, not a flat rectangle with a thin
+   drop-shadow: a two-tone metal gradient cap sitting on a hard, unblurred
+   "shelf" shadow (the classic chunky-3D trick - a solid-color layer offset
+   straight down with zero blur reads as physical thickness in a way a soft
+   blurred shadow never does), a bevel-light seam along the top edge where
+   light would catch a real raised surface, and an instant collapse-and-lock
+   on press: the shelf shrinks to nothing, the gradient inverts (light now
+   comes from below-behind instead of above, like the cap has been pushed
+   below the panel surface), and an inset shadow reads as the underside now
+   facing the viewer. .nav-item is excluded everywhere below - the sidebar's
+   own drag-to-reorder already drives its transform, and a second transform
+   source here would fight it mid-drag. Every rule below is written out
+   three times, once per deck's own [data-theme] attribute - a comma-
+   separated selector list can't share a compound-selector prefix
+   (":root[a], :root[b] .foo" means "match :root[a] alone, OR match .foo
+   descended from :root[b]", not ".foo descended from either").
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] button:not(.nav-item):not(.mechanical-button),
+:root[data-theme="cold-ballast"] button:not(.nav-item):not(.mechanical-button),
+:root[data-theme="command-deck"] button:not(.nav-item):not(.mechanical-button) {
+  border-radius: 0;
+  border: 1px solid var(--deck-frame);
+  border-top-color: var(--deck-bezel);
+  transform: translateY(0);
+  transition: transform 70ms linear, box-shadow 70ms linear, background 70ms linear, filter 120ms linear;
+}
+
+:root[data-theme="bulkhead"] button:not(.nav-item):not(.mechanical-button):not(:disabled),
+:root[data-theme="cold-ballast"] button:not(.nav-item):not(.mechanical-button):not(:disabled),
+:root[data-theme="command-deck"] button:not(.nav-item):not(.mechanical-button):not(:disabled) {
+  background: linear-gradient(180deg, var(--deck-bezel) 0%, var(--deck-plate) 100%);
+  box-shadow: 0 4px 0 var(--deck-cavity), 0 7px 10px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+:root[data-theme="bulkhead"] button:not(.nav-item):not(.mechanical-button):not(:disabled):hover,
+:root[data-theme="cold-ballast"] button:not(.nav-item):not(.mechanical-button):not(:disabled):hover,
+:root[data-theme="command-deck"] button:not(.nav-item):not(.mechanical-button):not(:disabled):hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--deck-bezel) 80%, white 10%) 0%, var(--deck-plate) 100%);
+}
+
+:root[data-theme="bulkhead"] button:not(.nav-item):not(.mechanical-button):not(:disabled):active,
+:root[data-theme="cold-ballast"] button:not(.nav-item):not(.mechanical-button):not(:disabled):active,
+:root[data-theme="command-deck"] button:not(.nav-item):not(.mechanical-button):not(:disabled):active {
+  background: linear-gradient(180deg, var(--deck-cavity) 0%, var(--deck-plate) 100%);
+  box-shadow: 0 0 0 var(--deck-cavity), inset 0 3px 6px rgba(0, 0, 0, 0.7);
+  transform: translateY(4px);
+  transition: transform 0ms, box-shadow 0ms, background 0ms;
+}
+
+/* Latched/engaged toggle buttons - a persistent selected state (a tab, a
+   radius filter, a label chip, a switch left flipped on), not a momentary
+   :active press. Reads as physically depressed and staying there - the same
+   collapsed keycap as an :active press, permanently - with the accent
+   bleeding out from underneath like a backlit switch rather than just a
+   color change. */
+:root[data-theme="bulkhead"] .kills-tab-active,
+:root[data-theme="cold-ballast"] .kills-tab-active,
+:root[data-theme="command-deck"] .kills-tab-active,
+:root[data-theme="bulkhead"] .character-tab-active,
+:root[data-theme="cold-ballast"] .character-tab-active,
+:root[data-theme="command-deck"] .character-tab-active,
+:root[data-theme="bulkhead"] .location-tracker-radius-active,
+:root[data-theme="cold-ballast"] .location-tracker-radius-active,
+:root[data-theme="command-deck"] .location-tracker-radius-active,
+:root[data-theme="bulkhead"] .mail-label-chip-active,
+:root[data-theme="cold-ballast"] .mail-label-chip-active,
+:root[data-theme="command-deck"] .mail-label-chip-active,
+:root[data-theme="bulkhead"] .kills-watched-chip-active,
+:root[data-theme="cold-ballast"] .kills-watched-chip-active,
+:root[data-theme="command-deck"] .kills-watched-chip-active,
+:root[data-theme="bulkhead"] .kill-report-chip-active,
+:root[data-theme="cold-ballast"] .kill-report-chip-active,
+:root[data-theme="command-deck"] .kill-report-chip-active,
+:root[data-theme="bulkhead"] .entity-stats-window-active,
+:root[data-theme="cold-ballast"] .entity-stats-window-active,
+:root[data-theme="command-deck"] .entity-stats-window-active,
+:root[data-theme="bulkhead"] .kills-pager-active,
+:root[data-theme="cold-ballast"] .kills-pager-active,
+:root[data-theme="command-deck"] .kills-pager-active {
+  background: linear-gradient(180deg, var(--deck-cavity) 0%, var(--deck-plate) 100%);
+  box-shadow: 0 0 0 var(--deck-cavity), inset 0 3px 6px rgba(0, 0, 0, 0.7), 0 0 10px var(--accent-soft), inset 0 0 14px var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* Disabled = physically unpowered, not just faded - flat housing (no
+   throw shadow to press), desaturated and dimmed rather than translucent. */
+:root[data-theme="bulkhead"] button:disabled,
+:root[data-theme="cold-ballast"] button:disabled,
+:root[data-theme="command-deck"] button:disabled {
+  box-shadow: none;
+  filter: grayscale(0.7) brightness(0.55);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+   TOGGLE SWITCHES - every real on/off <input type="checkbox"> in Settings
+   (Reduce Motion, notification prefs) becomes a physical rocker instead of
+   the browser's native checkbox: a recessed track with a raised metal
+   thumb that slides and clicks over with a little overshoot, exactly the
+   flip-switch language the rest of this hardware library uses for buttons.
+   appearance:none turns the input itself into the track; ::after draws the
+   thumb - both fully supported on a checkbox once its native appearance is
+   suppressed. Scoped to .settings-checkbox-row specifically (not every
+   checkbox on earth) since that's the one real on/off-switch pattern in
+   the app today - anything selecting from a list of options is a button
+   or a <select>, not a switch.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .settings-checkbox-row input[type="checkbox"],
+:root[data-theme="cold-ballast"] .settings-checkbox-row input[type="checkbox"],
+:root[data-theme="command-deck"] .settings-checkbox-row input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 42px;
+  height: 22px;
+  margin: 0;
+  flex-shrink: 0;
+  border: 2px solid var(--deck-frame);
+  border-top-color: var(--deck-bezel);
+  background: var(--deck-cavity);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.65);
+  cursor: pointer;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+:root[data-theme="bulkhead"] .settings-checkbox-row input[type="checkbox"]::after,
+:root[data-theme="cold-ballast"] .settings-checkbox-row input[type="checkbox"]::after,
+:root[data-theme="command-deck"] .settings-checkbox-row input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(180deg, var(--deck-bezel) 0%, var(--deck-plate) 100%);
+  border: 1px solid var(--deck-frame);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), background 160ms ease;
+}
+
+:root[data-theme="bulkhead"] .settings-checkbox-row input[type="checkbox"]:checked,
+:root[data-theme="cold-ballast"] .settings-checkbox-row input[type="checkbox"]:checked,
+:root[data-theme="command-deck"] .settings-checkbox-row input[type="checkbox"]:checked {
+  border-color: var(--accent);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.65), 0 0 10px var(--accent-soft);
+}
+
+:root[data-theme="bulkhead"] .settings-checkbox-row input[type="checkbox"]:checked::after,
+:root[data-theme="cold-ballast"] .settings-checkbox-row input[type="checkbox"]:checked::after,
+:root[data-theme="command-deck"] .settings-checkbox-row input[type="checkbox"]:checked::after {
+  transform: translateX(20px);
+  background: linear-gradient(180deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 55%, black) 100%);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.6), 0 0 8px var(--accent);
+}
+
+:root[data-theme="bulkhead"] .settings-checkbox-row:has(input:disabled),
+:root[data-theme="cold-ballast"] .settings-checkbox-row:has(input:disabled),
+:root[data-theme="command-deck"] .settings-checkbox-row:has(input:disabled) {
+  filter: grayscale(0.7) brightness(0.7);
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+   TABS - a switch bank: a shared recessed rail with individually raised
+   segments instead of an underline or a pill.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .kills-tabs,
+:root[data-theme="cold-ballast"] .kills-tabs,
+:root[data-theme="command-deck"] .kills-tabs,
+:root[data-theme="bulkhead"] .character-tabs,
+:root[data-theme="cold-ballast"] .character-tabs,
+:root[data-theme="command-deck"] .character-tabs {
+  background: var(--deck-cavity);
+  border: 1px solid var(--deck-frame);
+  padding: 3px;
+  gap: 2px;
+}
+
+:root[data-theme="bulkhead"] .kills-tab,
+:root[data-theme="cold-ballast"] .kills-tab,
+:root[data-theme="command-deck"] .kills-tab,
+:root[data-theme="bulkhead"] .character-tab,
+:root[data-theme="cold-ballast"] .character-tab,
+:root[data-theme="command-deck"] .character-tab {
+  border: 1px solid transparent;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+   TABLES - technical readout: heavier structural dividers, a left accent
+   rail on the header row instead of a soft bottom border.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .data-table-wrap,
+:root[data-theme="cold-ballast"] .data-table-wrap,
+:root[data-theme="command-deck"] .data-table-wrap {
+  border: 1px solid var(--deck-frame);
+  box-shadow: inset 1px 1px 0 var(--deck-bevel-light), inset -1px -1px 0 var(--deck-bevel-dark);
+}
+
+:root[data-theme="bulkhead"] .data-table thead,
+:root[data-theme="cold-ballast"] .data-table thead,
+:root[data-theme="command-deck"] .data-table thead {
+  background: var(--deck-plate);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+:root[data-theme="bulkhead"] .data-table th,
+:root[data-theme="cold-ballast"] .data-table th,
+:root[data-theme="command-deck"] .data-table th {
+  border-bottom: 2px solid var(--deck-frame);
+  font-size: 11px;
+}
+
+:root[data-theme="bulkhead"] .data-table td,
+:root[data-theme="cold-ballast"] .data-table td,
+:root[data-theme="command-deck"] .data-table td {
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---------------------------------------------------------------------------
+   FORMS - inputs/selects recessed into the panel like a physical dial
+   rather than a flat bordered box.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] input[type="text"],
+:root[data-theme="cold-ballast"] input[type="text"],
+:root[data-theme="command-deck"] input[type="text"],
+:root[data-theme="bulkhead"] input[type="number"],
+:root[data-theme="cold-ballast"] input[type="number"],
+:root[data-theme="command-deck"] input[type="number"],
+:root[data-theme="bulkhead"] select,
+:root[data-theme="cold-ballast"] select,
+:root[data-theme="command-deck"] select {
+  background: var(--deck-cavity);
+  border: 1px solid var(--deck-frame);
+  border-radius: 0;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.55);
+}
+
+:root[data-theme="bulkhead"] input[type="text"]:focus,
+:root[data-theme="cold-ballast"] input[type="text"]:focus,
+:root[data-theme="command-deck"] input[type="text"]:focus,
+:root[data-theme="bulkhead"] input[type="number"]:focus,
+:root[data-theme="cold-ballast"] input[type="number"]:focus,
+:root[data-theme="command-deck"] input[type="number"]:focus,
+:root[data-theme="bulkhead"] select:focus,
+:root[data-theme="cold-ballast"] select:focus,
+:root[data-theme="command-deck"] select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--accent);
+}
+
+/* Focus visibility for keyboard navigation generally - a bright outline
+   regardless of element type, so tabbing through a premium deck never
+   loses the focus ring the app's own accessibility already relies on. */
+:root[data-theme="bulkhead"] :focus-visible,
+:root[data-theme="cold-ballast"] :focus-visible,
+:root[data-theme="command-deck"] :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   TOOLTIP (HelpBadge popover) - an inset diagnostic screen instead of a
+   floating card.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .help-badge-popover,
+:root[data-theme="cold-ballast"] .help-badge-popover,
+:root[data-theme="command-deck"] .help-badge-popover {
+  background: var(--deck-cavity);
+  border: 1px solid var(--deck-frame);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px var(--deck-bevel-light), 0 12px 28px rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme="bulkhead"] .help-badge-popover-title,
+:root[data-theme="cold-ballast"] .help-badge-popover-title,
+:root[data-theme="command-deck"] .help-badge-popover-title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+   MODAL (the global error dialog) - an alert annunciator panel. This is
+   also the one place the app deliberately triggers .premium-signal-
+   degraded (see useErrorReporter.tsx) - a real failure surfacing is
+   exactly the "genuine application state" the brief asks a glitch to
+   correspond to, nothing else in the app fires it.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .error-modal,
+:root[data-theme="cold-ballast"] .error-modal,
+:root[data-theme="command-deck"] .error-modal {
+  background: var(--deck-plate);
+  border: 2px solid var(--danger);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px var(--deck-bevel-light), 0 24px 60px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-theme="bulkhead"] .error-modal h3,
+:root[data-theme="cold-ballast"] .error-modal h3,
+:root[data-theme="command-deck"] .error-modal h3 {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 6px currentColor;
+}
+
+:root[data-theme="bulkhead"] .error-modal button,
+:root[data-theme="cold-ballast"] .error-modal button,
+:root[data-theme="command-deck"] .error-modal button {
+  border-radius: 0;
+}
+
+/* A brief RGB-split + power-sag flicker on document.body - toggled for
+   ~650ms only when a real error surfaces (see useErrorReporter.tsx),
+   never ambient. Kept off text-shadow-bearing elements' actual shadow (too
+   expensive to filter-split broadly) and instead offsets the whole
+   viewport's paint via two colored duplicate layers - cheap, GPU-composited,
+   no layout thrash. */
+:root[data-theme="bulkhead"] body.premium-signal-degraded .shell,
+:root[data-theme="cold-ballast"] body.premium-signal-degraded .shell,
+:root[data-theme="command-deck"] body.premium-signal-degraded .shell {
+  animation: premium-signal-degrade 650ms steps(8, end) 1;
+}
+
+@keyframes premium-signal-degrade {
+  0% {
+    filter: none;
+    transform: translate(0, 0);
+  }
+  12% {
+    filter: brightness(0.5);
+    transform: translate(-2px, 0);
+  }
+  25% {
+    filter: brightness(1.3) hue-rotate(4deg);
+    transform: translate(2px, 0);
+  }
+  37% {
+    filter: brightness(0.4);
+    transform: translate(-1px, 1px);
+  }
+  50% {
+    filter: brightness(1.2);
+    transform: translate(1px, -1px);
+  }
+  75% {
+    filter: brightness(0.8);
+    transform: translate(0, 0);
+  }
+  100% {
+    filter: none;
+    transform: translate(0, 0);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   TOASTS - an annunciator strip sliding in from the housing, not a
+   floating rounded card.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .toast-card,
+:root[data-theme="cold-ballast"] .toast-card,
+:root[data-theme="command-deck"] .toast-card {
+  background: var(--deck-plate);
+  border: 1px solid var(--deck-frame);
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   LOADING STATE - a segmented scanning/acquisition tick instead of a
+   smooth shimmer sweep, matching the "stepped, not smooth" animation rule.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .skeleton-row,
+:root[data-theme="cold-ballast"] .skeleton-row,
+:root[data-theme="command-deck"] .skeleton-row {
+  background: repeating-linear-gradient(90deg, var(--deck-cavity) 0 6px, var(--deck-frame) 6px 8px);
+  background-size: 32px 100%;
+  animation: premium-scan-tick 900ms steps(8, end) infinite;
+  border-radius: 0;
+}
+
+@keyframes premium-scan-tick {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 320px 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   PANEL CONSTRUCTION - "cast metal panel" bevel on the app's biggest,
+   most-reused container classes, plus a chamfered silhouette + corner
+   brackets on the two of those safe to clip. See the comment above the
+   clip-path rule for why the other four aren't notched.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .data-table-wrap,
+:root[data-theme="cold-ballast"] .data-table-wrap,
+:root[data-theme="command-deck"] .data-table-wrap,
+:root[data-theme="bulkhead"] .market-stat-card,
+:root[data-theme="cold-ballast"] .market-stat-card,
+:root[data-theme="command-deck"] .market-stat-card,
+:root[data-theme="bulkhead"] .industry-inputs-panel,
+:root[data-theme="cold-ballast"] .industry-inputs-panel,
+:root[data-theme="command-deck"] .industry-inputs-panel,
+:root[data-theme="bulkhead"] .industry-results-panel,
+:root[data-theme="cold-ballast"] .industry-results-panel,
+:root[data-theme="command-deck"] .industry-results-panel,
+:root[data-theme="bulkhead"] .dashboard-header,
+:root[data-theme="cold-ballast"] .dashboard-header,
+:root[data-theme="command-deck"] .dashboard-header,
+:root[data-theme="bulkhead"] .settings-section,
+:root[data-theme="cold-ballast"] .settings-section,
+:root[data-theme="command-deck"] .settings-section {
+  box-shadow: inset 1px 1px 0 var(--deck-bevel-light), inset -1px -1px 0 var(--deck-bevel-dark);
+  border-radius: 0;
+}
+
+/* Only the two panels that never host anything rendered outside their own
+   box. .industry-inputs-panel and .settings-section both sometimes hold a
+   search combobox whose suggestion dropdown is position: absolute,
+   top: 100% (see .gatecheck-slot-results/.kills-add-suggestions in
+   App.css) and pops up BELOW the panel; clip-path clips a box's own
+   overflowing content regardless of its own overflow property, so
+   notching those two would silently cut those dropdowns off. Stat cards
+   and the page header have no such children. */
+:root[data-theme="bulkhead"] .market-stat-card,
+:root[data-theme="cold-ballast"] .market-stat-card,
+:root[data-theme="command-deck"] .market-stat-card,
+:root[data-theme="bulkhead"] .dashboard-header,
+:root[data-theme="cold-ballast"] .dashboard-header,
+:root[data-theme="command-deck"] .dashboard-header {
+  clip-path: polygon(
+    var(--deck-notch) 0,
+    100% 0,
+    100% calc(100% - var(--deck-notch)),
+    calc(100% - var(--deck-notch)) 100%,
+    0 100%,
+    0 var(--deck-notch)
+  );
+}
+
+:root[data-theme="bulkhead"] .dashboard-header,
+:root[data-theme="cold-ballast"] .dashboard-header,
+:root[data-theme="command-deck"] .dashboard-header {
+  position: relative;
+}
+
+/* Corner brackets on the page header only - one prominent, deliberate
+   mark instead of cluttering every panel with the same four glyphs.
+   Positioned on the top-right/bottom-left corners on purpose - the
+   clip-path notch above cuts the OTHER diagonal, and clip-path clips its
+   own element's ::before/::after along with everything else, so a
+   bracket placed on a notched corner would get clipped away with it. */
+:root[data-theme="bulkhead"] .dashboard-header::before,
+:root[data-theme="bulkhead"] .dashboard-header::after,
+:root[data-theme="cold-ballast"] .dashboard-header::before,
+:root[data-theme="cold-ballast"] .dashboard-header::after,
+:root[data-theme="command-deck"] .dashboard-header::before,
+:root[data-theme="command-deck"] .dashboard-header::after {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+:root[data-theme="bulkhead"] .dashboard-header::before,
+:root[data-theme="cold-ballast"] .dashboard-header::before,
+:root[data-theme="command-deck"] .dashboard-header::before {
+  top: 0;
+  right: 0;
+  border-left: none;
+  border-bottom: none;
+}
+
+:root[data-theme="bulkhead"] .dashboard-header::after,
+:root[data-theme="cold-ballast"] .dashboard-header::after,
+:root[data-theme="command-deck"] .dashboard-header::after {
+  bottom: 0;
+  left: 0;
+  border-right: none;
+  border-top: none;
+}
+
+/* ---------------------------------------------------------------------------
+   DASHBOARD - a command-console layout, not a stacked list of full-width
+   cards. .dashboard-home (see Dashboard.tsx) scopes this to the actual
+   home page specifically, since .dashboard/.dashboard-header are shared
+   generic classes three other pages (Industry, Mining, Multiboxing) reuse
+   for their own, completely different content - a layout built for
+   "character cards + two ticker widgets" has no business also landing on
+   theirs. Real layout re-composition, not just a re-skinned version of the
+   same stack: the two ticker widgets go from full-width-stacked to an
+   asymmetric side-by-side split (a wide "primary" activity feed next to a
+   narrower "secondary" news rail), entirely via CSS Grid on the existing
+   DOM order - no JSX/markup change needed for this part, since
+   NewsTicker and LiveActivityTicker already render adjacent siblings.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .dashboard-home,
+:root[data-theme="cold-ballast"] .dashboard-home,
+:root[data-theme="command-deck"] .dashboard-home {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  grid-template-areas: "header header" "cards cards" "activity news";
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+:root[data-theme="bulkhead"] .dashboard-home > .dashboard-header,
+:root[data-theme="cold-ballast"] .dashboard-home > .dashboard-header,
+:root[data-theme="command-deck"] .dashboard-home > .dashboard-header {
+  grid-area: header;
+}
+
+:root[data-theme="bulkhead"] .dashboard-home > .character-grid,
+:root[data-theme="cold-ballast"] .dashboard-home > .character-grid,
+:root[data-theme="command-deck"] .dashboard-home > .character-grid {
+  grid-area: cards;
+}
+
+/* NewsTicker and LiveActivityTicker both render a top-level .news-ticker
+   div (they already share that exact class for their card-row styling) -
+   the adjacent-sibling combinator picks out specifically the SECOND one
+   (LiveActivityTicker, later in Dashboard.tsx's JSX) since it's the only
+   one of the two immediately preceded by another .news-ticker. */
+:root[data-theme="bulkhead"] .dashboard-home > .news-ticker,
+:root[data-theme="cold-ballast"] .dashboard-home > .news-ticker,
+:root[data-theme="command-deck"] .dashboard-home > .news-ticker {
+  grid-area: news;
+}
+
+:root[data-theme="bulkhead"] .dashboard-home > .news-ticker + .news-ticker,
+:root[data-theme="cold-ballast"] .dashboard-home > .news-ticker + .news-ticker,
+:root[data-theme="command-deck"] .dashboard-home > .news-ticker + .news-ticker {
+  grid-area: activity;
+}
+
+/* Below the console's usual width, the asymmetric split stops making
+   sense - collapse back to the standard stacked order rather than
+   squeezing a narrow rail into an unreadable column. */
+@media (max-width: 900px) {
+  :root[data-theme="bulkhead"] .dashboard-home,
+  :root[data-theme="cold-ballast"] .dashboard-home,
+  :root[data-theme="command-deck"] .dashboard-home {
+    grid-template-columns: 1fr;
+    grid-template-areas: "header" "cards" "activity" "news";
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   MAP - a long-range sensor display, not a webpage embed. The canvas
+   itself is JS-drawn (see MapView.tsx, which now resolves --accent/
+   --danger/--gate at draw time instead of the hardcoded default-theme hex
+   it used to carry - a real bug fixed for every theme, not just these
+   three), so everything here is a decorative DOM layer sitting on top of
+   it via .map-canvas-wrap's existing position:relative/overflow:hidden -
+   zero changes to the canvas draw loop, zero risk of touching the actual
+   map logic.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .map-canvas-wrap,
+:root[data-theme="cold-ballast"] .map-canvas-wrap,
+:root[data-theme="command-deck"] .map-canvas-wrap {
+  border: 2px solid var(--deck-frame);
+  border-radius: 0;
+  /* An old CRT with a loose connection, not a clean monitor - a real
+     brightness dip on the wrap itself (so the map content dims too, not
+     just a layer floating on top of it) with two uneven flicker events per
+     9s cycle, like a bad cable rather than a steady pulse. Timed to the
+     exact same keyframe percentages as .map-hud-staticlines below so the
+     interference lines flash at the same instant the picture dims. */
+  animation: premium-map-crt-flicker 9s linear infinite;
+}
+
+@keyframes premium-map-crt-flicker {
+  0%,
+  41%,
+  42%,
+  43%,
+  77%,
+  78%,
+  100% {
+    filter: brightness(1);
+  }
+  41.5% {
+    filter: brightness(0.45);
+  }
+  42.3% {
+    filter: brightness(0.7);
+  }
+  77.4% {
+    filter: brightness(0.4);
+  }
+}
+
+/* Same deliberate, disclosed exception as the ticker scroll and the shared
+   readout flicker: gated on VESPER's own in-app Reduce Motion toggle only,
+   not the OS-level prefers-reduced-motion query. This dev machine (and
+   plenty of real ones) run with that OS setting on independent of any
+   actual motion sensitivity, and the user explicitly asked for this exact
+   effect - twice. The frequency here (~2 brief dips per 9s, ~0.22Hz) is
+   also nowhere near the 3Hz photosensitive-epilepsy strobe threshold the
+   OS setting mainly exists to guard against, unlike a genuine rapid
+   strobe would be. NOT a pattern applied to other animations in this file
+   (the map's own scanner sweep still respects the OS query, for instance) -
+   this is a specific, considered call for this one effect.*/
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .map-canvas-wrap,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .map-canvas-wrap,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .map-canvas-wrap {
+  animation: none;
+}
+
+/* An inset instrument-bezel ring, standing a few pixels off the outer
+   frame - like a physical display recessed into its housing. (An earlier
+   draft tried to mask this down to four corner-only brackets, but
+   mask-composite's keyword set differs between the unprefixed spec value
+   -"add"/"intersect"- and the -webkit- prefixed one Chromium's older mask
+   implementation actually expects -"source-over" etc- so mixing them the
+   way that draft did was never guaranteed to render the same way twice.
+   A plain ring has the identical "recessed display" read without betting
+   on that.) */
+:root[data-theme="bulkhead"] .map-canvas-wrap::before,
+:root[data-theme="cold-ballast"] .map-canvas-wrap::before,
+:root[data-theme="command-deck"] .map-canvas-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1px solid var(--accent);
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* A slow long-range-scanner sweep - screen-blended so it brightens the
+   map underneath rather than covering it, and slow enough (14s) to read
+   as ambient sensor activity, not an attention-grabbing spinner. */
+:root[data-theme="bulkhead"] .map-canvas-wrap::after,
+:root[data-theme="cold-ballast"] .map-canvas-wrap::after,
+:root[data-theme="command-deck"] .map-canvas-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  mix-blend-mode: screen;
+  background: conic-gradient(from 0deg, transparent 0deg, var(--accent-soft) 8deg, transparent 26deg, transparent 360deg);
+  animation: premium-map-sweep 14s linear infinite;
+}
+
+@keyframes premium-map-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .map-canvas-wrap::after,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .map-canvas-wrap::after,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .map-canvas-wrap::after {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="bulkhead"] .map-canvas-wrap::after,
+  :root[data-theme="cold-ballast"] .map-canvas-wrap::after,
+  :root[data-theme="command-deck"] .map-canvas-wrap::after {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   TARGETING HUD - a scope frame around the whole viewport, a live cursor
+   grid-position readout, and a "lock-on" bracket animation on every system
+   click. All real DOM (not pseudo-elements - .map-canvas-wrap's ::before/
+   ::after are already spoken for by the bezel ring and the sweep above),
+   rendered from MapView.tsx behind the same `premium` check as everything
+   else premium-only there.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] .map-hud-frame,
+:root[data-theme="cold-ballast"] .map-hud-frame,
+:root[data-theme="command-deck"] .map-hud-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  /* A faint horizontal scanline texture across the whole viewport - the
+     same "looking at this through a CRT sensor screen" language the
+     dashboard monitors and telemetry readouts already use, extended to
+     the one full-viewport display in the app. Thin and low-opacity enough
+     to read as texture, not as a pattern fighting the map underneath it. */
+  background-image: repeating-linear-gradient(rgba(255, 255, 255, 0.025) 0px, rgba(255, 255, 255, 0.025) 1px, transparent 1px, transparent 3px);
+}
+
+:root[data-theme="bulkhead"] .map-hud-corner,
+:root[data-theme="cold-ballast"] .map-hud-corner,
+:root[data-theme="command-deck"] .map-hud-corner {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 2px solid transparent;
+  filter: drop-shadow(0 0 3px var(--accent-soft));
+  opacity: 0.8;
+}
+
+:root[data-theme="bulkhead"] .map-hud-corner-tl,
+:root[data-theme="cold-ballast"] .map-hud-corner-tl,
+:root[data-theme="command-deck"] .map-hud-corner-tl {
+  top: 14px;
+  left: 14px;
+  border-top-color: var(--accent);
+  border-left-color: var(--accent);
+}
+
+:root[data-theme="bulkhead"] .map-hud-corner-tr,
+:root[data-theme="cold-ballast"] .map-hud-corner-tr,
+:root[data-theme="command-deck"] .map-hud-corner-tr {
+  top: 14px;
+  right: 14px;
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+}
+
+:root[data-theme="bulkhead"] .map-hud-corner-bl,
+:root[data-theme="cold-ballast"] .map-hud-corner-bl,
+:root[data-theme="command-deck"] .map-hud-corner-bl {
+  bottom: 14px;
+  left: 14px;
+  border-bottom-color: var(--accent);
+  border-left-color: var(--accent);
+}
+
+:root[data-theme="bulkhead"] .map-hud-corner-br,
+:root[data-theme="cold-ballast"] .map-hud-corner-br,
+:root[data-theme="command-deck"] .map-hud-corner-br {
+  bottom: 14px;
+  right: 14px;
+  border-bottom-color: var(--accent);
+  border-right-color: var(--accent);
+}
+
+:root[data-theme="bulkhead"] .map-hud-reticle,
+:root[data-theme="cold-ballast"] .map-hud-reticle,
+:root[data-theme="command-deck"] .map-hud-reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  opacity: 0.3;
+}
+
+:root[data-theme="bulkhead"] .map-hud-reticle::before,
+:root[data-theme="cold-ballast"] .map-hud-reticle::before,
+:root[data-theme="command-deck"] .map-hud-reticle::before,
+:root[data-theme="bulkhead"] .map-hud-reticle::after,
+:root[data-theme="cold-ballast"] .map-hud-reticle::after,
+:root[data-theme="command-deck"] .map-hud-reticle::after {
+  content: "";
+  position: absolute;
+  background: var(--accent);
+}
+
+:root[data-theme="bulkhead"] .map-hud-reticle::before,
+:root[data-theme="cold-ballast"] .map-hud-reticle::before,
+:root[data-theme="command-deck"] .map-hud-reticle::before {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+:root[data-theme="bulkhead"] .map-hud-reticle::after,
+:root[data-theme="cold-ballast"] .map-hud-reticle::after,
+:root[data-theme="command-deck"] .map-hud-reticle::after {
+  left: 50%;
+  top: 0;
+  height: 100%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+/* A soft bright band slowly rolling down the viewport, screen-blended so it
+   brightens rather than covers - a CRT with a bad vertical-hold rolling
+   the picture, independent of (and much slower than) the flicker events
+   above. */
+:root[data-theme="bulkhead"] .map-hud-scanroll,
+:root[data-theme="cold-ballast"] .map-hud-scanroll,
+:root[data-theme="command-deck"] .map-hud-scanroll {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 44px;
+  pointer-events: none;
+  z-index: 7;
+  mix-blend-mode: screen;
+  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.07) 50%, transparent);
+  animation: premium-map-scanroll 7s linear infinite;
+}
+
+@keyframes premium-map-scanroll {
+  0% {
+    top: -44px;
+  }
+  100% {
+    top: 100%;
+  }
+}
+
+/* Interference lines - invisible almost all the time, flashing to visible
+   horizontal noise bands at the exact same three moments
+   .map-canvas-wrap's own brightness-flicker dips (identical keyframe
+   percentages, identical 9s duration, both starting when the page mounts -
+   deliberately two separate animations rather than one so .map-canvas-wrap
+   can keep animating `filter` - shorthand `animation` only accepts one
+   value list per property, and this needs `opacity` on a different
+   element entirely - but they read as one synchronized "picture just
+   glitched" event, not two coincidentally-overlapping effects). */
+:root[data-theme="bulkhead"] .map-hud-staticlines,
+:root[data-theme="cold-ballast"] .map-hud-staticlines,
+:root[data-theme="command-deck"] .map-hud-staticlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 7;
+  mix-blend-mode: overlay;
+  background-image: repeating-linear-gradient(rgba(255, 255, 255, 0.6) 0px, rgba(255, 255, 255, 0.6) 1px, transparent 1px, transparent 4px);
+  opacity: 0;
+  animation: premium-map-static-flash 9s linear infinite;
+}
+
+@keyframes premium-map-static-flash {
+  0%,
+  41%,
+  42%,
+  43%,
+  77%,
+  78%,
+  100% {
+    opacity: 0;
+  }
+  41.5% {
+    opacity: 0.55;
+  }
+  42.3% {
+    opacity: 0.3;
+  }
+  77.4% {
+    opacity: 0.5;
+  }
+}
+
+/* Same deliberate exception as .map-canvas-wrap's own flicker above -
+   in-app toggle only, not the OS query. */
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .map-hud-scanroll,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .map-hud-scanroll,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .map-hud-scanroll,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .map-hud-staticlines,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .map-hud-staticlines,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .map-hud-staticlines {
+  display: none;
+}
+
+/* Live cursor grid position - written directly to this node by MapView's
+   mousemove handler (see coordsHudRef), never through React state, so
+   moving the mouse never costs a re-render. Reserves a fixed min-height so
+   the corner doesn't twitch between empty and filled as the cursor enters
+   and leaves the canvas. */
+:root[data-theme="bulkhead"] .map-hud-coords,
+:root[data-theme="cold-ballast"] .map-hud-coords,
+:root[data-theme="command-deck"] .map-hud-coords {
+  position: absolute;
+  bottom: 10px;
+  left: 14px;
+  min-height: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  opacity: 0.75;
+  text-shadow: 0 0 4px var(--accent);
+  pointer-events: none;
+  z-index: 6;
+}
+
+/* Target lock-on - four brackets that snap onto whatever system was just
+   clicked, converging from outside in on the exact click point (the
+   parent's own position IS that point - width/height:0, transform-origin
+   0 0 - so scaling the parent scales every corner toward it uniformly). */
+:root[data-theme="bulkhead"] .map-lock-on,
+:root[data-theme="cold-ballast"] .map-lock-on,
+:root[data-theme="command-deck"] .map-lock-on {
+  position: fixed;
+  z-index: 101;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  animation: premium-lock-on-converge 450ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+:root[data-theme="bulkhead"] .map-lock-on-corner,
+:root[data-theme="cold-ballast"] .map-lock-on-corner,
+:root[data-theme="command-deck"] .map-lock-on-corner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--accent);
+  filter: drop-shadow(0 0 4px var(--accent));
+}
+
+:root[data-theme="bulkhead"] .map-lock-on-corner-tl,
+:root[data-theme="cold-ballast"] .map-lock-on-corner-tl,
+:root[data-theme="command-deck"] .map-lock-on-corner-tl {
+  top: -50px;
+  left: -50px;
+  border-right: none;
+  border-bottom: none;
+}
+
+:root[data-theme="bulkhead"] .map-lock-on-corner-tr,
+:root[data-theme="cold-ballast"] .map-lock-on-corner-tr,
+:root[data-theme="command-deck"] .map-lock-on-corner-tr {
+  top: -50px;
+  left: 34px;
+  border-left: none;
+  border-bottom: none;
+}
+
+:root[data-theme="bulkhead"] .map-lock-on-corner-bl,
+:root[data-theme="cold-ballast"] .map-lock-on-corner-bl,
+:root[data-theme="command-deck"] .map-lock-on-corner-bl {
+  top: 34px;
+  left: -50px;
+  border-right: none;
+  border-top: none;
+}
+
+:root[data-theme="bulkhead"] .map-lock-on-corner-br,
+:root[data-theme="cold-ballast"] .map-lock-on-corner-br,
+:root[data-theme="command-deck"] .map-lock-on-corner-br {
+  top: 34px;
+  left: 34px;
+  border-left: none;
+  border-top: none;
+}
+
+@keyframes premium-lock-on-converge {
+  0% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+  55% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+}
+
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .map-lock-on,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .map-lock-on,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .map-lock-on {
+  animation: none;
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="bulkhead"] .map-lock-on,
+  :root[data-theme="cold-ballast"] .map-lock-on,
+  :root[data-theme="command-deck"] .map-lock-on {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
+/* Search bar and layer toggles pick up the same instrument-chip treatment
+   the topbar already uses, so the map's own chrome belongs to the same
+   console instead of looking like a search box borrowed from a website. */
+:root[data-theme="bulkhead"] .map-search,
+:root[data-theme="cold-ballast"] .map-search,
+:root[data-theme="command-deck"] .map-search,
+:root[data-theme="bulkhead"] .map-layer-toggles,
+:root[data-theme="cold-ballast"] .map-layer-toggles,
+:root[data-theme="command-deck"] .map-layer-toggles {
+  background: var(--deck-cavity);
+  border: 1px solid var(--deck-frame);
+  border-radius: 0;
+}
+
+/* The kill ticker rail reads as a telemetry strip - a narrow, dense
+   secondary instrument column next to the primary display, matching the
+   "primary instrument / secondary telemetry rail" hierarchy from the
+   brief. */
+:root[data-theme="bulkhead"] .map-ticker,
+:root[data-theme="cold-ballast"] .map-ticker,
+:root[data-theme="command-deck"] .map-ticker {
+  background: var(--deck-plate);
+  border-right: 2px solid var(--deck-frame);
+}
+
+:root[data-theme="bulkhead"] .map-ticker-divider,
+:root[data-theme="cold-ballast"] .map-ticker-divider,
+:root[data-theme="command-deck"] .map-ticker-divider {
+  background: var(--deck-frame);
+}
+
+/* ---------------------------------------------------------------------------
+   SCROLLBARS - thin, high-contrast, technical.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] ::-webkit-scrollbar,
+:root[data-theme="cold-ballast"] ::-webkit-scrollbar,
+:root[data-theme="command-deck"] ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:root[data-theme="bulkhead"] ::-webkit-scrollbar-track,
+:root[data-theme="cold-ballast"] ::-webkit-scrollbar-track,
+:root[data-theme="command-deck"] ::-webkit-scrollbar-track {
+  background: var(--deck-cavity);
+}
+
+:root[data-theme="bulkhead"] ::-webkit-scrollbar-thumb,
+:root[data-theme="cold-ballast"] ::-webkit-scrollbar-thumb,
+:root[data-theme="command-deck"] ::-webkit-scrollbar-thumb {
+  background: var(--deck-frame);
+  border: 2px solid var(--deck-cavity);
+}
+
+/* ---------------------------------------------------------------------------
+   ACCESSIBILITY - every animation this file (or a deck-specific file)
+   introduces is disabled here, in one place, under either the OS-level
+   prefers-reduced-motion media query or the app's own in-app Reduce
+   Motion toggle. Static fallbacks keep the same colors/borders, just
+   without motion - nothing becomes invisible.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .main,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .main,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .main,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .main::before,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .main::before,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .main::before,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .status-lamp-blink,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .status-lamp-blink,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .status-lamp-blink,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .skeleton-row,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .skeleton-row,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .skeleton-row,
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"].premium-signal-degraded .shell,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"].premium-signal-degraded .shell,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"].premium-signal-degraded .shell {
+  animation: none !important;
+}
+
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .skeleton-row,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .skeleton-row,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .skeleton-row {
+  background: var(--deck-frame);
+}
+
+:root[data-theme="bulkhead"] body[data-reduce-motion="true"] .status-lamp-blink .status-lamp-core,
+:root[data-theme="cold-ballast"] body[data-reduce-motion="true"] .status-lamp-blink .status-lamp-core,
+:root[data-theme="command-deck"] body[data-reduce-motion="true"] .status-lamp-blink .status-lamp-core {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="bulkhead"] .main,
+  :root[data-theme="cold-ballast"] .main,
+  :root[data-theme="command-deck"] .main,
+  :root[data-theme="bulkhead"] .main::before,
+  :root[data-theme="cold-ballast"] .main::before,
+  :root[data-theme="command-deck"] .main::before,
+  :root[data-theme="bulkhead"] .status-lamp-blink,
+  :root[data-theme="cold-ballast"] .status-lamp-blink,
+  :root[data-theme="command-deck"] .status-lamp-blink,
+  :root[data-theme="bulkhead"] .skeleton-row,
+  :root[data-theme="cold-ballast"] .skeleton-row,
+  :root[data-theme="command-deck"] .skeleton-row,
+  :root[data-theme="bulkhead"] body.premium-signal-degraded .shell,
+  :root[data-theme="cold-ballast"] body.premium-signal-degraded .shell,
+  :root[data-theme="command-deck"] body.premium-signal-degraded .shell {
+    animation: none !important;
+  }
+
+  :root[data-theme="bulkhead"] .skeleton-row,
+  :root[data-theme="cold-ballast"] .skeleton-row,
+  :root[data-theme="command-deck"] .skeleton-row {
+    background: var(--deck-frame);
+  }
+}

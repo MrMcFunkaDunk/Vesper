@@ -515,6 +515,8 @@ export interface MailEntry {
   subject: string;
   timestamp: string | null;
   is_read: boolean;
+  /** Custom label ids this mail is filed under - see MailLabel below. */
+  labels: number[];
 }
 
 export interface CharacterMail {
@@ -538,6 +540,40 @@ export interface MailDetail {
 
 export function getMailDetail(id: number, mailId: number): Promise<MailDetail> {
   return invoke("get_mail_detail", { id, mailId });
+}
+
+export interface MailLabel {
+  label_id: number;
+  name: string;
+  color: string;
+  unread_count: number;
+}
+
+export interface CharacterMailLabels {
+  labels: MailLabel[];
+  total_unread_count: number;
+  needs_reauth: boolean;
+}
+
+/** A character's own custom mail labels (created in-game) - not the
+ * built-in Inbox/Sent/Corp/Alliance folders, which ESI has no documented
+ * fixed id scheme for. Same esi-mail.read_mail.v1 scope the inbox itself
+ * already uses. */
+export function getMailLabels(id: number): Promise<CharacterMailLabels> {
+  return invoke("get_mail_labels", { id });
+}
+
+export interface MailRecipientInput {
+  recipient_id: number;
+  recipient_type: "character" | "corporation" | "alliance" | "mailing_list";
+}
+
+/** Sends a new mail as this character - esi-mail.send_mail.v1. Resolves to
+ * the new mail's id. A recipient requiring a CSPA charge to mail cold will
+ * surface as a normal rejected-promise error, same as any other ESI
+ * failure - there's no cost-preview/approval step here. */
+export function sendMail(id: number, subject: string, body: string, recipients: MailRecipientInput[]): Promise<number> {
+  return invoke("send_mail", { id, subject, body, recipients });
 }
 
 export interface NotificationEntry {

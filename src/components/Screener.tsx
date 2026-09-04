@@ -301,8 +301,8 @@ function Screener() {
                   {sortedResults.rows.map((o) => (
                     <tr key={o.typeId}>
                       <td>{o.name}</td>
-                      <td className="data-table-numeric">{formatIsk(o.bestBuy)}</td>
-                      <td className="data-table-numeric">{formatIsk(o.bestSell)}</td>
+                      <td className="data-table-numeric wallet-amount-negative">{formatIsk(o.bestBuy)}</td>
+                      <td className="data-table-numeric wallet-amount-positive">{formatIsk(o.bestSell)}</td>
                       <td className="data-table-numeric wallet-amount-positive">{o.marginPct.toFixed(1)}%</td>
                       <td className="data-table-numeric">{o.sellVolume.toLocaleString()}</td>
                     </tr>
@@ -343,10 +343,10 @@ function Screener() {
                   {sortedHaulingResults.rows.map((o) => (
                     <tr key={o.typeId}>
                       <td>{o.name}</td>
-                      <td className="data-table-numeric">{formatIsk(o.sourceBuyPrice)}</td>
+                      <td className="data-table-numeric wallet-amount-negative">{formatIsk(o.sourceBuyPrice)}</td>
                       <td className="data-table-numeric">{o.sourceAvailable.toLocaleString()}</td>
-                      <td className="data-table-numeric">{formatIsk(o.destSellPrice)}</td>
-                      <td className="data-table-numeric">{o.destBuyPrice > 0 ? formatIsk(o.destBuyPrice) : "—"}</td>
+                      <td className="data-table-numeric wallet-amount-positive">{formatIsk(o.destSellPrice)}</td>
+                      <td className="data-table-numeric wallet-amount-positive">{o.destBuyPrice > 0 ? formatIsk(o.destBuyPrice) : "—"}</td>
                       <td className="data-table-numeric wallet-amount-positive">{formatIsk(o.profitPerUnit)}</td>
                       <td className="data-table-numeric">{o.volume.toLocaleString()}</td>
                       <td className="data-table-numeric wallet-amount-positive">

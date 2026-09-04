@@ -664,7 +664,7 @@ function FitBuilder({
             <div className="fit-section-body">
               <div className="fittings-cost-card">
                 <span className="market-stat-label">Estimated Cost</span>
-                <span className="market-stat-value">{formatIsk(draftCost)}</span>
+                <span className="market-stat-value market-stat-value-isk">{formatIsk(draftCost)}</span>
               </div>
             </div>
           )}

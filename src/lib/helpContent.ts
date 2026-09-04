@@ -79,7 +79,7 @@ export const HELP_CONTENT: Record<string, HelpContent> = {
 
   wallet: {
     title: "Wallet & Market",
-    what: "Ten tabs covering everything money- and market-related: Market Browser, Item Database, Appraisal, Screener, LP Store, Contracts, Insurance, Orders, Wallet, and Transactions. Switch between them along the top; Orders/Wallet/Transactions/LP Store also show a character-selector strip once you have more than one character connected, since those four are scoped to whichever character is picked there.",
+    what: "Eleven tabs covering everything money- and market-related: Market Browser, Market Compare, Item Database, Appraisal, Screener, LP Store, Contracts, Insurance, Orders, Wallet, and Transactions. Switch between them along the top; Orders/Wallet/Transactions/LP Store also show a character-selector strip once you have more than one character connected, since those four are scoped to whichever character is picked there.",
     how: "Each tab is its own tool with its own help - open its badge for the specifics. As a starting point: Market Browser and Item Database are for looking things up (prices, order books, price history, or just what an item actually does); Appraisal and Screener are calculators (bulk-value a pasted list, or scan a whole category for live arbitrage); LP Store ranks what your loyalty points are actually worth spending on; Contracts, Orders, Wallet, and Transactions are records of what you (or the wider public market, for Contracts) have actually done or currently have active; Insurance is a standalone \"what would this cost\" calculator, not a record of policies you've bought.",
     gives: "One place to track your finances, sanity-check prices, and hunt for profit before you buy, sell, or commit ISK to anything.",
   },
@@ -91,6 +91,12 @@ export const HELP_CONTENT: Record<string, HelpContent> = {
       "Market Data and Price History tabs switch between the live order book (sellers cheapest-first, buyers highest-first, capped at 50 rows each) and a 90-day chart - Export CSV grabs whichever one you're currently looking at. \"Pin Price Widget\" opens a small separate always-on-top window with a live price lookup for the current region, independent of VESPER's own window.",
     ],
     gives: "A real, current order book and price history for anything in the game, plus a quick always-on-top price check you can leave open while doing something else.",
+  },
+  "wallet.marketcompare": {
+    title: "Market Compare",
+    what: "One item's real sell price across VESPER's 5 major trade hubs, side by side.",
+    how: "Search for any item (ore, ice, mineral, or anything else on the market) - it fetches a live price from each hub and ranks them, with a %-difference against the cheapest. Price Basis switches between Sell Min and the same volume-weighted 90th/98th percentile pricing ore.cerlestes.de uses - percentile pricing is far more stable against a single outlier order than a plain minimum.",
+    gives: "A fast answer to \"which hub is actually cheapest for this\" without tabbing through Market Browser once per hub.",
   },
   "wallet.itemdb": {
     title: "Item Database",
@@ -185,9 +191,9 @@ export const HELP_CONTENT: Record<string, HelpContent> = {
 
   industry: {
     title: "Industry",
-    what: "Five calculators covering the whole manufacturing pipeline: Production (build-cost), Reprocessing (mineral yield), Invention (T2 odds), Research (ME/TE planning time), and Mining Ledger (real mining history). Switch between them with the tabs at the top - each has its own help badge with the full detail.",
-    how: "Pick a blueprint, item, or (for Mining Ledger) just a character, set your skills and any structure/rig/facility bonuses, and the relevant calculator does the material, time, cost, or odds math using live market prices and your real trained skill levels where relevant. Reprocessing has a \"Save as Default\" button that remembers your usual facility/skill setup; Production instead saves a full per-blueprint setup to My Favourites, so a blueprint you build often can be picked from a list with everything restored exactly.",
-    gives: "A real build-vs-buy cost comparison, a real reprocessing yield, real invention odds, a real research timeline, and a real mining-ISK-per-day figure - all grounded in your actual skills and live prices instead of rules of thumb.",
+    what: "Four calculators covering the whole manufacturing pipeline: Production (build-cost), Reprocessing (mineral yield), Invention (T2 odds), and Research (ME/TE planning time). Switch between them with the tabs at the top - each has its own help badge with the full detail. Mining value/history now lives in its own Mining page in the sidebar, not here.",
+    how: "Pick a blueprint or item, set your skills and any structure/rig/facility bonuses, and the relevant calculator does the material, time, cost, or odds math using live market prices and your real trained skill levels where relevant. Reprocessing has a \"Save as Default\" button that remembers your usual facility/skill setup; Production instead saves a full per-blueprint setup to My Favourites, so a blueprint you build often can be picked from a list with everything restored exactly.",
+    gives: "A real build-vs-buy cost comparison, a real reprocessing yield, real invention odds, and a real research timeline - all grounded in your actual skills and live prices instead of rules of thumb.",
   },
   "industry.production": {
     title: "Production",
@@ -217,11 +223,29 @@ export const HELP_CONTENT: Record<string, HelpContent> = {
     how: "Pick the blueprint, research type (ME or TE - switching type auto-rescales your current/target level onto that type's valid steps), current and target level, and your Research/Metallurgy/Advanced Industry skills plus any facility/implant/rig time bonuses. Shows total jobs required (one per level step) and total time, plus a per-job breakdown, since each successive level costs progressively more time than the last.",
     gives: "A clear plan for exactly how many research jobs (and how long each one runs) it takes to fully research a blueprint to your target level.",
   },
-  "industry.mining": {
+  mining: {
+    title: "Mining",
+    what: "Three tools: Ore Table (what's actually worth mining right now, modeled on ore.cerlestes.de's long-standing reference site), Mining Ledger (a character's own real mining history from ESI), and Market History (price-history charts for the minerals/ice products mining actually produces).",
+    how: "Switch between them with the tabs at the top - each has its own help badge with the full detail. Market Compare (comparing one item's price across trade hubs) lives over in Wallet & Market instead, next to Market Browser.",
+    gives: "A real, sortable answer to what's worth mining right now, a real ISK-per-day record of what you've already mined, and a quick visual read on where prices actually sit.",
+  },
+  "mining.oretable": {
+    title: "Ore Table",
+    what: "What one m³ of ore or ice is actually worth to mine, right now - modeled on ore.cerlestes.de's long-standing Ore Table. Everything here is normalized per m³ rather than per unit or per portion, since a mining laser pulls a constant volume per cycle regardless of which ore it's aimed at - that's what actually makes different ores/ices comparable at a glance.",
+    how: "Switch between Ore Mining and Ice Harvesting, set your Refining Yield % (100% shows the raw mineral/material density before any skill/structure bonuses) and which Trade Hub to price against. Every column past the first two is one of the fixed 8 minerals (Ore) or 7 ice products (Ice); a dash means that item doesn't yield that one at all. Click any column header to sort by it - Refined Value descending is the default, so the most valuable thing to mine right now is always at the top.",
+    gives: "A real, sortable answer to \"what's actually worth mining\" instead of comparing raw ore prices, which don't account for how much cargo space or laser time each ore actually costs you per unit of value.",
+  },
+  "mining.ledger": {
     title: "Mining Ledger",
     what: "Up to 90 days of a character's own real mining history from ESI - ore/ice actually pulled from belts or sites, grouped by material and valued at EVE-wide average price.",
     how: "Pick a character if you have more than one - it loads automatically with no search or calculate step. Needs a fresh sign-in the first time, since this uses a scope added after most characters were first logged in. This is character-only; there's no corp/fleet mining-observer rollup here.",
     gives: "A real ISK-per-day read on mining (Total Value ÷ Active Days) instead of guessing, without needing a spreadsheet or a third-party fleet tool.",
+  },
+  "mining.markethistory": {
+    title: "Market History",
+    what: "Real ESI price-history charts for the 8 refined minerals and 7 ice products - the things you actually get from mining, not the raw ore/ice itself. Scoped to these two categories on purpose: charting every raw ore/ice/moon-ore/gas variant too would mean ~190 more simultaneous ESI history fetches, which isn't worth the load for a first pass.",
+    how: "Pick a Trade Hub and a timeframe (14 days/90 days/1 year/all); each section (Minerals, Ice Products) can be collapsed independently. Every chart shows the min–max range and the overall %-change across the selected window.",
+    gives: "A quick visual read on where a mineral or ice product's price actually sits right now versus its recent range, without opening Market Browser one item at a time.",
   },
 
   "fittings-fleets": {

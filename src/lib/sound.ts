@@ -75,3 +75,30 @@ export function playNotificationPing(volume = 0.5) {
     // Same autoplay-policy caveat as playProximityAlert above.
   });
 }
+
+/* -----------------------------------------------------------------------
+   Premium deck hardware audio - architecture only, deliberately not wired
+   to real samples yet.
+   -----------------------------------------------------------------------
+   Both proximity alerts and notification pings above work by importing a
+   bundled asset file directly (`import ... from "../assets/sounds/x.mp3"`)
+   - Vite resolves that at build time, so pointing one at a file that
+   doesn't exist yet would fail the build, not degrade gracefully. Rather
+   than invent a low-quality placeholder clip just to have something to
+   import, these two stay no-ops until a real "mechanical relay click" and
+   "heavy breaker throw" sample exist. When they do: bundle them the exact
+   same way as alertSoundUrl/notificationPingUrl above (a lazy-singleton
+   <Audio>, reused across plays so rapid clicks restart cleanly instead of
+   overlapping), and these two functions become real - every premium-theme
+   call site (StatusLamp state changes, MechanicalButton presses, once
+   those exist) is already written to call them, gated on
+   usePremiumSoundEnabled, so nothing else needs to change when the assets
+   land. */
+
+export function playPremiumRelayClick(_volume = 0.5) {
+  // Intentional no-op - see the block comment above.
+}
+
+export function playPremiumMechanicalThrow(_volume = 0.5) {
+  // Intentional no-op - see the block comment above.
+}

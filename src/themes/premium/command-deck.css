@@ -1,0 +1,71 @@
+/* ============================================================================
+   COMMAND DECK - deck-specific geometry
+   ============================================================================
+   Signature: precision segmented console framing, tactical glass windows,
+   cleaner and more regular than Bulkhead or Cold Ballast - still
+   machinery, not glassmorphism. A soft diagonal sheen instead of Bulkhead's
+   grime or Cold Ballast's raster.
+   ============================================================================ */
+
+/* Segmented double-line framing on the topbar instrument chips - a
+   precise inner/outer line pair, tighter and cleaner than Cold Ballast's
+   containment ring. */
+:root[data-theme="command-deck"] .server-status-badge,
+:root[data-theme="command-deck"] .capsuleers-online-badge,
+:root[data-theme="command-deck"] .account-trigger,
+:root[data-theme="command-deck"] .eve-time-clock,
+:root[data-theme="command-deck"] .location-tracker-current {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--deck-cavity);
+  border-color: var(--deck-bezel);
+}
+
+/* Tactical glass window on the page header - a precise top rule plus a
+   faint blue interior glow, instead of Bulkhead's hazard band or Cold
+   Ballast's vertical rail. */
+:root[data-theme="command-deck"] .dashboard-header {
+  border-top: 2px solid var(--accent);
+  box-shadow: inset 0 24px 40px -32px var(--accent), inset 1px 1px 0 var(--deck-bevel-light), inset -1px -1px 0 var(--deck-bevel-dark);
+}
+
+:root[data-theme="command-deck"] .market-stat-card {
+  border: 1px solid var(--deck-bezel);
+}
+
+/* Precision console sidebar - a crisp double frame instead of Bulkhead's
+   thick single border or Cold Ballast's thin one. */
+:root[data-theme="command-deck"] .sidebar {
+  box-shadow: inset -1px 0 0 var(--deck-bezel);
+}
+
+:root[data-theme="command-deck"] .brand-divider {
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+/* Nav items read as clean switch positions - a precise inset line added
+   on top of (not instead of) the shared energized-rail glow every deck's
+   active nav item already gets from premium-structure.css. Both need to
+   be in the SAME box-shadow declaration - box-shadow doesn't merge across
+   two separate rules for the same selector, the later-loaded one (this
+   file loads after premium-structure.css) simply replaces the whole
+   property, which is exactly what silently ate the rail glow here before
+   this got fixed. */
+:root[data-theme="command-deck"] .nav-item-active {
+  box-shadow: inset 0 0 0 1px var(--accent-soft), inset 6px 0 14px -8px var(--accent);
+}
+
+/* Boot label. */
+:root[data-theme="command-deck"] .main::before {
+  content: "NAV.LOCK — READY";
+}
+
+/* Signature atmosphere - a soft diagonal sheen, like a reflection catching
+   a bridge viewport at an angle. */
+:root[data-theme="command-deck"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 32%, rgba(143, 175, 255, 0.05) 48%, transparent 64%);
+}

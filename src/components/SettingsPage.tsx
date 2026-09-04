@@ -422,11 +422,20 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
           <div className="settings-section-row">
             <span className="settings-inline-label">Color theme</span>
             <select className="industry-field-input settings-hub-select" value={theme} onChange={(e) => setTheme(e.target.value as typeof theme)}>
-              {THEMES.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
+              <optgroup label="Standard">
+                {THEMES.filter((t) => t.tier !== "premium").map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Premium">
+                {THEMES.filter((t) => t.tier === "premium").map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label} ✦
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
           <p className="settings-section-hint">{THEMES.find((t) => t.id === theme)?.description}</p>

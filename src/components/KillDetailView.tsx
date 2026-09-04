@@ -314,7 +314,7 @@ function KillDetailView({
                     {detail.region_name ? ` (${detail.region_name})` : ""}
                   </span>
                   <span className="detail-stats-sep">//</span>
-                  <span>{formatIsk(detail.total_value)}</span>
+                  <span className="detail-stats-isk">{formatIsk(detail.total_value)}</span>
                 </div>
                 {detail.location_name && (
                   <div className="detail-location-row">
@@ -718,8 +718,8 @@ function KillDetailView({
                   {detail.insurance.map((level) => (
                     <div key={level.name} className="kill-insurance-row">
                       <span>{level.name}</span>
-                      <span>{formatIsk(level.cost)}</span>
-                      <span>{formatIsk(level.payout)}</span>
+                      <span className="wallet-amount-negative">{formatIsk(level.cost)}</span>
+                      <span className="wallet-amount-positive">{formatIsk(level.payout)}</span>
                     </div>
                   ))}
                 </div>

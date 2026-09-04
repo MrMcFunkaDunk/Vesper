@@ -45,6 +45,50 @@ fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("kill_history.sqlite"))
 }
 
+/// Runs once per app session, the moment anything here first opens the
+/// database - PRAGMA quick_check walks the whole file's structure, which
+/// would be too slow to pay on every single open (the live recorder polls
+/// constantly), but paying it exactly once at first use catches exactly the
+/// case that matters: corruption left over from a previous session (a
+/// crash, a stale second instance racing this one, anything else that can
+/// leave a WAL-mode SQLite file "database disk image is malformed" on disk)
+/// gets caught and repaired before the first real query has a chance to
+/// surface a raw error to the user instead. This file is a pure local cache
+/// - every row in it is re-derivable from zKillboard/ESI (see
+/// start_backfill) - so wiping and starting clean is always a safe
+/// recovery, never real data loss. Best-effort: if the corrupted file can't
+/// be removed (e.g. still locked by something), this just leaves it in
+/// place and the caller's own open/query goes on to fail exactly as it
+/// would have without this check - never worse than today's behavior.
+static CORRUPTION_CHECKED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+
+fn ensure_not_corrupted(path: &std::path::Path) {
+    let mut checked = CORRUPTION_CHECKED.lock().unwrap();
+    if *checked {
+        return;
+    }
+    *checked = true;
+    if !path.exists() {
+        return;
+    }
+    let healthy = rusqlite::Connection::open(path)
+        .and_then(|conn| conn.pragma_query_value(None, "quick_check", |row| row.get::<_, String>(0)))
+        .map(|result| result == "ok")
+        .unwrap_or(false);
+    if healthy {
+        return;
+    }
+    eprintln!("kill history database failed its integrity check - deleting and rebuilding from scratch");
+    for suffix in ["", "-wal", "-shm"] {
+        let sidecar = PathBuf::from(format!("{}{suffix}", path.display()));
+        if sidecar.exists() {
+            if let Err(e) = std::fs::remove_file(&sidecar) {
+                eprintln!("failed to remove corrupted database file {}: {e}", sidecar.display());
+            }
+        }
+    }
+}
+
 /// Every read/write against this database goes through here rather than a
 /// bare rusqlite::Connection::open - this file has many independent
 /// spawn_blocking tasks (the always-running live recorder, the startup
@@ -58,6 +102,7 @@ fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// writer-vs-writer collision retry for a few seconds instead of failing
 /// on the spot.
 fn open_db(path: &std::path::Path) -> Result<rusqlite::Connection, String> {
+    ensure_not_corrupted(path);
     let conn = rusqlite::Connection::open(path).map_err(|e| format!("failed to open kill history database: {e}"))?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| format!("failed to set WAL journal mode: {e}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(|e| format!("failed to set busy timeout: {e}"))?;

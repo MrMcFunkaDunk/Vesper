@@ -178,13 +178,13 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
                       </span>
                     </td>
                     <td className="data-table-numeric">{o.lp_cost.toLocaleString()}</td>
-                    <td className="data-table-numeric">{formatIsk(o.isk_cost)}</td>
+                    <td className="data-table-numeric wallet-amount-negative">{formatIsk(o.isk_cost)}</td>
                     <td>
                       {o.required_items.length === 0
                         ? "—"
                         : o.required_items.map((r) => `${r.type_name}${r.quantity > 1 ? ` x${r.quantity}` : ""}`).join(", ")}
                     </td>
-                    <td className="data-table-numeric">{formatIsk(o.rewardValue)}</td>
+                    <td className="data-table-numeric wallet-amount-positive">{formatIsk(o.rewardValue)}</td>
                     <td className={`data-table-numeric ${o.iskPerLp >= 0 ? "wallet-amount-positive" : "wallet-amount-negative"}`}>
                       {formatIsk(o.iskPerLp)}
                     </td>

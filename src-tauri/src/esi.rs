@@ -3034,6 +3034,12 @@ struct EsiMailHeader {
     timestamp: Option<String>,
     #[serde(default)]
     is_read: Option<bool>,
+    /// Custom label IDs this mail is filed under (from GET .../mail/labels/) -
+    /// ESI does not document a fixed numeric scheme for built-in folders
+    /// (Inbox/Sent/Corp/Alliance) alongside these, so this app only filters
+    /// by real, named custom labels rather than guessing at reserved IDs.
+    #[serde(default)]
+    labels: Vec<i64>,
 }
 
 #[derive(Serialize)]
@@ -3043,6 +3049,7 @@ pub struct MailEntry {
     pub subject: String,
     pub timestamp: Option<String>,
     pub is_read: bool,
+    pub labels: Vec<i64>,
 }
 
 #[derive(Serialize, Default)]
@@ -3076,6 +3083,7 @@ pub async fn fetch_character_mail(client: &reqwest::Client, config: &SsoConfig, 
             subject: m.subject.filter(|s| !s.is_empty()).unwrap_or_else(|| "(no subject)".to_string()),
             timestamp: m.timestamp,
             is_read: m.is_read.unwrap_or(true),
+            labels: m.labels,
         })
         .collect();
     entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -3168,6 +3176,124 @@ pub async fn fetch_mail_detail(
             .collect(),
         needs_reauth: false,
     })
+}
+
+#[derive(Deserialize)]
+struct EsiMailLabel {
+    label_id: i64,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    unread_count: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+struct EsiMailLabels {
+    #[serde(default)]
+    labels: Vec<EsiMailLabel>,
+    #[serde(default)]
+    total_unread_count: i64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct MailLabel {
+    pub label_id: i64,
+    pub name: String,
+    pub color: String,
+    pub unread_count: i64,
+}
+
+#[derive(Serialize, Default)]
+pub struct CharacterMailLabels {
+    pub labels: Vec<MailLabel>,
+    pub total_unread_count: i64,
+    pub needs_reauth: bool,
+}
+
+/// A character's own custom mail labels (created in-game via "New Label" in
+/// the Mail window) - covered by the same esi-mail.read_mail.v1 scope the
+/// inbox itself already uses, confirmed against ESI's own docs (this
+/// endpoint accepts either read_mail or organize_mail). Deliberately not
+/// attempting to reconstruct built-in folders (Inbox/Sent/Corp/Alliance) -
+/// ESI doesn't document a fixed ID scheme for those, so guessing at one
+/// risks silently mislabeling mail; this only surfaces real, named labels.
+pub async fn fetch_mail_labels(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterMailLabels, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Ok(CharacterMailLabels { needs_reauth: true, ..Default::default() });
+    };
+    let raw = match authorized_get::<EsiMailLabels>(client, &access_token, &format!("/characters/{character_id}/mail/labels/")).await {
+        Ok(v) => v,
+        Err(EsiError::MissingScope) => return Ok(CharacterMailLabels { needs_reauth: true, ..Default::default() }),
+        Err(EsiError::Failed(e)) => return Err(e),
+    };
+    Ok(CharacterMailLabels {
+        labels: raw
+            .labels
+            .into_iter()
+            .map(|l| MailLabel {
+                label_id: l.label_id,
+                name: l.name.filter(|n| !n.is_empty()).unwrap_or_else(|| format!("Label {}", l.label_id)),
+                color: l.color.unwrap_or_else(|| "#ffffff".to_string()),
+                unread_count: l.unread_count.unwrap_or(0),
+            })
+            .collect(),
+        total_unread_count: raw.total_unread_count,
+        needs_reauth: false,
+    })
+}
+
+#[derive(Clone, Deserialize)]
+pub struct MailRecipientInput {
+    pub recipient_id: i64,
+    pub recipient_type: String,
+}
+
+#[derive(Serialize)]
+struct EsiMailRecipientPayload {
+    recipient_id: i64,
+    recipient_type: String,
+}
+
+#[derive(Serialize)]
+struct EsiSendMailPayload {
+    subject: String,
+    body: String,
+    recipients: Vec<EsiMailRecipientPayload>,
+    /// CCP's CSPA charge cover - a recipient with contact-cost standings
+    /// set can require ISK to mail cold. Real mail clients probe this and
+    /// prompt to cover it; this app doesn't have that flow yet, so it
+    /// always sends 0 and a CSPA-required send will surface as a normal
+    /// "failed to send" error rather than a silent success.
+    approved_cost: i64,
+}
+
+/// Sends a new mail as this character - esi-mail.send_mail.v1. Returns the
+/// new mail's id on success.
+pub async fn send_character_mail(
+    client: &reqwest::Client,
+    config: &SsoConfig,
+    character_id: i64,
+    subject: &str,
+    body: &str,
+    recipients: &[MailRecipientInput],
+) -> Result<i64, String> {
+    let Some(access_token) = get_access_token(client, config, character_id).await else {
+        return Err("This character needs to reconnect to send mail.".to_string());
+    };
+    let payload = EsiSendMailPayload {
+        subject: subject.to_string(),
+        body: body.to_string(),
+        recipients: recipients.iter().map(|r| EsiMailRecipientPayload { recipient_id: r.recipient_id, recipient_type: r.recipient_type.clone() }).collect(),
+        approved_cost: 0,
+    };
+    match authorized_post::<EsiSendMailPayload, i64>(client, &access_token, &format!("/characters/{character_id}/mail/"), &payload).await
+    {
+        Ok(mail_id) => Ok(mail_id),
+        Err(EsiError::MissingScope) => Err("This character needs to reconnect to send mail.".to_string()),
+        Err(EsiError::Failed(e)) => Err(e),
+    }
 }
 
 /// Splits an ESI notification type's PascalCase code ("StructureUnderAttack")

@@ -67,6 +67,7 @@ import {
   formatQueueSummary,
   typeIconUrl,
   standingClass,
+  remapAvailabilityText,
 } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useSortableRows, useTextFilter, useSelectFilter } from "../hooks/useSortableRows";
@@ -76,6 +77,8 @@ import { BASE_ATTRIBUTE_VALUE } from "../lib/skillTraining";
 import { getCachedOverview, setCachedOverview, isTransientServerError } from "../lib/overviewCache";
 import KillFeedTable from "./KillFeedTable";
 import CloneStateBadge from "./CloneStateBadge";
+import { useTheme, isPremiumTheme } from "../hooks/useTheme";
+import PremiumCharacterHeader from "./premium/PremiumCharacterHeader";
 import type { SystemSummary } from "./SystemKillboard";
 import type { CorporationSummary } from "./CorporationKillboard";
 import type { AllianceSummary } from "./AllianceKillboard";
@@ -243,16 +246,6 @@ function AssetValueSparkline({ points }: { points: AssetSnapshot[] }) {
   );
 }
 
-/** Bonus remaps (new-player grants) bypass the normal once-a-year cooldown entirely - checked first regardless of accrued_remap_cooldown_date. */
-function remapAvailabilityText(attributes: CharacterAttributes): string {
-  if (attributes.bonus_remaps > 0) {
-    return `${attributes.bonus_remaps} bonus remap${attributes.bonus_remaps === 1 ? "" : "s"} available`;
-  }
-  if (!attributes.accrued_remap_cooldown_date) return "Remap available";
-  const cooldownEnds = new Date(attributes.accrued_remap_cooldown_date).getTime();
-  if (cooldownEnds <= Date.now()) return "Remap available";
-  return `Next remap: ${formatTimeRemaining(attributes.accrued_remap_cooldown_date)}`;
-}
 
 function CharacterDetail({
   character,
@@ -266,6 +259,7 @@ function CharacterDetail({
   onSelectAlliance,
   onReconnect,
 }: CharacterDetailProps) {
+  const [theme] = useTheme();
   const [overview, setOverview] = useState<CharacterOverview | null>(null);
   const [attributes, setAttributes] = useState<CharacterAttributes | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
@@ -1329,7 +1323,14 @@ function CharacterDetail({
                           <span className="skill-group-name">{groupName}</span>
                           <span className="skill-group-count">
                             {fmtCount(groupAssets.length)} items · {fmtCount(totalQty)} qty
-                            {groupValue > 0 ? ` · ${formatIsk(groupValue)}` : ""}
+                            {groupValue > 0 ? (
+                              <>
+                                {" · "}
+                                <span className="asset-abyssal-value">{formatIsk(groupValue)}</span>
+                              </>
+                            ) : (
+                              ""
+                            )}
                           </span>
                         </button>
                         {!collapsed && (
@@ -1354,7 +1355,7 @@ function CharacterDetail({
                                       </span>
                                     </td>
                                     <td className="data-table-numeric">{fmtCount(a.quantity)}</td>
-                                    <td className="data-table-numeric">
+                                    <td className="data-table-numeric market-stat-value-isk">
                                       {assetPrices.has(a.type_id) ? formatIsk((assetPrices.get(a.type_id) ?? 0) * a.quantity) : "—"}
                                       {(() => {
                                         const check = abyssalChecks[a.item_id];
@@ -1461,7 +1462,7 @@ function CharacterDetail({
                     <td>
                       <span className={`data-table-tag${o.status === "Active" ? "" : " data-table-tag-neutral"}`}>{o.status}</span>
                     </td>
-                    <td className="data-table-numeric">{formatIsk(o.price)}</td>
+                    <td className={`data-table-numeric ${o.is_buy_order ? "wallet-amount-negative" : "wallet-amount-positive"}`}>{formatIsk(o.price)}</td>
                     <td className="data-table-numeric">
                       {fmtCount(o.volume_remain)} / {fmtCount(o.volume_total)}
                     </td>
@@ -1540,7 +1541,7 @@ function CharacterDetail({
                       </td>
                       <td>{c.issuer_name}</td>
                       <td>{c.assignee_name ?? "—"}</td>
-                      <td className="data-table-numeric">{formatIsk(c.price ?? c.reward ?? 0)}</td>
+                      <td className="data-table-numeric market-stat-value-isk">{formatIsk(c.price ?? c.reward ?? 0)}</td>
                       <td>{fmtDate(c.date_issued)}</td>
                       <td>{fmtDate(c.date_expired)}</td>
                     </tr>
@@ -1698,7 +1699,7 @@ function CharacterDetail({
                           {e.amount >= 0 ? "+" : ""}
                           {formatIsk(e.amount)}
                         </td>
-                        <td className="data-table-numeric">{e.balance != null ? formatIsk(e.balance) : "—"}</td>
+                        <td className="data-table-numeric market-stat-value-isk">{e.balance != null ? formatIsk(e.balance) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1768,7 +1769,7 @@ function CharacterDetail({
                       </span>
                     </td>
                     <td className="data-table-numeric">{fmtCount(t.quantity)}</td>
-                    <td className="data-table-numeric">{formatIsk(t.unit_price)}</td>
+                    <td className={`data-table-numeric ${t.is_buy ? "wallet-amount-negative" : "wallet-amount-positive"}`}>{formatIsk(t.unit_price)}</td>
                     <td className={`data-table-numeric ${t.is_buy ? "wallet-amount-negative" : "wallet-amount-positive"}`}>
                       {t.is_buy ? "-" : "+"}
                       {formatIsk(t.quantity * t.unit_price)}
@@ -2049,87 +2050,97 @@ function CharacterDetail({
             Back to Operations Overview
           </button>
 
-          <div className="detail-header">
-            <div className="detail-portrait-wrap">
-              <img className="detail-portrait" src={character.portrait_url} alt="" />
-              <CloneStateBadge characterId={character.id} autoDetected={overview?.clone_state ?? null} />
-            </div>
-            <div className="detail-identity">
-              <h2>{character.name}</h2>
-              {(overview?.gender || overview?.race_name || overview?.bloodline_name) && (
-                <span className="detail-bio">
-                  {[overview?.gender, overview?.race_name, overview?.bloodline_name].filter(Boolean).join(" · ")}
-                </span>
-              )}
-              <span className="detail-corp">
-                {overview?.corporation_name ?? "—"}
-                {overview?.alliance_name ? ` • ${overview.alliance_name}` : ""}
-              </span>
-              <div className="detail-stats-row">
-                <span className="detail-stats-isk">{overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}</span>
-                <span className="detail-stats-sep">//</span>
-                <span className="detail-stats-sp">{overview?.total_sp != null ? formatSp(overview.total_sp) : "—"}</span>
-                <span className="detail-stats-sep">//</span>
-                <span>{[overview?.system_name, overview?.ship_type_name].filter(Boolean).join(" · ") || "—"}</span>
+          {isPremiumTheme(theme) ? (
+            <PremiumCharacterHeader
+              character={character}
+              overview={overview}
+              attributes={attributes}
+              reconnecting={reconnecting}
+              onReconnect={handleReconnect}
+            />
+          ) : (
+            <div className="detail-header">
+              <div className="detail-portrait-wrap">
+                <img className="detail-portrait" src={character.portrait_url} alt="" />
+                <CloneStateBadge characterId={character.id} autoDetected={overview?.clone_state ?? null} />
               </div>
-              {overview?.security_status != null && (
-                <span className="detail-security">
-                  Security Status:{" "}
-                  <span className={overview.security_status >= 0 ? "standing-text-positive" : "standing-text-negative"}>
-                    {overview.security_status.toFixed(2)}
+              <div className="detail-identity">
+                <h2>{character.name}</h2>
+                {(overview?.gender || overview?.race_name || overview?.bloodline_name) && (
+                  <span className="detail-bio">
+                    {[overview?.gender, overview?.race_name, overview?.bloodline_name].filter(Boolean).join(" · ")}
                   </span>
+                )}
+                <span className="detail-corp">
+                  {overview?.corporation_name ?? "—"}
+                  {overview?.alliance_name ? ` • ${overview.alliance_name}` : ""}
                 </span>
-              )}
-              {(overview?.region_name || overview?.constellation_name || overview?.system_name) && (
-                <span className="detail-location-path">
-                  Located in:{" "}
-                  {[overview?.region_name, overview?.constellation_name, overview?.system_name].filter(Boolean).join(" > ")}
-                </span>
-              )}
-              {overview?.docked_at_name && <span className="detail-location-path">Docked at: {overview.docked_at_name}</span>}
-              {overview?.training_skill_name && (
-                <span className="detail-training">
-                  Training: {overview.training_skill_name}
-                  {overview.training_finish_date ? ` (${formatTimeRemaining(overview.training_finish_date)})` : ""}
-                  {formatQueueSummary(overview.queue_length, overview.queue_ends_at) && (
-                    <span className="detail-training-queue"> · {formatQueueSummary(overview.queue_length, overview.queue_ends_at)}</span>
-                  )}
-                </span>
-              )}
-              {attributes && !attributes.needs_reauth && (
-                <div className="attribute-row">
-                  {(
-                    [
-                      ["Int", attributes.intelligence],
-                      ["Per", attributes.perception],
-                      ["Cha", attributes.charisma],
-                      ["Wil", attributes.willpower],
-                      ["Mem", attributes.memory],
-                    ] as const
-                  ).map(([label, value]) => (
-                    <span
-                      key={label}
-                      className="attribute-pill"
-                      title={`${value} = ${BASE_ATTRIBUTE_VALUE} base + ${value - BASE_ATTRIBUTE_VALUE} remap`}
-                    >
-                      {label} <strong>{value}</strong>
-                    </span>
-                  ))}
-                  <span className="attribute-remap-note">{remapAvailabilityText(attributes)}</span>
+                <div className="detail-stats-row">
+                  <span className="detail-stats-isk">{overview?.isk_balance != null ? formatIsk(overview.isk_balance) : "—"}</span>
+                  <span className="detail-stats-sep">//</span>
+                  <span className="detail-stats-sp">{overview?.total_sp != null ? formatSp(overview.total_sp) : "—"}</span>
+                  <span className="detail-stats-sep">//</span>
+                  <span>{[overview?.system_name, overview?.ship_type_name].filter(Boolean).join(" · ") || "—"}</span>
                 </div>
-              )}
+                {overview?.security_status != null && (
+                  <span className="detail-security">
+                    Security Status:{" "}
+                    <span className={overview.security_status >= 0 ? "standing-text-positive" : "standing-text-negative"}>
+                      {overview.security_status.toFixed(2)}
+                    </span>
+                  </span>
+                )}
+                {(overview?.region_name || overview?.constellation_name || overview?.system_name) && (
+                  <span className="detail-location-path">
+                    Located in:{" "}
+                    {[overview?.region_name, overview?.constellation_name, overview?.system_name].filter(Boolean).join(" > ")}
+                  </span>
+                )}
+                {overview?.docked_at_name && <span className="detail-location-path">Docked at: {overview.docked_at_name}</span>}
+                {overview?.training_skill_name && (
+                  <span className="detail-training">
+                    Training: {overview.training_skill_name}
+                    {overview.training_finish_date ? ` (${formatTimeRemaining(overview.training_finish_date)})` : ""}
+                    {formatQueueSummary(overview.queue_length, overview.queue_ends_at) && (
+                      <span className="detail-training-queue"> · {formatQueueSummary(overview.queue_length, overview.queue_ends_at)}</span>
+                    )}
+                  </span>
+                )}
+                {attributes && !attributes.needs_reauth && (
+                  <div className="attribute-row">
+                    {(
+                      [
+                        ["Int", attributes.intelligence],
+                        ["Per", attributes.perception],
+                        ["Cha", attributes.charisma],
+                        ["Wil", attributes.willpower],
+                        ["Mem", attributes.memory],
+                      ] as const
+                    ).map(([label, value]) => (
+                      <span
+                        key={label}
+                        className="attribute-pill"
+                        title={`${value} = ${BASE_ATTRIBUTE_VALUE} base + ${value - BASE_ATTRIBUTE_VALUE} remap`}
+                      >
+                        {label} <strong>{value}</strong>
+                      </span>
+                    ))}
+                    <span className="attribute-remap-note">{remapAvailabilityText(attributes)}</span>
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className="reconnect-button"
+                onClick={handleReconnect}
+                disabled={reconnecting}
+                title="Opens EVE SSO in your browser - sign in as this character again to grant any permissions added since it last logged in"
+              >
+                <RefreshCw size={13} strokeWidth={2} className={reconnecting ? "kills-sync-spinning" : ""} />
+                {reconnecting ? "Reconnecting..." : "Reconnect"}
+              </button>
             </div>
-            <button
-              type="button"
-              className="reconnect-button"
-              onClick={handleReconnect}
-              disabled={reconnecting}
-              title="Opens EVE SSO in your browser - sign in as this character again to grant any permissions added since it last logged in"
-            >
-              <RefreshCw size={13} strokeWidth={2} className={reconnecting ? "kills-sync-spinning" : ""} />
-              {reconnecting ? "Reconnecting..." : "Reconnect"}
-            </button>
-          </div>
+          )}
 
           <div className="character-tabs">
             {TABS.map((t) => (

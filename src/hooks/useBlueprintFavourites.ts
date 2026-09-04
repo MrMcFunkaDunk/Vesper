@@ -16,6 +16,13 @@ export interface BlueprintFavourite {
   hubRegionId: number;
   systemId: number | null;
   systemName: string | null;
+  /** The manually-entered Blueprint Cost field next to the search bar, as
+   * typed (an empty string means it was left blank, falling back to the
+   * fetched market price - same meaning as the live input itself). Stored
+   * as a string, not a number, so restoring it round-trips through the
+   * input exactly rather than reformatting whatever was typed. Optional
+   * so a favourite saved before this field existed still loads fine. */
+  blueprintCost?: string;
 }
 
 const STORAGE_KEY = "vesper.industry.blueprintFavourites";

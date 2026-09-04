@@ -15,9 +15,12 @@ import {
   Calendar as CalendarIcon,
   Waypoints,
   Users,
+  Pickaxe,
 } from "lucide-react";
 import Wordmark from "./Wordmark";
 import ColorPickerMenu from "./ColorPickerMenu";
+import TechnicalLabel from "./premium/TechnicalLabel";
+import { useTheme, isPremiumTheme } from "../hooks/useTheme";
 import { SIDEBAR_PALETTE } from "../lib/palettes";
 import { useColorOverrides } from "../hooks/useColorOverrides";
 import { useNavOrder } from "../hooks/useNavOrder";
@@ -35,6 +38,7 @@ import fittingsFleetsIcon from "../assets/sidebar-icons/fittings-fleets.png";
 import calendarIcon from "../assets/sidebar-icons/calendar.png";
 import pathWormholeFinderIcon from "../assets/sidebar-icons/path-wormhole-finder.png";
 import multiboxingIcon from "../assets/sidebar-icons/multiboxing.png";
+import miningIcon from "../assets/sidebar-icons/mining.png";
 
 export interface NavItem {
   id: string;
@@ -116,6 +120,14 @@ export const NAV_ITEMS: NavItem[] = [
       "Blueprint ME/TE tracking, build-cost calculation, and job planning - our own take on what Fuzzwork, Adam4EVE, and RavWorks each do.",
   },
   {
+    id: "mining",
+    label: "Mining",
+    icon: Pickaxe,
+    image: miningIcon,
+    description:
+      "What's actually worth mining right now (ore.cerlestes.de-style per-m³ value tables) plus a real record of what you've already pulled from ESI's mining ledger.",
+  },
+  {
     id: "fittings-fleets",
     label: "Fitting",
     icon: Wrench,
@@ -145,6 +157,32 @@ export const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+/** Subsystem channel codes for the premium "control rack" nav treatment -
+ * decorative categorization, not a restructure of the list itself. The
+ * sidebar already lets a pilot freely drag any item into any position
+ * (useNavOrder/useDragReorder) and that has to keep working exactly as it
+ * does today, so this doesn't group items under section headers (which
+ * would either fight a user's own custom order or have to ignore it) -
+ * each item just carries a small fixed category tag alongside its live
+ * position number, both of which stay correct no matter how the list gets
+ * reordered. */
+const NAV_CHANNEL_CODE: Record<string, string> = {
+  dashboard: "CMD",
+  kills: "CBT",
+  map: "NAV",
+  "path-wormhole-finder": "NAV",
+  wallet: "LOG",
+  planetary: "LOG",
+  mail: "COM",
+  "intel-check": "CBT",
+  industry: "LOG",
+  mining: "LOG",
+  "fittings-fleets": "CBT",
+  calendar: "OPS",
+  multiboxing: "OPS",
+  settings: "SYS",
+};
+
 interface SidebarProps {
   activeId: string;
   onSelect: (id: string) => void;
@@ -160,6 +198,8 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
   const { colors, setColor, resetColor } = useColorOverrides("vesper.colors.sidebar");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [version, setVersion] = useState("");
+  const [theme] = useTheme();
+  const premium = isPremiumTheme(theme);
 
   useEffect(() => {
     getVersion()
@@ -181,10 +221,11 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
       <div className="brand">
         <Wordmark />
         <span className="brand-subtitle">Capsuleer Operations System</span>
+        <TechnicalLabel>SUBSYS.RACK / DECK 01</TechnicalLabel>
       </div>
       <div className="brand-divider" />
       <nav className="nav">
-        {orderedItems.map((item) => {
+        {orderedItems.map((item, index) => {
           const Icon = item.icon;
           const isActive = item.id === activeId;
           const customColor = colors[item.id];
@@ -208,6 +249,20 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
             >
+              {/* Channel number (live position, always correct no matter how
+                  the list gets dragged around) + a fixed subsystem code -
+                  the "numbered equipment channel" identity from the premium
+                  nav-rack brief, without restructuring the actual
+                  drag-to-reorder list into fixed sections (see
+                  NAV_CHANNEL_CODE's own comment for why). Premium-only:
+                  standard themes keep the exact nav item markup they
+                  always had. */}
+              {premium && (
+                <span className="nav-item-channel">
+                  {String(index + 1).padStart(2, "0")}
+                  <span className="nav-item-channel-code">{NAV_CHANNEL_CODE[item.id] ?? "GEN"}</span>
+                </span>
+              )}
               {item.image ? (
                 <img src={item.image} alt="" className="nav-item-icon-img" />
               ) : (
@@ -218,7 +273,10 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
           );
         })}
       </nav>
-      <div className="sidebar-footer">{version && `v${version}`}</div>
+      <div className="sidebar-footer">
+        <TechnicalLabel>VES//NAV-02</TechnicalLabel>
+        {version && `v${version}`}
+      </div>
       {contextMenu && (
         <ColorPickerMenu
           x={contextMenu.x}

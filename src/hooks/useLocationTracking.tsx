@@ -5,7 +5,10 @@ import { useErrorReporter } from "./useErrorReporter";
 import { readNotificationPreferences } from "./useNotificationPreferences";
 import { notify } from "../lib/notifications";
 
-export type ProximityRadius = 1 | 2 | 3 | 5 | 7 | 9 | "region";
+/** 0 means "just this system, no neighbors" - systemsWithinJumps below
+ * already handles it correctly (its BFS loop simply never runs), so it's a
+ * real radius value, not a special case threaded through separately. */
+export type ProximityRadius = 0 | 1 | 2 | 3 | 5 | 7 | 9 | "region";
 
 const CURRENT_SYSTEM_KEY = "vesper.location.currentSystem";
 const RADIUS_KEY = "vesper.location.radius";
@@ -31,9 +34,13 @@ function readCurrentSystem(): CurrentSystem | null {
 function readRadius(): ProximityRadius {
   try {
     const raw = localStorage.getItem(RADIUS_KEY);
+    // Nothing stored yet (fresh install) - fall through to the default 5,
+    // not 0. Number(null) is 0, which would otherwise silently masquerade
+    // as a deliberately-chosen "just my system" setting.
+    if (raw === null) return 5;
     if (raw === "region") return "region";
     const n = Number(raw);
-    if (n === 1 || n === 2 || n === 3 || n === 5 || n === 7 || n === 9) return n;
+    if (n === 0 || n === 1 || n === 2 || n === 3 || n === 5 || n === 7 || n === 9) return n;
     return 5;
   } catch {
     return 5;
@@ -52,10 +59,14 @@ interface LocationTrackingState {
   alertKillIds: Set<number>;
   /** Increments once per batch of newly-arrived proximity kills - consumed by the app-wide flash overlay to trigger its pulse animation. */
   pulseToken: number;
-  /** Increments only when a newly-arrived kill lands in the current system or
-   * one jump away - a fixed, tighter tier than the user's chosen radius, so
-   * "close" always means close regardless of how wide the visual radius is
-   * set. Consumed by the app-wide overlay to trigger an alert sound. */
+  /** Whether the batch that produced the CURRENT pulseToken value included a
+   * kill in the exact current system ("system") or only ones elsewhere
+   * within the tracked radius ("nearby") - "system" wins if a batch has
+   * both. Consumed by the flash overlay to pick red vs amber. */
+  pulseSeverity: "system" | "nearby";
+  /** Increments once per batch of newly-arrived proximity kills, same
+   * trigger as pulseToken - consumed by the app-wide overlay to play an
+   * alert sound. */
   soundToken: number;
 }
 
@@ -111,6 +122,7 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [alertKillIds, setAlertKillIds] = useState<Set<number>>(new Set());
   const [pulseToken, setPulseToken] = useState(0);
+  const [pulseSeverity, setPulseSeverity] = useState<"system" | "nearby">("nearby");
   const [soundToken, setSoundToken] = useState(0);
   const seenKillIdsRef = useRef<Set<number> | null>(null);
   const reportError = useErrorReporter();
@@ -180,13 +192,20 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
       return;
     }
     const newlyAlerted: number[] = [];
+    // Same-system beats nearby the moment even one qualifying kill shows up -
+    // a batch that's part "just outside" and part "right here" is still,
+    // overall, a "right here" alert.
+    let sawSameSystem = false;
     // kills is sorted newest-first, so the first id already in seenKillIdsRef
     // marks the boundary of what's been scanned before - everything after it
     // is guaranteed already-seen too, no need to keep walking the rest.
     for (const kill of kills) {
       if (seenKillIdsRef.current.has(kill.killmail_id)) break;
       seenKillIdsRef.current.add(kill.killmail_id);
-      if (radiusSystemIds.has(kill.system_id)) newlyAlerted.push(kill.killmail_id);
+      if (radiusSystemIds.has(kill.system_id)) {
+        newlyAlerted.push(kill.killmail_id);
+        if (currentSystem && kill.system_id === currentSystem.id) sawSameSystem = true;
+      }
     }
     if (newlyAlerted.length === 0) return;
     // Sound and the desktop notification now fire on the exact same
@@ -196,9 +215,13 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
     // picker is front-and-center on the Map screen instead of tucked away
     // in the top bar. One radius, one meaning, for every alert type.
     setSoundToken((n) => n + 1);
+    setPulseSeverity(sawSameSystem ? "system" : "nearby");
     const prefs = readNotificationPreferences();
     if (prefs.enabled && prefs.proximityKills && currentSystem) {
-      notify("Proximity Kill Alert", `A kill just landed near ${currentSystem.name}.`);
+      notify(
+        "Proximity Kill Alert",
+        sawSameSystem ? `A kill just landed in ${currentSystem.name} - your own system.` : `A kill just landed near ${currentSystem.name}.`,
+      );
     }
     setAlertKillIds((prev) => {
       const next = new Set(prev);
@@ -231,8 +254,8 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
   // every consumer a brand-new object each time, making them all eligible to
   // re-render regardless of whether anything they read actually changed.
   const value = useMemo(
-    () => ({ currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, soundToken }),
-    [currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, soundToken],
+    () => ({ currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, pulseSeverity, soundToken }),
+    [currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, pulseSeverity, soundToken],
   );
 
   return (

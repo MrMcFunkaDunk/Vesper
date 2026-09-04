@@ -102,10 +102,26 @@
   --font-display: "Oxanium", sans-serif;
   --font-label: "Rajdhani", sans-serif;
   --font-body: "Inter", -apple-system, "Segoe UI", system-ui, sans-serif;
+  /* Technical-readout mono face - not used by any existing component (every
+     current theme leaves it at this one default), only by the premium
+     "deck" themes' own new panel/diode/button treatments below. Kept as a
+     separate token rather than repointing --font-label at it, since
+     --font-label is already load-bearing on dozens of tightly-sized chips,
+     tabs, and table headers tuned for Rajdhani's condensed metrics - a
+     monospace face is meaningfully wider per character and would overflow
+     those without a full pass this theming change isn't trying to do. */
+  --font-mono: "Share Tech Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 
   /* Scale */
   --radius-sm: 4px;
   --radius-md: 8px;
+  /* Every pill-shaped chip/tag/badge in the app (~49 consumers) uses this
+     rather than a literal 999px, so the premium decks can flatten every one
+     of them to a hard edge from one place - see premium-tokens.css. Circular
+     avatars/portraits/status-dots intentionally keep a literal 50% (a round
+     portrait reads as a porthole/photo ID on every deck, not a web-app
+     affordance to flatten). */
+  --radius-pill: 999px;
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 12px;
@@ -582,6 +598,17 @@
   --glow-accent: 0 0 0 1px var(--border-active), 0 0 18px rgba(208, 163, 94, 0.22);
 }
 
+/* The three "premium deck" themes (Bulkhead, Cold Ballast, Command Deck)
+   live entirely under src/themes/premium/ now (premium-tokens.css,
+   premium-structure.css, and one file per deck), imported from App.tsx
+   right after this file. Moved out on purpose: they carry a much larger
+   set of component-level overrides (shape, type casing, panel
+   construction, per-deck geometry) than a palette-only theme, and keeping
+   all of that outside App.css means editing it can never touch a single
+   line of the six themes above. */
+
+/* (content moved to src/themes/premium-industrial-themes.css) */
+
 * {
   box-sizing: border-box;
 }
@@ -622,7 +649,7 @@ body {
 
 *::-webkit-scrollbar-thumb {
   background-color: var(--accent-soft);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -906,8 +933,30 @@ select.wh-roller-select,
   color: var(--success);
 }
 
+/* A resting bloom around the LED itself, like light actually leaking onto
+   the panel around it rather than a flat dot - box-shadow's color defaults
+   to currentColor, which resolves to this tone's --success/--warning/etc
+   through .status-chip-value above, same as the dot's own background. */
 .status-chip-online .status-chip-dot {
-  animation: status-pulse 2.4s ease-in-out infinite;
+  box-shadow: 0 0 4px 1px currentColor;
+  animation: status-dot-blink 2.4s ease-in-out infinite;
+}
+
+/* Bigger, brighter flare at the "on" instant (like a real indicator LED's
+   light actually blooming outward) that collapses to almost nothing at the
+   "off" instant, instead of just the dot itself fading in place. */
+@keyframes status-dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 5px 1.5px currentColor, 0 0 11px 3px currentColor;
+    transform: scale(1.1);
+  }
+  50% {
+    opacity: 0.3;
+    box-shadow: 0 0 1px 0 currentColor;
+    transform: scale(0.8);
+  }
 }
 
 .status-chip-warning .status-chip-value {
@@ -940,26 +989,24 @@ select.wh-roller-select,
   gap: 14px;
 }
 
+/* Every box in .topbar-right (location, server, capsuleers-online, connected,
+   eve time, bell) shares this same height and resting fill - a darker,
+   sunken tone against the topbar's own --bg-elevated surface so each reads
+   as a distinct panel instead of just an outline sitting on the bar. */
 .server-status-badge {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  padding: 5px 12px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-}
-
-.server-status-line {
+  background: var(--bg);
   font-size: 13px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.server-status-players {
-  color: var(--accent);
-  font-weight: 600;
 }
 
 .server-status-downtime-soon {
@@ -971,14 +1018,40 @@ select.wh-roller-select,
   animation: status-pulse 1.2s ease-in-out infinite;
 }
 
+.capsuleers-online-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-family: var(--font-label);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.capsuleers-online-count {
+  color: var(--accent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.capsuleers-online-label {
+  color: var(--text-muted);
+}
+
 .eve-time-clock {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-  padding: 4px 12px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  background: var(--bg);
   line-height: 1.1;
 }
 
@@ -1013,10 +1086,11 @@ select.wh-roller-select,
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 10px;
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  background: var(--bg);
   color: var(--text-muted);
   min-width: 180px;
 }
@@ -1066,10 +1140,11 @@ select.wh-roller-select,
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 6px 10px;
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
+  background: var(--bg);
   color: var(--accent);
   font-family: var(--font-label);
   font-size: 14px;
@@ -1258,13 +1333,21 @@ body[data-reduce-motion="true"] .toast-card {
   color: var(--text);
 }
 
+/* Amber by default - a kill somewhere else within the tracked radius, worth
+   knowing about but not immediately dangerous. .proximity-flash-overlay-
+   system (a kill in the exact system currently being tracked) overrides
+   this to red - see ProximityFlashOverlay.tsx's own comment. */
 .proximity-flash-overlay {
   position: fixed;
   inset: 0;
   z-index: 9999;
   pointer-events: none;
-  background: var(--danger);
+  background: var(--warning);
   animation: proximity-flash-pulse 1.8s ease-in-out;
+}
+
+.proximity-flash-overlay-system {
+  background: var(--danger);
 }
 
 /* The overlay unmounts itself after 1.8s regardless (see
@@ -1315,7 +1398,7 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   height: 32px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: transparent;
+  background: var(--bg);
   color: var(--text-secondary);
   cursor: pointer;
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
@@ -1334,7 +1417,7 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   min-width: 16px;
   height: 16px;
   padding: 0 3px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--danger);
   color: var(--bg);
   font-size: 10px;
@@ -1449,10 +1532,11 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px 5px 6px;
+  height: 32px;
+  padding: 0 12px 0 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: transparent;
+  background: var(--bg);
   font-family: inherit;
   cursor: pointer;
   transition: background-color var(--transition-fast), border-color var(--transition-fast);
@@ -2207,7 +2291,7 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   gap: 3px;
   padding: 1px 8px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   font-family: var(--font-label);
   font-size: 13px;
@@ -2377,7 +2461,7 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   align-items: center;
   gap: 3px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-muted);
   font-size: 12px;
@@ -2611,7 +2695,7 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   gap: 5px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-label);
@@ -3188,7 +3272,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 
 .skill-plan-prereq-tag {
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-muted);
   font-size: 10.5px;
@@ -3290,7 +3374,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   align-items: center;
   gap: 5px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-muted);
   font-size: 12px;
@@ -3352,6 +3436,37 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   position: relative;
   width: 100%;
   max-width: 420px;
+}
+
+.industry-blueprint-search-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* A plain div reusing .wh-field-label's look (typography only - a
+   different class, not that one itself) rather than the label element
+   or class: .wh-field-label's own input[type="text"]/select/textarea
+   rules would otherwise reach the search input nested inside here and
+   fight .kills-add-combobox's own styling for it. Exists purely so the
+   search box gets the same "label text above input" shape as Blueprint
+   Cost next to it - without it the two inputs don't line up, since one
+   has a label pushing it down and the other doesn't. */
+.industry-blueprint-search-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.industry-blueprint-cost-inline {
+  flex-shrink: 0;
+  width: 160px;
 }
 
 /* Shared browsable picker for Industry tabs that used to be a
@@ -3451,7 +3566,12 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   color: var(--danger);
 }
 
-.industry-favourite-setup-active {
+/* .kills-sync-btn.industry-favourite-setup-active, not just the bare
+   class - .kills-sync-btn's own color rule is defined later in this file
+   and matches at the same specificity, so on a tie it would otherwise win
+   regardless of source order on the element itself. Matching that
+   specificity here is what actually lets the active-state color win. */
+.kills-sync-btn.industry-favourite-setup-active {
   color: var(--warning);
 }
 
@@ -3609,8 +3729,8 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 }
 
 /* The actual ISK figure in a row, not its label - same accent blue as the
-   TopBar's EVE Time clock and server player count (.eve-time-value /
-   .server-status-players), so a cost reads as a highlighted readout the
+   TopBar's EVE Time clock and Capsuleers Online count (.eve-time-value /
+   .capsuleers-online-count), so a cost reads as a highlighted readout the
    same way those already do, not as a color unique to this panel. */
 .industry-job-cost-value {
   color: var(--accent);
@@ -3636,8 +3756,8 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 }
 
 /* The one line that reduces cost rather than adding to it - green, same
-   as every other "this is cheaper" signal already used across Industry
-   (see .industry-build-cost-cheaper). */
+   as every other "this is cheaper/better" signal already used across
+   Industry. */
 .industry-job-cost-reduction {
   color: var(--success);
 }
@@ -3659,13 +3779,6 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   color: var(--text);
   font-weight: 700;
   font-size: 14px;
-}
-
-.industry-job-cost-included-note {
-  margin: -2px 0 0;
-  color: var(--text-muted);
-  font-weight: 400;
-  font-size: 12px;
 }
 
 .industry-build-row {
@@ -3722,19 +3835,19 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 .industry-build-header-grid {
   display: grid;
   /* Only Material flexes (1fr) - every other column is a fixed px width,
-     widened well past the original 80/130/130/130 to actually use the
+     widened well past the original 80/130/130 to actually use the
      spare room, but fixed rather than fr on purpose: a flexible Qty/
-     Build/Buy/Total column resizes with however much space is left over
-     after the row's own left indent is subtracted, and that leftover
-     shrinks a little at every nesting depth - so a flexible width put
-     each column's boundary in a slightly different place tier to tier,
-     the numbers no longer lining up under each other let alone under the
+     Total column resizes with however much space is left over after the
+     row's own left indent is subtracted, and that leftover shrinks a
+     little at every nesting depth - so a flexible width put each
+     column's boundary in a slightly different place tier to tier, the
+     numbers no longer lining up under each other let alone under the
      header. Fixed widths here can't drift: the same px value at every
      depth means every column's left/right edge lands in an identical
      spot all the way down the tree. Must stay identical to
      .industry-build-row-body's template or the header stops lining up
      with the columns beneath it. */
-  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 190px 190px 20px;
+  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 20px;
   align-items: center;
   gap: 10px;
   flex: 1;
@@ -3767,13 +3880,145 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
      line up at every tier, not just the first one. */
   margin: 4px 0 6px 6px;
   padding: 4px 0 4px 4px;
-  border: 1px solid var(--border);
+  border: 2px solid var(--border-active);
   border-radius: var(--radius-sm);
-  /* Background is set inline per-row (see tierTint in IndustryPage.tsx) -
-     each depth gets a progressively stronger accent tint off the theme's
-     own --bg-elevated, capped well short of solid color, so a deeper tier
-     visibly reads as "one step further in" instead of every level looking
-     identical regardless of depth. */
+  /* One flat box for the whole BOM now (see BuildTreeFlatList), not one
+     nested box per tier - background lives on .industry-build-tier-group
+     below instead of here. */
+}
+
+/* One tier's own rows within the single flat box - background is set
+   inline per group (see tierTint in IndustryPage.tsx), each depth
+   progressively darker off the theme's own --bg-elevated, capped well
+   short of solid black, so a deeper tier still visibly reads as "one step
+   further in" the way the old nested boxes did, just without nesting an
+   actual separate box per tier anymore. */
+.industry-build-tier-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+}
+
+/* Labels the start of each group in this tier's material list - buildable
+   components (their own blueprint icon, sorted first by sortedMaterials)
+   and raw materials (sorted after) - so the split reads as two clearly
+   named sections instead of one undifferentiated list the reader has to
+   notice the blueprint icons changing within. */
+.industry-build-section-title {
+  margin: 0;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* Within tier 2+, groups this tier's rows under the specific parent
+   buildable item they're a material for - a tier can hold materials for
+   several different parents at once, so each run of rows gets its own
+   tiny reference label instead of leaving the reader to guess which
+   item further up the list they belong to. Its own GroupCheckbox selects
+   every row in that one group at once, separate from the per-tier one up
+   in the title row above (see .industry-build-tier-title-row). */
+.industry-build-parent-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint, var(--text-muted));
+  opacity: 0.85;
+}
+
+.industry-build-parent-header:first-child {
+  margin-top: 0;
+}
+
+/* Closes out a parent's own group of material rows (see
+   .industry-build-parent-header above) with a quick running total - same
+   grid template as .industry-build-row-body so the figure lands directly
+   under the Total column it's summing, not just anywhere on the line.
+   Must stay identical to that template for the same reason the header
+   grid does (see its own comment). */
+.industry-build-parent-subtotal {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 20px;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px 2px 0;
+}
+
+.industry-build-parent-subtotal-label {
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.industry-build-parent-subtotal-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--warning);
+}
+
+/* Wraps the per-tier GroupCheckbox and the collapse/expand button as
+   separate siblings, not one nested inside the other - an <input> inside
+   a <button> would fire both the checkbox toggle and the collapse/expand
+   on the same click. */
+.industry-build-tier-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Each tier collapses independently - a plain reset button (no border/
+   background of its own) so the chevron+title reads as one clickable
+   control instead of a stray icon floating next to inert text. */
+.industry-build-tier-title-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.industry-build-tier-title-btn:hover {
+  color: var(--text);
+}
+
+.industry-build-tier-title-btn:hover .industry-build-section-title {
+  color: var(--text);
+}
+
+/* Materials is breaking away from the Buildable Items group before it, so
+   it gets a rule line above its own title - Buildable Items needs none,
+   it's always first, right after the tier connector. */
+.industry-build-materials-divider {
+  margin-top: 10px;
+}
+
+.industry-build-materials-divider::before {
+  content: "";
+  display: block;
+  height: 2px;
+  margin-bottom: 6px;
+  background: var(--border-active);
+  border-radius: var(--radius-sm);
 }
 
 /* One small flowchart-style connector at the top of each tier, marking
@@ -3796,14 +4041,16 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 /* A real grid, not flex - flex only sizes each column by its own row's
    content (min-width is just a floor), so a longer number in one row than
    its neighbors made the qty/price/cost columns drift out of alignment
-   row to row. Only Material (1fr) flexes; qty/build/buy/total are fixed
-   px - see the "only Material flexes" note on .industry-build-header-grid
-   for why those four stay fixed instead of also taking an fr share. Track
-   order matches the children exactly as rendered: icon, name, qty, build
-   cost, buy cost, total material cost, expand chevron. */
+   row to row. Only Material (1fr) flexes; qty/total are fixed px - see
+   the "only Material flexes" note on .industry-build-header-grid for why
+   those two stay fixed instead of also taking an fr share. Track order
+   matches the children exactly as rendered: icon, name, qty, total,
+   expand chevron - the Total column doubles as this row's own Buy Cost
+   until its tier is open (see .industry-build-cost-pending), so there's
+   no separate Self Build Cost or Cost from Trade Hub column anymore. */
 .industry-build-row-body {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 190px 190px 20px;
+  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 20px;
   align-items: center;
   gap: 10px;
   /* This element is itself a flex child of .industry-build-row (the
@@ -3836,19 +4083,35 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   font-variant-numeric: tabular-nums;
 }
 
-/* Build Cost and Buy Cost sit side by side, no toggle needed to see both -
-   whichever one actually wins for this row gets .industry-build-cost-cheaper
-   on top, so the comparison itself stays legible at a glance instead of
-   needing to do the mental subtraction. */
-.industry-build-cost-option {
-  text-align: right;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
+/* Modifies .industry-build-cost (always applied alongside it, never
+   alone) for a buildable row whose own tier isn't open yet - Total is
+   showing this row's plain Buy Cost as a stand-in, not the real build
+   breakdown, so it's muted rather than given the same --accent weight as
+   a resolved Total. Replaced by the real number (and the accent color
+   back) the moment that tier opens - see showBreakdown in BuildTreeRow.
+   Compound selector (not just .industry-build-cost-pending alone) since
+   it's defined before .industry-build-cost below and both are otherwise
+   equal-specificity single-class selectors - source order would let
+   .industry-build-cost's own color/font-weight win instead. */
+.industry-build-cost.industry-build-cost-pending {
+  color: var(--text-muted);
+  font-weight: 400;
 }
 
-.industry-build-cost-cheaper {
+/* Before/after: once a tier opens, Total switches from this row's plain
+   Buy Cost to the real materials rollup - these two color that new number
+   against the Buy Cost it just replaced, same compound-selector reasoning
+   as .industry-build-cost-pending above (both single-class, both need to
+   beat .industry-build-cost's own color on specificity, not source order
+   alone). Green: opening the tier revealed a cheaper way to get this than
+   buying it outright. Red: the opposite - building it is actually costing
+   more than the market price would have. */
+.industry-build-cost.industry-build-cost-cheaper {
   color: var(--success);
-  font-weight: 700;
+}
+
+.industry-build-cost.industry-build-cost-costlier {
+  color: var(--danger);
 }
 
 .industry-build-has-blueprint {
@@ -3885,7 +4148,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 
 .industry-build-decision {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 11px;
@@ -3904,7 +4167,16 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   min-width: 90px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
+  /* Was plain --text-secondary grey - the one column that always shows a
+     real number (Self Build Cost can be "—"), and the figure actually
+     feeding this item's cost upward, yet it read as the least important
+     of the two. --accent matches the same aggregate-total convention the
+     Costs sidebar's own Build Cost/Total Job Run Cost already use, right
+     below this same tree - muted back down via .industry-build-cost-
+     pending for the one case where it's only a Buy Cost stand-in, not
+     yet the real number (see that class's own comment). */
+  color: var(--accent);
+  font-weight: 600;
   font-size: 13px;
 }
 
@@ -3940,6 +4212,17 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Moon Ores' materials list - a comma-separated string of whatever this
+   specific ore actually yields (varies per row, unlike Ore/Ice's fixed
+   column set), so it needs to wrap rather than force the whole table
+   wider to fit the longest row's list. */
+.ore-table-materials-cell {
+  max-width: 320px;
+  white-space: normal;
+  color: var(--text-secondary);
+  font-size: 12.5px;
 }
 
 .industry-shopping-list-total-row td {
@@ -4169,7 +4452,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 .data-table-tag {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--success-soft);
   color: var(--success);
   font-family: var(--font-label);
@@ -5026,7 +5309,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   flex-shrink: 0;
   width: 120px;
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated);
   overflow: hidden;
 }
@@ -5047,7 +5330,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 .kill-report-chip {
   padding: 7px 14px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-secondary);
   font-family: var(--font-label);
@@ -5457,7 +5740,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   gap: 6px;
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--gate);
   font-family: var(--font-label);
@@ -5558,7 +5841,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   gap: 1px;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   transition: border-color var(--transition-fast), background-color var(--transition-fast);
 }
@@ -5648,7 +5931,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   gap: 7px;
   padding: 5px 4px 5px 11px;
   border: none;
-  border-radius: 999px 0 0 999px;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
   background: transparent;
   font-family: var(--font-label);
   font-size: 14.5px;
@@ -6130,7 +6413,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   gap: 6px;
   padding: 6px 14px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--text-secondary);
   font-family: var(--font-label);
@@ -6471,7 +6754,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 }
 
 .kill-stats-total {
-  color: var(--text);
+  color: var(--isk);
   font-weight: 600;
 }
 
@@ -6633,7 +6916,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 .entity-danger-bar-track {
   display: flex;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   background: var(--bg-elevated-2);
 }
@@ -6795,7 +7078,7 @@ body[data-reduce-motion="true"] .skeleton-row {
   right: -4px;
   bottom: -4px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -7085,10 +7368,17 @@ body[data-reduce-motion="true"] .skeleton-row {
   flex-direction: column;
 }
 
+/* Wraps so the radius picker (see .map-ticker-radius-picker) always drops
+   to its own row underneath "Nearby" - the ticker panel is only 300px
+   wide, nowhere near enough to fit that label AND eight radius options
+   (0/1/2/3/5/7/9/region) on one line without the buttons spilling past the
+   panel's own edge. */
 .map-ticker-proximity-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
+  gap: 6px;
   padding: 8px 14px 6px;
   font-family: var(--font-label);
   font-size: 11.5px;
@@ -7099,6 +7389,19 @@ body[data-reduce-motion="true"] .skeleton-row {
 
 .map-ticker-proximity-radius {
   color: var(--danger);
+}
+
+/* Overrides .location-tracker-radius's own side-divider styling (built for
+   sitting inline next to other controls in the wide top bar) - here it's
+   getting the panel's full width on its own row instead, so a left border/
+   margin meant to separate it from a neighbor to its left is just dead
+   space along the edge. */
+.map-ticker-radius-picker {
+  flex-basis: 100%;
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
+  justify-content: space-between;
 }
 
 .map-ticker-proximity .map-ticker-empty {
@@ -7138,12 +7441,23 @@ body[data-reduce-motion="true"] .skeleton-row {
   background: var(--bg-elevated-2);
 }
 
-.map-ticker-row-alert {
+/* Same system: a kill just landed right where the character is tracked -
+   red, the more urgent of the two (see .map-ticker-row-alert-nearby). */
+.map-ticker-row-alert-system {
   box-shadow: inset 3px 0 0 var(--danger);
   background: var(--danger-soft);
 }
 
-.map-ticker-row-alert:hover {
+/* Within the tracked radius but a different system - amber/gold rather than
+   red, so a kill several jumps out doesn't read with the same urgency as
+   one happening in the character's own system right now. */
+.map-ticker-row-alert-nearby {
+  box-shadow: inset 3px 0 0 var(--warning);
+  background: var(--warning-soft);
+}
+
+.map-ticker-row-alert-system:hover,
+.map-ticker-row-alert-nearby:hover {
   filter: brightness(1.15);
 }
 
@@ -7977,7 +8291,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 .kills-add-suggestion-kind {
   margin-left: auto;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-muted);
   font-family: var(--font-label);
@@ -7993,7 +8307,7 @@ body[data-reduce-motion="true"] .skeleton-row {
   gap: 6px;
   padding: 5px 6px 5px 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-label);
   font-size: 15px;
   font-weight: 600;
@@ -8033,7 +8347,7 @@ body[data-reduce-motion="true"] .skeleton-row {
   gap: 2px;
   padding: 2px;
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
 }
 
@@ -8046,7 +8360,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 
 .gatecheck-saved-chip > button:first-child {
   padding: 5px 4px 5px 12px;
-  border-radius: 999px 0 0 999px;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
   font-family: var(--font-label);
   font-size: 15px;
   font-weight: 600;
@@ -8389,12 +8703,161 @@ body[data-reduce-motion="true"] .skeleton-row {
   gap: var(--space-lg);
 }
 
+.mail-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .mail-page-header h2 {
   margin: 2px 0 0;
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 25px;
   color: var(--text);
+}
+
+.mail-compose-btn {
+  flex-shrink: 0;
+}
+
+/* Custom mail labels only (see MailPage.tsx's own note on why built-in
+   folders aren't reconstructed here) - a row of filter chips above the
+   list, same shape as other chip-filter rows already in the app. */
+.mail-label-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mail-label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-family: var(--font-label);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.mail-label-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.mail-label-chip-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  color: var(--text);
+}
+
+.mail-label-chip-count {
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mail-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 640px;
+}
+
+.mail-compose-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mail-compose-field .wh-field-label {
+  gap: 6px;
+}
+
+.mail-compose-recipients {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+}
+
+.mail-recipient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mail-recipient-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.mail-recipient-chip button:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* The recipient search box grows to fill whatever room the already-added
+   chips leave, rather than always sitting at a fixed width. */
+.mail-compose-recipient-search {
+  position: relative;
+  flex: 1;
+  min-width: 160px;
+}
+
+.mail-compose-recipient-search input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  padding: 3px 4px;
+}
+
+.mail-compose-recipient-search input:focus {
+  outline: none;
+}
+
+.mail-compose-body {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
 }
 
 .char-selector-strip {
@@ -8409,7 +8872,7 @@ body[data-reduce-motion="true"] .skeleton-row {
   gap: 8px;
   padding: 5px 14px 5px 5px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   font-family: var(--font-label);
   font-size: 13px;
@@ -8580,7 +9043,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 .market-browser-favourites-count {
   margin-left: auto;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--warning-soft);
   color: var(--warning);
   font-family: var(--font-label);
@@ -8881,6 +9344,20 @@ body[data-reduce-motion="true"] .skeleton-row {
   color: var(--text-muted);
 }
 
+/* Sits in industry-input-grid's own minmax(160px, 1fr) columns like every
+   other field there, but "Brand New Ship Cost from Market" is too long a
+   label to fit one of those on one line - spans two columns for the extra
+   width instead of letting it wrap. Scoped to this one card so every other
+   .market-stat-card (Mining, Wallet & Market, etc, all in their own
+   differently-sized grids) is untouched. */
+.industry-ship-cost-card {
+  grid-column: span 2;
+}
+
+.industry-ship-cost-card .market-stat-label {
+  white-space: nowrap;
+}
+
 .market-stat-value {
   font-family: var(--font-label);
   font-size: 16px;
@@ -8941,11 +9418,16 @@ body[data-reduce-motion="true"] .skeleton-row {
   }
 }
 
+/* A real marquee, not a wrapping flex row - .mineral-ticker-track holds
+   two identical halves side by side (see MineralTicker.tsx) and slides
+   left by exactly one half's own width (50% of the track) on a loop, so
+   the seam between the end of one lap and the start of the next lands on
+   a pixel-identical frame instead of visibly jumping. overflow:hidden on
+   this outer element is what makes the second half invisible until it
+   scrolls into view. */
 .mineral-ticker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 18px;
-  padding: 10px 16px;
+  overflow: hidden;
+  padding: 10px 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
@@ -8953,10 +9435,88 @@ body[data-reduce-motion="true"] .skeleton-row {
   font-size: 13px;
 }
 
+.mineral-ticker-track {
+  display: flex;
+  width: max-content;
+  padding: 0 16px;
+  animation-name: mineral-ticker-scroll;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+/* No gap on the track itself - the seam between the two halves has to be
+   provided by a half's OWN box (padding-right below), not by space between
+   them, or the track's total width stops being exactly 2x one half's width
+   and the -50% keyframe below no longer lands on an exact half-width shift
+   (it was overshooting by the track's extra gap every loop). Trailing
+   padding keeps the visual spacing identical to the item-to-item gap. */
+.mineral-ticker-half {
+  display: flex;
+  flex-shrink: 0;
+  gap: 28px;
+  padding-right: 28px;
+}
+
+/* Pausing on hover is the one thing every real ticker tape does - lets you
+   actually read an entry instead of chasing it across the screen. */
+.mineral-ticker:hover .mineral-ticker-track {
+  animation-play-state: paused;
+}
+
+/* Deliberately gated on VESPER's own in-app Reduce Motion toggle only, NOT
+   the OS-level prefers-reduced-motion media query that every other
+   decorative animation here also respects (map pulse, proximity flash).
+   Confirmed against a real request to make this scroll regardless of the
+   OS setting being on - unlike a pulse or flash, a lot of desktop users
+   leave "show animations" off system-wide for unrelated reasons (battery,
+   habit) without meaning to suppress motion inside apps that ask for it
+   directly, and this ticker's motion is what a user here explicitly
+   wants. The in-app toggle (default off) stays the real accessibility
+   escape hatch. Unlike a pulse or a flash, this motion was also the only
+   thing that ever revealed anything past the first screenful of entries -
+   just killing the animation (an earlier version of this rule did that)
+   left the row silently clipped with everything else invisible and
+   unreachable. So this doesn't just stop the animation: it also switches
+   the track back to the original wrapping, all-entries-visible layout the
+   ticker used before it could scroll at all, and hides the clone half
+   outright, since a second, motionless copy of the same row would just be
+   confusing clutter once nothing is animating it into view. Turning the
+   track from flex into a plain block is what makes the wrap work cleanly
+   rather than fighting flex-shrink/grow interactions: with the track no
+   longer a flex container, .mineral-ticker-half stops being a flex ITEM
+   at all (flex-shrink:0 above only ever meant anything in that role), so
+   it's free to behave as an ordinary block-level flex row - auto-
+   stretching to the track's full width and wrapping its own
+   .mineral-ticker-item children into it exactly like normal flow layout. */
+body[data-reduce-motion="true"] .mineral-ticker-track {
+  display: block;
+  width: auto;
+  animation: none;
+}
+
+body[data-reduce-motion="true"] .mineral-ticker-half {
+  flex-wrap: wrap;
+}
+
+body[data-reduce-motion="true"] .mineral-ticker-half-clone {
+  display: none;
+}
+
+@keyframes mineral-ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 .mineral-ticker-item {
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .mineral-ticker-name {
@@ -8990,6 +9550,57 @@ body[data-reduce-motion="true"] .skeleton-row {
   stroke: var(--accent);
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
+}
+
+.market-history-section + .market-history-section {
+  margin-top: 18px;
+}
+
+.mini-price-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.mini-price-chart {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  padding: 10px 12px;
+}
+
+.mini-price-chart-name {
+  margin: 0 0 4px;
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mini-price-chart-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --success/--danger read fine at table/card scale, but at this component's
+   small 12px size, sitting right against the teal chart fill below, the
+   same muted tones desaturate toward olive/orange instead of reading as
+   green/red - punch up saturation and contrast just for this tight
+   context rather than changing the shared tokens everywhere else. */
+.mini-price-chart-header .wallet-amount-positive,
+.mini-price-chart-header .wallet-amount-negative {
+  filter: saturate(2) contrast(1.25);
+}
+
+.mini-price-chart-svg {
+  width: 100%;
+  height: 70px;
+  display: block;
 }
 
 .market-history-range {
@@ -9149,7 +9760,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 .intel-feed-listener-chip {
   padding: 8px 16px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated);
   color: var(--text);
   font-family: var(--font-label);
@@ -9679,7 +10290,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 .pi-plan-card-count {
   margin-left: auto;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--font-label);
@@ -9724,7 +10335,7 @@ body[data-reduce-motion="true"] .skeleton-row {
 
 .pi-plan-planet-chip {
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-muted);
   font-family: var(--font-label);
@@ -10468,7 +11079,7 @@ label.settings-sync-file-row {
   gap: 8px;
   padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   font-family: var(--font-label);
   font-size: 13px;
@@ -10885,7 +11496,7 @@ label.settings-sync-file-row {
 .fittings-card-source {
   flex-shrink: 0;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-label);
   font-size: 10.5px;
   font-weight: 600;
@@ -11090,7 +11701,7 @@ label.settings-sync-file-row {
 
 .fit-gauge-track {
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated);
   overflow: hidden;
 }
@@ -11098,7 +11709,7 @@ label.settings-sync-file-row {
 .fit-gauge-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   transition: width 0.15s;
 }
 
@@ -11442,7 +12053,7 @@ label.settings-sync-file-row {
   gap: 8px;
   padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   font-family: var(--font-label);
   font-size: 13px;
@@ -11464,7 +12075,7 @@ label.settings-sync-file-row {
 
 .wh-chain-pill-count {
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated);
   color: var(--text-muted);
   font-size: 11px;
@@ -11742,7 +12353,7 @@ label.settings-sync-file-row {
   gap: 3px;
   margin-left: auto;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--danger-soft);
   color: var(--danger);
   font-size: 10.5px;
@@ -12073,7 +12684,7 @@ label.settings-sync-file-row {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 11.5px;
@@ -12085,7 +12696,7 @@ label.settings-sync-file-row {
   align-items: center;
   gap: 3px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-secondary);
   font-size: 11.5px;
@@ -12108,7 +12719,7 @@ label.settings-sync-file-row {
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-secondary);
   font-size: 11.5px;
@@ -12373,7 +12984,7 @@ label.settings-sync-file-row {
 .wh-time-pill {
   margin-left: auto;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   font-size: 10.5px;
   font-weight: 700;
@@ -12502,7 +13113,7 @@ label.settings-sync-file-row {
 .wh-mass-bar-track {
   position: relative;
   height: 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   overflow: hidden;
 }
@@ -12664,7 +13275,7 @@ label.settings-sync-file-row {
 
 .wh-jump-log-temp {
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-weight: 700;
   font-size: 10px;
 }
@@ -12796,7 +13407,7 @@ label.settings-sync-file-row {
   gap: 5px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-muted);
   font-family: var(--font-label);
@@ -12834,7 +13445,7 @@ label.settings-sync-file-row {
 .wh-route-hub-btn {
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   font-family: var(--font-label);
   font-size: 12px;
@@ -12960,7 +13571,7 @@ label.settings-sync-file-row {
 .wh-scout-class-badge {
   flex-shrink: 0;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-label);
   font-size: 10px;
   font-weight: 700;
@@ -13353,7 +13964,7 @@ label.settings-sync-file-row {
 .multibox-hotkey-btn {
   padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-secondary);
   font-family: var(--font-mono, var(--font-body));
@@ -13528,7 +14139,7 @@ label.settings-sync-file-row {
 
 .lp-store-pill-count {
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated-2);
   color: var(--text-muted);
   font-size: 11px;

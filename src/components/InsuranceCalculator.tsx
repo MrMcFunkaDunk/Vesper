@@ -117,9 +117,11 @@ function InsuranceCalculator() {
                 .map((l) => (
                   <tr key={l.name}>
                     <td>{l.name}</td>
-                    <td className="data-table-numeric">{formatIsk(l.cost)}</td>
-                    <td className="data-table-numeric">{formatIsk(l.payout)}</td>
-                    <td className="data-table-numeric">{formatIsk(l.payout - l.cost)}</td>
+                    <td className="data-table-numeric wallet-amount-negative">{formatIsk(l.cost)}</td>
+                    <td className="data-table-numeric wallet-amount-positive">{formatIsk(l.payout)}</td>
+                    <td className={`data-table-numeric ${l.payout - l.cost >= 0 ? "wallet-amount-positive" : "wallet-amount-negative"}`}>
+                      {formatIsk(l.payout - l.cost)}
+                    </td>
                   </tr>
                 ))}
             </tbody>

@@ -7,10 +7,11 @@ import { securityColor, securityColorResolved, formatSecurity, formatUtcTime, fo
 import { useRecentActivity } from "../hooks/useRecentActivity";
 import { useLocationTracking } from "../hooks/useLocationTracking";
 import { useMapDisplayPrefs } from "../hooks/useMapDisplayPrefs";
-import { RADIUS_OPTIONS } from "./TopBar";
+import { RADIUS_OPTIONS, radiusTitle } from "./TopBar";
 import { getSystemKillHeat, type KillEntry, type SystemKillHeat } from "../lib/kills";
 import type { SystemSummary } from "./SystemKillboard";
 import { getCharacterLocation, type SessionCharacter } from "../lib/eve";
+import { THEME_CHANGE_EVENT, useTheme, isPremiumTheme } from "../hooks/useTheme";
 
 const TICKER_LIMIT = 60;
 /** The nearby feed is a short-lived spotlight, not a growing log - capped
@@ -164,21 +165,34 @@ function characterInitials(name: string): string {
  * initials in the body instead of a portrait - a home marker only needs to
  * say "whose home is this", not "what do they look like" (drawPortrait's
  * job now belongs to the live current-location pins instead). Styled as a
- * dark HUD panel with the app's own cyan accent outline, matching every
+ * dark HUD panel with the active theme's own accent outline, matching every
  * other selection/highlight ring on the map, instead of a literal
- * skeuomorphic gold cottage that would look imported from another app. */
-function drawHomeMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, initials: string) {
+ * skeuomorphic gold cottage that would look imported from another app.
+ * accent/panelBg/panelBg2 are resolved once per frame by the caller (same
+ * pattern as inkColor) rather than re-read here per pin - this used to be
+ * hardcoded to the original dark theme's exact hex values regardless of
+ * which theme was actually active, so every other theme's map (standard
+ * or premium) showed a cyan-on-near-black home marker no matter what. */
+function drawHomeMarker(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  radius: number,
+  initials: string,
+  accent: string,
+  panelBg: string,
+  panelBg2: string,
+) {
   const bodyWidth = radius * 1.7;
   const bodyHeight = radius * 1.3;
   const bodyTop = cy - radius * 0.15;
-  const accent = "#6fc3d9";
 
   ctx.beginPath();
   ctx.moveTo(cx - bodyWidth / 2 - radius * 0.15, bodyTop);
   ctx.lineTo(cx, bodyTop - radius * 0.9);
   ctx.lineTo(cx + bodyWidth / 2 + radius * 0.15, bodyTop);
   ctx.closePath();
-  ctx.fillStyle = "#1a1c21";
+  ctx.fillStyle = panelBg;
   ctx.fill();
   ctx.strokeStyle = accent;
   ctx.lineWidth = 1.2;
@@ -186,7 +200,7 @@ function drawHomeMarker(ctx: CanvasRenderingContext2D, cx: number, cy: number, r
 
   ctx.beginPath();
   ctx.rect(cx - bodyWidth / 2, bodyTop, bodyWidth, bodyHeight);
-  ctx.fillStyle = "#131418";
+  ctx.fillStyle = panelBg2;
   ctx.fill();
   ctx.stroke();
 
@@ -255,6 +269,54 @@ function heatColor(intensity: number): [number, number, number] {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+/** Turns a resolved "#rrggbb" custom-property value into an "r, g, b" triple
+ * Canvas rgba() strings can interpolate an alpha into - every theme's own
+ * tokens (App.css and the premium deck sheets) are written as hex literals,
+ * so getComputedStyle always hands this exactly that format back. Falls
+ * back to a neutral mid-gray rather than throwing if a future token is
+ * ever written as rgb()/named color instead. */
+function hexToRgbTriple(hex: string): string {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (!match) return "150, 150, 150";
+  return `${parseInt(match[1], 16)}, ${parseInt(match[2], 16)}, ${parseInt(match[3], 16)}`;
+}
+
+interface MapThemeColors {
+  inkColor: string;
+  accentHex: string;
+  accentRgb: string;
+  dangerRgb: string;
+  gateRgb: string;
+  gateHex: string;
+  homeRoofBg: string;
+  homeBodyBg: string;
+}
+
+/** Every value draw() needs from the active theme, resolved in one batch.
+ * Called once on mount and again only when the theme actually changes (see
+ * the THEME_CHANGE_EVENT listener below) - NOT from inside draw() itself.
+ * draw() runs on every animation frame while a kill pulse is active
+ * (requestAnimationFrame-driven, see requestDraw/ensureAnimating), and
+ * getComputedStyle() forces a style recalculation - calling it 6 times
+ * every frame was the actual cause of the pulse rings looking like they
+ * were stuttering/lagging slightly instead of blinking smoothly, not
+ * anything about the pulse math itself. */
+function resolveThemeColors(): MapThemeColors {
+  const rootStyle = getComputedStyle(document.documentElement);
+  const accentHex = rootStyle.getPropertyValue("--accent").trim() || "#6fc3d9";
+  const gateHex = rootStyle.getPropertyValue("--gate").trim() || "#f0c04a";
+  return {
+    inkColor: rootStyle.getPropertyValue("--text").trim() || "#e6ecf5",
+    accentHex,
+    accentRgb: hexToRgbTriple(accentHex),
+    dangerRgb: hexToRgbTriple(rootStyle.getPropertyValue("--danger").trim() || "#e0685f"),
+    gateRgb: hexToRgbTriple(rootStyle.getPropertyValue("--gate").trim() || "#d9a35b"),
+    gateHex,
+    homeRoofBg: rootStyle.getPropertyValue("--bg-elevated-2").trim() || "#1a1c21",
+    homeBodyBg: rootStyle.getPropertyValue("--bg-elevated").trim() || "#131418",
+  };
 }
 
 /** System label size/spacing at a given zoom level - grows from 11px at the
@@ -478,8 +540,19 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const structuresBySystemRef = useRef<Map<number, PlayerStructureInfo[]>>(new Map());
   const heatMapRef = useRef<Map<number, SystemHeat>>(new Map());
   const animFrameRef = useRef<number | null>(null);
+  const rafPulseIdRef = useRef<number | null>(null);
   const drawScheduledRef = useRef(false);
+  const themeColorsRef = useRef<MapThemeColors>(resolveThemeColors());
+  /** Premium-only targeting HUD: the live grid-position readout is written
+   * directly to the DOM on every mousemove (a ref + imperative textContent,
+   * not React state) since it would otherwise fire a re-render on every
+   * pixel of mouse movement - the same per-frame-cost lesson as the canvas
+   * draw loop itself, just for a DOM node instead of a canvas. */
+  const coordsHudRef = useRef<HTMLDivElement>(null);
+  const lockOnKeyRef = useRef(0);
 
+  const [theme] = useTheme();
+  const premium = isPremiumTheme(theme);
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -501,6 +574,13 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * click. */
   const [pinHover, setPinHover] = useState<{ characterName: string; kind: "home" | "location"; clientX: number; clientY: number } | null>(null);
   const hoveredPinKeyRef = useRef<string | null>(null);
+  /** Premium-only "target lock" HUD - four bracket corners that snap onto
+   * whatever system was just clicked, at the exact screen position of the
+   * click (the same clientX/clientY the pinned tooltip above already
+   * anchors to), then hold there highlighting the current selection. key
+   * increments on every click so re-selecting the same system still
+   * restarts the converge animation instead of it silently no-op'ing. */
+  const [lockOn, setLockOn] = useState<{ clientX: number; clientY: number; key: number } | null>(null);
   const [topActivity, setTopActivity] = useState<{ systems: TopActivityEntry[]; regions: TopActivityEntry[] }>({
     systems: [],
     regions: [],
@@ -520,6 +600,20 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   useEffect(() => {
     const interval = setInterval(() => setProximityClock(Date.now()), PROXIMITY_EXPIRY_CHECK_MS);
     return () => clearInterval(interval);
+  }, []);
+  // Re-resolves the cached theme colors draw() reads from ONLY when the
+  // theme actually changes (see MapThemeColors/resolveThemeColors above) -
+  // requestDraw() forces one immediate repaint with the new colors rather
+  // than waiting for the next kill-pulse frame, which might not come for a
+  // while (or ever, if nothing's currently pulsing).
+  useEffect(() => {
+    function handleThemeChange() {
+      themeColorsRef.current = resolveThemeColors();
+      requestDraw();
+    }
+    window.addEventListener(THEME_CHANGE_EVENT, handleThemeChange);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, handleThemeChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const reportError = useErrorReporter();
   const { kills } = useRecentActivity();
@@ -721,16 +815,24 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     const dataMaxY = (height - translateY + marginPx) / scale;
     const inView = (x: number, y: number) => x >= dataMinX && x <= dataMaxX && y >= dataMinY && y <= dataMaxY;
 
-    // Resolved once per draw rather than baked into literal rgba() strings:
-    // everything below that used to assume "white/near-white always reads
-    // fine, the canvas is always a dark background" (jump lines, selection
-    // rings, the selected-system pin, system/region name labels) went
-    // invisible the moment the Light theme's near-white --bg made that
-    // assumption false. --text is already the correct high-contrast ink for
-    // the active theme's background, so reusing it here (with globalAlpha
-    // standing in for what used to be the rgba() alpha channel) keeps every
-    // one of these legible on every theme, not just the original dark one.
-    const inkColor = getComputedStyle(document.documentElement).getPropertyValue("--text").trim() || "#e6ecf5";
+    // Read from the cache resolved on mount/theme-change (see
+    // themeColorsRef/resolveThemeColors above), NOT via getComputedStyle
+    // here - draw() runs on every animation frame while a kill pulse is
+    // active, and getComputedStyle forces a style recalculation; calling
+    // it several times per frame was what made the pulse rings look like
+    // they were stuttering instead of blinking smoothly. --text is the
+    // correct high-contrast ink for the active theme's background, used
+    // below (with globalAlpha standing in for what used to be the rgba()
+    // alpha channel) for jump lines, selection rings, the selected-system
+    // pin, and system/region name labels - all of which used to assume
+    // "the canvas is always a dark background" and went invisible the
+    // moment the Light theme's near-white --bg made that assumption false.
+    // accent/danger/gate replace what constellation hulls, the
+    // ticker-hover ring, the active-kill pulse, and the current-location
+    // marker used to have hardcoded to the original dark theme's own
+    // cyan/red/gold - visibly wrong (a cyan ring on an amber-and-rust
+    // Bulkhead map) on every other theme.
+    const { inkColor, accentHex, accentRgb, dangerRgb, gateRgb, gateHex, homeRoofBg, homeBodyBg } = themeColorsRef.current;
     // Dark-on-light reads far fainter than the equivalent light-on-dark at
     // the same alpha (the original 0.08/0.75/0.85 numbers were tuned by eye
     // against the dark theme's near-black canvas) - low enough on Light that
@@ -769,9 +871,9 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         ctx.moveTo(toScreenX(hull[0].x), toScreenY(hull[0].y));
         for (let i = 1; i < hull.length; i++) ctx.lineTo(toScreenX(hull[i].x), toScreenY(hull[i].y));
         ctx.closePath();
-        ctx.fillStyle = "rgba(111, 195, 217, 0.035)";
+        ctx.fillStyle = `rgba(${accentRgb}, 0.035)`;
         ctx.fill();
-        ctx.strokeStyle = "rgba(111, 195, 217, 0.16)";
+        ctx.strokeStyle = `rgba(${accentRgb}, 0.16)`;
         ctx.lineWidth = 1;
         ctx.stroke();
       }
@@ -877,7 +979,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           (isSelected ? dotRadius * 2.2 : isCurrentLocation ? dotRadius * 2 : isHovered ? dotRadius * 1.7 : dotRadius) + heatBump;
         ctx.beginPath();
         ctx.arc(sx, sy, baseRadius + 2.5, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(255, 90, 60, ${clamp(borderWave, 0.15, 1)})`;
+        ctx.strokeStyle = `rgba(${dangerRgb}, ${clamp(borderWave, 0.15, 1)})`;
         ctx.lineWidth = 1.2 + borderWave * 1.6;
         ctx.stroke();
       }
@@ -889,12 +991,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       if (isTickerHovered) {
         ctx.beginPath();
         ctx.arc(sx, sy, 11, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(111, 195, 217, 0.95)";
+        ctx.strokeStyle = `rgba(${accentRgb}, 0.95)`;
         ctx.lineWidth = 2;
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(sx, sy, 17, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(111, 195, 217, 0.45)";
+        ctx.strokeStyle = `rgba(${accentRgb}, 0.45)`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
@@ -907,10 +1009,10 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       if (isCurrentLocation) {
         ctx.beginPath();
         ctx.arc(sx, sy, 9, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(240, 192, 74, 0.6)";
+        ctx.strokeStyle = `rgba(${gateRgb}, 0.6)`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
-        drawPin(ctx, sx, sy - dotRadius * 2 - 3, 7, "#f0c04a");
+        drawPin(ctx, sx, sy - dotRadius * 2 - 3, 7, gateHex);
       }
 
       // An actual pin (not just the ring above) so the clicked/selected
@@ -933,7 +1035,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         let px = sx + dotRadius + markerRadius + 3;
         const py = sy - dotRadius - markerRadius - 3;
         for (const pin of homePins) {
-          drawHomeMarker(ctx, px, py, markerRadius, characterInitials(pin.character.name));
+          drawHomeMarker(ctx, px, py, markerRadius, characterInitials(pin.character.name), accentHex, homeRoofBg, homeBodyBg);
           renderedPinsRef.current.push({ px, py, radius: markerRadius, character: pin.character, kind: "home" });
           px += markerRadius * 2 + 3;
         }
@@ -1091,44 +1193,56 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     setTimeout(runOnce, 120);
   }
 
-  // Driven by setInterval rather than a self-rescheduling requestAnimationFrame:
-  // Chromium (and WebView2, which VESPER's whole UI runs on) throttles a
-  // recursive rAF loop down to near-zero the moment the window loses OS
-  // focus, even while it stays fully visible - exactly the situation VESPER
-  // is normally used in, sitting on a second monitor next to the actual EVE
-  // client. That made the pulse silently stall until the next click or
-  // mousemove (each of which calls requestDraw() for one single fresh
-  // frame, which looks like "it only updates when I touch it" - a real bug
-  // report, not a misreading of intended behavior). setInterval keeps
-  // running at its configured rate regardless of focus, since Chromium only
-  // throttles it for a fully hidden/backgrounded tab, which never applies
-  // to a single-window desktop app.
+  // Two loops running side by side, each covering the other's weak spot:
   //
-  // Ticks at 150ms (not every frame) deliberately - the pulse itself is a
-  // slow ~1.9s sine breathe (see pulseWave), so this is already more
-  // samples than the eye can tell apart from 60fps, and the lighter tick
-  // rate matters for a second reason beyond CPU use: EVE Online itself is
-  // usually the actual foreground app VESPER sits behind, and a real,
-  // demanding 3D game competing for the same CPU cores can starve a
-  // background process of scheduled time regardless of any of Chromium's
-  // own throttling settings - that's a step below anything a browser flag
-  // can fix. A cheaper, less frequent tick is simply more likely to still
-  // get a CPU slice under that kind of real contention than a 20fps one.
+  // 1. A self-rescheduling requestAnimationFrame loop (rafPulseIdRef) - the
+  //    actual smoothness driver, ticking at whatever rate the display
+  //    refreshes (60/120/144Hz), which is what a ~1.9s sine breathe (see
+  //    pulseWave) needs to read as continuous motion instead of visibly
+  //    stepping. An earlier version of this used ONLY a 150ms setInterval
+  //    (~6.7 ticks/sec - only ~13 samples across the whole 1.9s cycle),
+  //    reasoned at the time to be "more than the eye can tell apart from
+  //    60fps" - a real, reported-as-choppy regression proved that
+  //    assumption wrong.
+  // 2. The original setInterval, kept as a low-frequency anti-stall
+  //    safety net, not the primary driver anymore. Chromium (and WebView2,
+  //    which VESPER's whole UI runs on) throttles a recursive rAF loop
+  //    down to near-zero the moment the window loses OS focus, even while
+  //    it stays fully visible - exactly the situation VESPER is normally
+  //    used in, sitting on a second monitor next to the actual EVE client.
+  //    Relying on rAF alone made the pulse silently stall until the next
+  //    click or mousemove. setInterval keeps running at its configured
+  //    rate regardless of focus (Chromium only throttles it for a fully
+  //    hidden/backgrounded tab, which never applies to a single-window
+  //    desktop app), so losing focus now only drops the pulse from
+  //    "smooth" to "still visibly alive at ~6.7fps" instead of "frozen".
+  //
+  // Both stop rescheduling themselves independently once nothing is
+  // actively pulsing, and either one restarts the other on the next real
+  // kill via ensureAnimating's own guard.
   function ensureAnimating() {
-    if (animFrameRef.current !== null) return;
-    animFrameRef.current = window.setInterval(() => {
-      const now = Date.now();
-      draw();
-      // Stops (falls back to on-demand redraws) once nothing's actively
-      // pulsing, so an empty or merely-still-warm map isn't burning cycles
-      // for nothing. Older, non-pulsing heat still renders fine on any
-      // triggered redraw - it just doesn't need a continuous loop to look
-      // right.
-      if (!hasRecentHeat(heatMapRef.current, now)) {
-        window.clearInterval(animFrameRef.current!);
-        animFrameRef.current = null;
-      }
-    }, 150);
+    if (animFrameRef.current === null) {
+      animFrameRef.current = window.setInterval(() => {
+        const now = Date.now();
+        draw();
+        if (!hasRecentHeat(heatMapRef.current, now)) {
+          window.clearInterval(animFrameRef.current!);
+          animFrameRef.current = null;
+        }
+      }, 150);
+    }
+
+    if (rafPulseIdRef.current === null) {
+      const tick = () => {
+        draw();
+        if (hasRecentHeat(heatMapRef.current, Date.now())) {
+          rafPulseIdRef.current = requestAnimationFrame(tick);
+        } else {
+          rafPulseIdRef.current = null;
+        }
+      };
+      rafPulseIdRef.current = requestAnimationFrame(tick);
+    }
   }
 
   /** Recomputes heat/top-activity off the backend's own last-hour aggregate
@@ -1158,6 +1272,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   useEffect(() => {
     return () => {
       if (animFrameRef.current !== null) window.clearInterval(animFrameRef.current);
+      if (rafPulseIdRef.current !== null) cancelAnimationFrame(rafPulseIdRef.current);
     };
   }, []);
 
@@ -1346,6 +1461,22 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         hoveredPinKeyRef.current = null;
         setPinHover(null);
       }
+      if (coordsHudRef.current) coordsHudRef.current.textContent = "";
+    }
+
+    /** Written directly to the DOM (see coordsHudRef's own comment) rather
+     * than through setState - this runs on every mousemove, and a HUD
+     * flavor readout isn't worth a React re-render per pixel of cursor
+     * travel. Divides the real (huge, meters-scale) map coordinates down to
+     * a readable few digits - still real, panning/zooming actually changes
+     * the numbers, just not claiming a literal unit like "km" it can't back up. */
+    function updateCoordsHud(clientX: number, clientY: number) {
+      if (!coordsHudRef.current) return;
+      const rect = canvas!.getBoundingClientRect();
+      const { scale, translateX, translateY } = transformRef.current;
+      const dataX = (clientX - rect.left - translateX) / scale;
+      const dataY = (clientY - rect.top - translateY) / scale;
+      coordsHudRef.current.textContent = `GRID ${(dataX / 1e15).toFixed(2)} / ${(dataY / 1e15).toFixed(2)}`;
     }
 
     function handleMouseMove(e: MouseEvent) {
@@ -1364,6 +1495,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           translateY: transformRef.current.translateY + dy,
         };
         requestDraw();
+        updateCoordsHud(e.clientX, e.clientY);
         return;
       }
 
@@ -1372,6 +1504,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         clearHover();
         return;
       }
+      updateCoordsHud(e.clientX, e.clientY);
       const pin = pickPin(e.clientX, e.clientY);
       const pinKey = pin ? `${pin.kind}:${pin.character.id}` : null;
       if (pinKey !== hoveredPinKeyRef.current) {
@@ -1420,6 +1553,8 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
             if (prev?.system.id === picked.id) return null;
             return { system: picked, clientX: e.clientX, clientY: e.clientY };
           });
+          lockOnKeyRef.current += 1;
+          setLockOn(picked ? { clientX: e.clientX, clientY: e.clientY, key: lockOnKeyRef.current } : null);
           requestDraw();
         }
       }
@@ -1621,7 +1756,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                       type="button"
                       className={`location-tracker-radius-btn${radius === option.value ? " location-tracker-radius-active" : ""}`}
                       onClick={() => setRadius(option.value)}
-                      title={option.value === "region" ? "Track the whole region" : `Track ${option.value} jumps out`}
+                      title={radiusTitle(option.value)}
                     >
                       {option.label}
                     </button>
@@ -1640,7 +1775,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                 <TickerRow
                   key={kill.killmail_id}
                   kill={kill}
-                  isAlert
+                  severity={currentSystem?.id === kill.system_id ? "system" : "nearby"}
                   isCurrentLocation={currentSystem?.id === kill.system_id}
                   onSelect={() => onSelectKill(kill.killmail_id)}
                   onSetLocation={() => setCurrentSystem({ id: kill.system_id, name: kill.system_name })}
@@ -1662,7 +1797,9 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                 <TickerRow
                   key={kill.killmail_id}
                   kill={kill}
-                  isAlert={alertKillIds.has(kill.killmail_id)}
+                  severity={
+                    !alertKillIds.has(kill.killmail_id) ? null : currentSystem?.id === kill.system_id ? "system" : "nearby"
+                  }
                   isCurrentLocation={currentSystem?.id === kill.system_id}
                   onSelect={() => onSelectKill(kill.killmail_id)}
                   onSetLocation={() => setCurrentSystem({ id: kill.system_id, name: kill.system_name })}
@@ -1801,6 +1938,34 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
               <canvas ref={canvasRef} className="map-canvas" />
             )}
 
+            {premium && (
+              <>
+                {/* Targeting-scope frame - four corner brackets plus a
+                    center reticle, purely decorative (aria-hidden), giving
+                    the whole viewport a "looking through a sensor scope"
+                    read instead of "a rectangle with a canvas in it". */}
+                <div className="map-hud-frame" aria-hidden="true">
+                  <span className="map-hud-corner map-hud-corner-tl" />
+                  <span className="map-hud-corner map-hud-corner-tr" />
+                  <span className="map-hud-corner map-hud-corner-bl" />
+                  <span className="map-hud-corner map-hud-corner-br" />
+                  <span className="map-hud-reticle" />
+                </div>
+                {/* Old-CRT viewport: a soft bright band that slowly rolls
+                    down the screen (a bad vertical-hold), plus interference
+                    lines that flash in sync with .map-canvas-wrap's own
+                    brightness-flicker animation (see premium-structure.css -
+                    both share the same keyframe percentages against the
+                    same duration so they land together, not two independent
+                    effects that happen to overlap). */}
+                <span className="map-hud-scanroll" aria-hidden="true" />
+                <span className="map-hud-staticlines" aria-hidden="true" />
+                {/* Live cursor position, written directly to this node on
+                    every mousemove - see coordsHudRef/updateCoordsHud. */}
+                <div ref={coordsHudRef} className="map-hud-coords" aria-hidden="true" />
+              </>
+            )}
+
             {legendOpen && (
               <div className="map-legend">
                 <div className="map-legend-header">
@@ -1874,6 +2039,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         </div>
       )}
 
+      {premium && lockOn && (
+        <div key={lockOn.key} className="map-lock-on" style={{ left: lockOn.clientX, top: lockOn.clientY }} aria-hidden="true">
+          <span className="map-lock-on-corner map-lock-on-corner-tl" />
+          <span className="map-lock-on-corner map-lock-on-corner-tr" />
+          <span className="map-lock-on-corner map-lock-on-corner-bl" />
+          <span className="map-lock-on-corner map-lock-on-corner-br" />
+        </div>
+      )}
+
       {activeHover && (
         <div
           className={`map-hover-tooltip${pinnedHover ? " map-hover-tooltip-pinned" : ""}`}
@@ -1928,7 +2102,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
 interface TickerRowProps {
   kill: KillEntry;
-  isAlert: boolean;
+  /** null: not within the tracked radius at all, no highlight. "system": the
+   * kill landed in the exact system currently being tracked - the most
+   * urgent case, since it means something's actively happening right where
+   * the character is. "nearby": within the tracked radius but a different
+   * system - still worth knowing about, less immediately dangerous. */
+  severity: "system" | "nearby" | null;
   isCurrentLocation: boolean;
   onSelect: () => void;
   onSetLocation: () => void;
@@ -1940,12 +2119,12 @@ interface TickerRowProps {
 /** A single ticker entry - shared by both the proximity feed and the general
  * feed below it, since a proximity kill renders identically in each, just in
  * a different list. */
-function TickerRow({ kill, isAlert, isCurrentLocation, onSelect, onSetLocation, onShowOnMap, onMouseEnter, onMouseLeave }: TickerRowProps) {
+function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation, onShowOnMap, onMouseEnter, onMouseLeave }: TickerRowProps) {
   return (
     <div
       role="button"
       tabIndex={0}
-      className={`map-ticker-row${isAlert ? " map-ticker-row-alert" : ""}`}
+      className={`map-ticker-row${severity ? ` map-ticker-row-alert-${severity}` : ""}`}
       onClick={onSelect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

@@ -17,6 +17,7 @@ import { formatIsk, typeIconUrl } from "../lib/format";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 import MarketBrowser, { type MarketItemRef } from "./MarketBrowser";
+import MarketCompareTab from "./MarketCompareTab";
 import ItemDatabase from "./ItemDatabase";
 import Appraisal from "./Appraisal";
 import Screener from "./Screener";
@@ -28,10 +29,22 @@ import { HELP_CONTENT } from "../lib/helpContent";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
 
-type WalletMarketTab = "browser" | "itemdb" | "appraisal" | "screener" | "lpstore" | "contracts" | "insurance" | "wallet" | "transactions" | "orders";
+type WalletMarketTab =
+  | "browser"
+  | "marketcompare"
+  | "itemdb"
+  | "appraisal"
+  | "screener"
+  | "lpstore"
+  | "contracts"
+  | "insurance"
+  | "wallet"
+  | "transactions"
+  | "orders";
 
 const TABS: { id: WalletMarketTab; label: string }[] = [
   { id: "browser", label: "Market Browser" },
+  { id: "marketcompare", label: "Market Compare" },
   { id: "itemdb", label: "Item Database" },
   { id: "appraisal", label: "Appraisal" },
   { id: "screener", label: "Screener" },
@@ -285,6 +298,8 @@ function WalletMarketPage({
             initialItem={initialMarketItem}
             onConsumeInitialItem={onConsumeInitialMarketItem}
           />
+        ) : tab === "marketcompare" ? (
+          <MarketCompareTab />
         ) : tab === "itemdb" ? (
           <ItemDatabase onSelectShip={onFitShip} />
         ) : tab === "appraisal" ? (
@@ -357,8 +372,8 @@ function WalletMarketPage({
                         </td>
                         <td>{c.title || "—"}</td>
                         <td>{c.issuer_corporation_name}</td>
-                        <td className="data-table-numeric">{formatIsk(c.contract_type === "courier" ? c.reward : c.price)}</td>
-                        <td className="data-table-numeric">{c.contract_type === "courier" ? formatIsk(c.collateral) : "—"}</td>
+                        <td className="data-table-numeric market-stat-value-isk">{formatIsk(c.contract_type === "courier" ? c.reward : c.price)}</td>
+                        <td className="data-table-numeric market-stat-value-isk">{c.contract_type === "courier" ? formatIsk(c.collateral) : "—"}</td>
                         <td className="data-table-numeric">{c.volume.toLocaleString()} m³</td>
                         <td>
                           {c.contract_type === "courier" && c.end_location_name
@@ -419,7 +434,7 @@ function WalletMarketPage({
                         <td>
                           <span className={`data-table-tag${o.status === "Active" ? "" : " data-table-tag-neutral"}`}>{o.status}</span>
                         </td>
-                        <td className="data-table-numeric">{formatIsk(o.price)}</td>
+                        <td className={`data-table-numeric ${o.is_buy_order ? "wallet-amount-negative" : "wallet-amount-positive"}`}>{formatIsk(o.price)}</td>
                         <td className="data-table-numeric">
                           {fmtCount(o.volume_remain)} / {fmtCount(o.volume_total)}
                         </td>
@@ -471,7 +486,7 @@ function WalletMarketPage({
                           {e.amount >= 0 ? "+" : ""}
                           {formatIsk(e.amount)}
                         </td>
-                        <td className="data-table-numeric">{e.balance != null ? formatIsk(e.balance) : "—"}</td>
+                        <td className="data-table-numeric market-stat-value-isk">{e.balance != null ? formatIsk(e.balance) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -502,11 +517,11 @@ function WalletMarketPage({
                     </div>
                     <div className="market-stat-card">
                       <span className="market-stat-label">Matched Buy Cost</span>
-                      <span className="market-stat-value">{formatIsk(realizedPnl.matchedBuyCost)}</span>
+                      <span className="market-stat-value wallet-amount-negative">{formatIsk(realizedPnl.matchedBuyCost)}</span>
                     </div>
                     <div className="market-stat-card">
                       <span className="market-stat-label">Matched Sell Revenue</span>
-                      <span className="market-stat-value">{formatIsk(realizedPnl.matchedSellRevenue)}</span>
+                      <span className="market-stat-value wallet-amount-positive">{formatIsk(realizedPnl.matchedSellRevenue)}</span>
                     </div>
                     {realizedPnl.unmatchedSellQuantity > 0 && (
                       <div
@@ -514,7 +529,7 @@ function WalletMarketPage({
                         title="Sold with no matching buy in this transaction history - likely mined, manufactured, looted, or bought before this history started. Not counted in Realized P&L since its real cost is unknown."
                       >
                         <span className="market-stat-label">Unmatched Sells</span>
-                        <span className="market-stat-value">{formatIsk(realizedPnl.unmatchedSellValue)}</span>
+                        <span className="market-stat-value wallet-amount-positive">{formatIsk(realizedPnl.unmatchedSellValue)}</span>
                       </div>
                     )}
                   </div>
@@ -547,7 +562,7 @@ function WalletMarketPage({
                           </span>
                         </td>
                         <td className="data-table-numeric">{fmtCount(t.quantity)}</td>
-                        <td className="data-table-numeric">{formatIsk(t.unit_price)}</td>
+                        <td className={`data-table-numeric ${t.is_buy ? "wallet-amount-negative" : "wallet-amount-positive"}`}>{formatIsk(t.unit_price)}</td>
                         <td className={`data-table-numeric ${t.is_buy ? "wallet-amount-negative" : "wallet-amount-positive"}`}>
                           {t.is_buy ? "-" : "+"}
                           {formatIsk(t.quantity * t.unit_price)}

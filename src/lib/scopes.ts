@@ -26,6 +26,8 @@ export const DASHBOARD_SCOPES = [
   "esi-contracts.read_character_contracts.v1",
   "esi-industry.read_character_jobs.v1",
   "esi-mail.read_mail.v1",
+  "esi-mail.send_mail.v1",
+  "esi-mail.organize_mail.v1",
   "esi-characters.read_notifications.v1",
   "esi-planets.manage_planets.v1",
   "esi-calendar.read_calendar_events.v1",

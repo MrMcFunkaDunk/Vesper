@@ -1,0 +1,65 @@
+/* ============================================================================
+   BULKHEAD - deck-specific geometry
+   ============================================================================
+   Signature: thick plates, hazard-stripe bands, breaker-cabinet nav, a worn
+   porthole vignette. Heaviest borders and chunkiest construction of the
+   three decks - this is the one that should feel bolted together by hand.
+   ============================================================================ */
+
+/* Hazard-stripe band across the page header's top edge - the one place in
+   the whole deck that gets the literal yellow/black warning tape, used
+   once, deliberately, rather than scattered everywhere. */
+:root[data-theme="bulkhead"] .dashboard-header {
+  border-top: 6px solid;
+  border-image: repeating-linear-gradient(135deg, var(--deck-hazard) 0 10px, var(--deck-hazard-dark) 10px 20px) 6;
+}
+
+/* Breaker-cabinet sidebar - a thicker frame than the shared 2px, and a
+   visible seam between the brand block and the nav list, like a hinged
+   cabinet door. */
+:root[data-theme="bulkhead"] .sidebar {
+  border-right-width: 4px;
+}
+
+:root[data-theme="bulkhead"] .brand-divider {
+  height: 3px;
+  background: repeating-linear-gradient(90deg, var(--deck-rivet) 0 4px, transparent 4px 8px);
+}
+
+/* Chunky, chamfered nav items - a visible notch on the outer edge, like a
+   physical breaker switch mounted in a rack. */
+:root[data-theme="bulkhead"] .nav-item {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%);
+}
+
+/* Stat cards and panels get a visible rivet at each corner - stamped
+   sheet metal, not smooth plate. */
+:root[data-theme="bulkhead"] .market-stat-card,
+:root[data-theme="bulkhead"] .dashboard-header {
+  background-image: radial-gradient(circle 2px at 8px 8px, var(--deck-rivet) 40%, transparent 41%),
+    radial-gradient(circle 2px at calc(100% - 8px) 8px, var(--deck-rivet) 40%, transparent 41%),
+    radial-gradient(circle 2px at 8px calc(100% - 8px), var(--deck-rivet) 40%, transparent 41%),
+    radial-gradient(circle 2px at calc(100% - 8px) calc(100% - 8px), var(--deck-rivet) 40%, transparent 41%);
+  background-color: var(--deck-plate);
+}
+
+/* Boot label - the ignition flash text (see premium-structure.css's
+   .main::before for the shared position/timing). */
+:root[data-theme="bulkhead"] .main::before {
+  content: "BUS CHECK // LINK OK";
+}
+
+/* Signature atmosphere - a worn, oily porthole vignette darkening toward
+   the edges, the "layered history/grime" principle applied to the whole
+   screen. */
+:root[data-theme="bulkhead"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  /* Above every normal panel/dropdown (max 200 elsewhere) but below the
+     update banner (9998), toast stack (9997), and the proximity-flash
+     kill alert (9999) - those three read clearly over this. */
+  z-index: 500;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.4) 100%);
+}

@@ -1,0 +1,59 @@
+/* ============================================================================
+   COLD BALLAST - deck-specific geometry
+   ============================================================================
+   Signature: narrow containment-tube framing, vertical accent rails
+   instead of Bulkhead's horizontal hazard bands, a CRT scanline raster.
+   Colder and thinner than Bulkhead - not simply Bulkhead recolored cyan.
+   ============================================================================ */
+
+/* Containment-tube ring - a double outline standing off from the panel
+   edge, like a pressure-vessel viewport, instead of a single border. */
+:root[data-theme="cold-ballast"] .server-status-badge,
+:root[data-theme="cold-ballast"] .capsuleers-online-badge,
+:root[data-theme="cold-ballast"] .account-trigger,
+:root[data-theme="cold-ballast"] .eve-time-clock,
+:root[data-theme="cold-ballast"] .location-tracker-current {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--bg), 0 0 0 2px var(--deck-frame);
+}
+
+/* Vertical accent rail on the header instead of Bulkhead's horizontal
+   hazard band - a thin illuminated measurement track running down the
+   left edge. */
+:root[data-theme="cold-ballast"] .dashboard-header {
+  border-left: 3px solid var(--accent);
+  box-shadow: inset 3px 0 8px -4px var(--accent), inset 1px 1px 0 var(--deck-bevel-light), inset -1px -1px 0 var(--deck-bevel-dark);
+}
+
+/* Stat cards read as vertical instrument columns - a top tick mark instead
+   of Bulkhead's corner rivets. */
+:root[data-theme="cold-ballast"] .market-stat-card {
+  border-top: 2px solid var(--accent);
+}
+
+/* Narrower, more clinical sidebar - a thin frame, no rivet texture, a
+   crisp single accent line under the brand block instead of Bulkhead's
+   hinged-seam rivet row. */
+:root[data-theme="cold-ballast"] .brand-divider {
+  height: 1px;
+  background: var(--deck-frame);
+  box-shadow: 0 0 6px var(--border-active);
+}
+
+/* Boot label. */
+:root[data-theme="cold-ballast"] .main::before {
+  content: "SYS.LINK — SYNC";
+}
+
+/* Signature atmosphere - the CRT raster running across the whole console,
+   fixed to the viewport (not the .shell background, which is mostly
+   covered by opaque panels) so it sits over every panel and table the way
+   a real glass tube's scanlines would sit over everything behind it. */
+:root[data-theme="cold-ballast"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  pointer-events: none;
+  background: repeating-linear-gradient(rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.14) 2px 4px);
+  mix-blend-mode: multiply;
+}

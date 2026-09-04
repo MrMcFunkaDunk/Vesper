@@ -14,6 +14,8 @@ import {
 } from "../lib/eve";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { getAllCachedOverviews, setCachedOverview, isTransientServerError } from "../lib/overviewCache";
+import { useTheme, isPremiumTheme } from "../hooks/useTheme";
+import PremiumDashboard from "./premium/PremiumDashboard";
 
 interface DashboardProps {
   session: Session;
@@ -30,6 +32,7 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
   const [comparing, setComparing] = useState(false);
   const cancelledRef = useRef(false);
   const reportError = useErrorReporter();
+  const [theme] = useTheme();
   const characterIds = session.characters.map((c) => c.id).join(",");
 
   function fetchOverview(character: SessionCharacter) {
@@ -117,9 +120,36 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
     return <CharacterComparisonView characters={session.characters} onClose={() => setComparing(false)} />;
   }
 
+  // Same data, same handlers, a completely different composition - see
+  // PremiumDashboard's own header comment for why this branches at render
+  // rather than duplicating any of the fetching/effects above it.
+  if (isPremiumTheme(theme)) {
+    return (
+      <main className="main main-dashboard">
+        <PremiumDashboard
+          characters={session.characters}
+          overviews={overviews}
+          activeCharacterName={activeCharacter.name}
+          pending={pending}
+          onOpenDetail={onOpenDetail}
+          onAccountAction={handleAccountAction}
+          onCancel={handleCancel}
+          onCompare={() => setComparing(true)}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="main main-dashboard">
-      <div className="dashboard">
+      {/* dashboard-home distinguishes this specific page's wrapper from the
+          three other pages (Industry, Mining, Multiboxing) that reuse the
+          same generic .dashboard/.dashboard-header classes for their own,
+          differently-structured layouts - the premium command-console grid
+          in premium-structure.css targets this page only, by this class,
+          rather than risking a layout meant for character cards + two
+          tickers also landing on pages with completely different content. */}
+      <div className="dashboard dashboard-home">
         <div className="dashboard-header">
           <p className="eyebrow">Operations Overview</p>
           <h2>Welcome back, {activeCharacter.name}</h2>

@@ -1,0 +1,453 @@
+/* ============================================================================
+   PREMIUM INSTRUMENTS - the hardware component library (Annunciator,
+   MechanicalButton, TelemetryRail, ScreenHousing) and the Premium
+   Dashboard's own composition.
+   ============================================================================
+   Unlike premium-structure.css, none of the selectors here are scoped
+   behind :root[data-theme="bulkhead"|"cold-ballast"|"command-deck"] - and
+   that's deliberate, not an oversight. Every class name in this file
+   (.annunciator, .mechanical-button, .telemetry-rail, .screen-housing,
+   .premium-dashboard*) is brand new and only ever rendered by the
+   components in src/components/premium/, which in turn only ever get
+   mounted from behind an isPremiumTheme(theme) check (see Dashboard.tsx).
+   A standard theme's DOM never contains these classes at all, so there's
+   nothing for these rules to accidentally match - the safety property
+   premium-structure.css's scoping exists for is already guaranteed here
+   by which components exist, not by the selectors. The colors still
+   correctly vary per deck because every value below reads from the same
+   set of tokens premium-tokens.css sets (the --deck- family, --accent,
+   --success, and so on), and those resolve to whichever theme is actually
+   active through ordinary
+   cascade inheritance - no per-deck selector repetition needed.
+   ============================================================================ */
+
+/* ---- Nav rack channel tag (Sidebar.tsx) ----
+   A small corner badge, not an inline flex item before the icon - the
+   sidebar is only 248px wide and several nav labels ("Path & Wormhole
+   Tracker", "Planetary Industry") already use most of that at the
+   uppercase-and-tracked size premium labels get, so competing for
+   horizontal space here would risk wrapping/clipping real labels just to
+   fit a decorative tag. Anchored on .nav-item's own position: relative
+   (already set by premium-structure.css). */
+.nav-item-channel {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.nav-item-channel-code {
+  color: var(--accent);
+}
+
+/* ---- Annunciator ---- */
+
+.annunciator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  background: var(--deck-cavity);
+  border: 1px solid var(--deck-frame);
+}
+
+.annunciator-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.annunciator-on .annunciator-label {
+  color: var(--success);
+}
+
+.annunciator-warn .annunciator-label {
+  color: var(--warning);
+}
+
+.annunciator-danger .annunciator-label {
+  color: var(--danger);
+}
+
+/* ---- Mechanical Button ----
+   A heavier, more deliberate control than the generic press-and-lock every
+   <button> already gets (premium-structure.css) - reserved for a page's
+   actual primary actions. button.mechanical-button:not(:disabled) matches
+   that generic rule's own specificity
+   (:root[data-theme="x"] button:not(.nav-item):not(:disabled)) exactly,
+   and this file loads after premium-structure.css (see App.tsx), so on an
+   equal-specificity tie this one wins the cascade for the properties both
+   declare - deliberate, not incidental. */
+
+button.mechanical-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  background: linear-gradient(180deg, var(--deck-bezel) 0%, var(--deck-plate) 55%, var(--deck-cavity) 100%);
+  border: 2px solid var(--deck-frame);
+  border-top-color: var(--deck-bezel);
+  color: var(--text);
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+/* The heaviest control in the app - a taller shelf than the generic button
+   physics above (6px vs. 4px) and a wider ambient shadow, so a page's one
+   real primary action (Compare Skills, Reconnect) reads as visibly more
+   substantial than every other button around it, not just differently
+   colored. */
+button.mechanical-button:not(:disabled) {
+  box-shadow: 0 6px 0 var(--deck-cavity), 0 10px 16px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transform: translateY(0);
+  transition: transform 70ms linear, box-shadow 70ms linear, background 70ms linear;
+}
+
+button.mechanical-button:not(:disabled):hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--deck-bezel) 80%, white 12%) 0%, var(--deck-plate) 55%, var(--deck-cavity) 100%);
+}
+
+button.mechanical-button:not(:disabled):active {
+  background: linear-gradient(180deg, var(--deck-cavity) 0%, var(--deck-plate) 100%);
+  box-shadow: 0 0 0 var(--deck-cavity), inset 0 4px 8px rgba(0, 0, 0, 0.8);
+  transform: translateY(6px);
+  transition: transform 0ms, box-shadow 0ms, background 0ms;
+}
+
+/* button.mechanical-button.mechanical-button-primary, not just
+   .mechanical-button-primary - the base rule above sets border-color via
+   the `border` shorthand at (element+class) specificity, which beats a
+   bare single-class selector regardless of source order. Matching that
+   specificity here (element+class+class) is what actually lets the
+   variant's color win. */
+button.mechanical-button.mechanical-button-primary {
+  border-color: var(--accent);
+  box-shadow: 0 6px 0 var(--deck-cavity), 0 10px 16px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 16px var(--accent-soft);
+}
+
+button.mechanical-button.mechanical-button-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 22%, var(--deck-bezel)) 0%, var(--deck-plate) 55%, var(--deck-cavity) 100%);
+}
+
+button.mechanical-button.mechanical-button-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ---- Telemetry Rail ---- */
+
+.telemetry-rail {
+  display: flex;
+  flex-wrap: wrap;
+  background: var(--deck-plate);
+  border: 1px solid var(--deck-frame);
+}
+
+.telemetry-rail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 18px;
+  border-right: 1px solid var(--deck-frame);
+  min-width: 110px;
+}
+
+.telemetry-rail-item:last-child {
+  border-right: none;
+}
+
+.telemetry-rail-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.telemetry-rail-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  text-shadow: 0 0 4px currentColor;
+  font-variant-numeric: tabular-nums;
+  /* A CRT readout's brightness never sits perfectly steady - an
+     infrequent, brief hard dip (steps(), not a smooth fade - a real tube
+     doesn't ease) rather than a rhythmic pulse, since a repeating pulse
+     reads as "designed animation" while an irregular one reads as
+     "physical instability". animation-delay/-duration are staggered per
+     item below specifically so the five readouts drift in and out of
+     phase with each other over time instead of ever flickering in
+     unison, which would look like a choreographed effect instead of
+     monitor noise. @keyframes premium-crt-flicker itself lives in
+     premium-structure.css now, not here - it's shared with several
+     standard-theme classes (.status-chip-value, .eve-time-value, etc.)
+     that this unscoped file can't safely touch (see that file's own
+     "SHARED READOUT FLICKER" section for why this couldn't just be
+     scoped 3x per deck the same way those are). */
+  animation: premium-crt-flicker 7s steps(1, end) infinite;
+}
+
+.telemetry-rail-item:nth-child(1) .telemetry-rail-value {
+  animation-delay: 0s;
+}
+
+.telemetry-rail-item:nth-child(2) .telemetry-rail-value {
+  animation-duration: 6.2s;
+  animation-delay: 1.4s;
+}
+
+.telemetry-rail-item:nth-child(3) .telemetry-rail-value {
+  animation-duration: 8.1s;
+  animation-delay: 2.6s;
+}
+
+.telemetry-rail-item:nth-child(4) .telemetry-rail-value {
+  animation-duration: 6.9s;
+  animation-delay: 0.7s;
+}
+
+.telemetry-rail-item:nth-child(5) .telemetry-rail-value {
+  animation-duration: 7.6s;
+  animation-delay: 3.3s;
+}
+
+/* Deliberately gated on VESPER's own in-app Reduce Motion toggle only, NOT
+   the OS-level prefers-reduced-motion media query that every other
+   reduced-motion guard in this file (boot flicker, lamp blink, scan-tick
+   loading, degrade flicker) also respects. Confirmed on the dev machine
+   that prefers-reduced-motion: reduce is active at the OS level here
+   independent of any real motion sensitivity - the same finding this
+   session already made for the mineral ticker, and the same fix applies:
+   a lot of desktop users leave "show animations" off system-wide for
+   reasons unrelated to VESPER, so honoring only the in-app toggle (which
+   still fully disables this) is what actually lets the effect be seen by
+   someone who wants it. */
+body[data-reduce-motion="true"] .telemetry-rail-value {
+  animation: none;
+}
+
+/* ---- Screen Housing ----
+   The bezel + recessed-display construction layer: a raised console plane
+   (the title strip, --deck-plate) sitting above a darker recessed display
+   plane (--deck-cavity) - the "controls sit on the console plane, not
+   painted inside the display" distinction the brief calls essential. */
+
+.screen-housing {
+  display: flex;
+  flex-direction: column;
+  background: var(--deck-plate);
+  border: 2px solid var(--deck-frame);
+  box-shadow: inset 0 0 0 1px var(--deck-bevel-light);
+  /* A grid/flex item's automatic min-width defaults to its content's own
+     min-content size, not 0 - without this, a housing wrapping something
+     wide (the character grid, a ticker) would refuse to shrink even once
+     its own grid track (minmax(0, 1fr) above) is willing to, pushing the
+     whole row wider than the viewport instead of letting the content
+     inside reflow/wrap the way it already knows how to. */
+  min-width: 0;
+}
+
+/* height:100% belongs ONLY here, not on the bare .screen-housing above - it
+   exists so the three Premium Dashboard zones (sys state / capsuleer status
+   / alert bank) stretch to match each other's height in their CSS Grid row
+   (.premium-dashboard-zones, align-items: stretch by default). ScreenHousing
+   is a general-purpose wrapper reused well beyond that one grid now
+   (PremiumCharacterHeader, EntityStatsPanel, TopListsSidebar) - none of
+   those sit in a grid row with a sibling to stretch to, so an unscoped
+   height:100% there had nothing sane to resolve against and could inflate
+   against whatever definite height an ancestor further up the tree
+   happened to establish, instead of just sizing to its own content. */
+.premium-dashboard-zones .screen-housing {
+  height: 100%;
+}
+
+.screen-housing-title {
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--deck-frame);
+  background: var(--deck-cavity);
+}
+
+.screen-housing-display {
+  flex: 1;
+  padding: 12px;
+  background: var(--deck-cavity);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---- Premium Dashboard composition ----
+   "VESPER MAIN BRIDGE STATION" - a genuinely different arrangement from
+   the standard character-grid-plus-tickers stack, not the same layout
+   reskinned. Three zones side by side (sys state / capsuleer status /
+   alert bank), a telemetry rail, then two auxiliary monitors. */
+
+.premium-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.premium-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--deck-plate);
+  border: 2px solid var(--deck-frame);
+}
+
+.premium-dashboard-header h2 {
+  margin: 4px 0 2px;
+  font-family: var(--font-display);
+}
+
+.premium-dashboard-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.premium-dashboard-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.premium-dashboard-zones {
+  display: grid;
+  /* minmax(0, 1fr), not a bare 1fr - a bare 1fr grid track has an implicit
+     min-width of its content's own min-content size, and the character
+     grid inside this middle column has a hard 230px-per-card floor
+     (.character-grid's own minmax(230px, 1fr)). Without the explicit 0
+     floor here, that 230px refuses to shrink and forces the whole zones
+     row - and the page - wider than the viewport instead of just wrapping
+     the cards onto more rows the way .character-grid already knows how
+     to do once it's actually allowed to be narrow. */
+  grid-template-columns: 190px minmax(0, 1fr) 210px;
+  gap: var(--space-lg);
+  align-items: stretch;
+}
+
+.premium-dashboard-primary .character-grid {
+  margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .premium-dashboard-zones {
+    grid-template-columns: 1fr;
+  }
+}
+
+.premium-dashboard-monitors {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-lg);
+}
+
+@media (max-width: 900px) {
+  .premium-dashboard-monitors {
+    grid-template-columns: 1fr;
+  }
+}
+
+.premium-dashboard-monitor .screen-housing-display {
+  padding: 0;
+  /* The two monitor boxes sit in a CSS Grid row and stretch to match
+     whichever one is taller (grid's default align-items: stretch) - when
+     one ticker's content is shorter than its sibling's, its box ends up
+     taller than its own content needs, and the ticker's own horizontal
+     scrollbar (it scrolls internally, see .news-ticker-row) stays pinned
+     to the bottom of that shorter content instead of the bottom of the
+     box, leaving empty space below it. justify-content: flex-end pins the
+     actual content - and its scrollbar - to the bottom of the box instead. */
+  justify-content: flex-end;
+}
+
+/* LiveActivityTicker's cards are a deliberately wider/taller variant
+   everywhere else it's used (.news-ticker-card-wide - 340px and a 3-line
+   title clamp, vs NewsTicker's plain 260px/2-line cards) since activity
+   headlines tend to run longer. That's the right call when it's on its
+   own full-width row (the standard Dashboard still shows it that way),
+   but side by side with the News monitor here the size mismatch reads as
+   broken, not intentional - scoped back down to match only in this one
+   context, not for every other place .news-ticker-card-wide appears. */
+.premium-dashboard-monitor .news-ticker-card-wide {
+  flex-basis: 260px;
+}
+
+.premium-dashboard-monitor .news-ticker-card-wide .news-ticker-card-title {
+  -webkit-line-clamp: 2;
+}
+
+/* Width alone (flex-basis above) doesn't equalize HEIGHT - .news-ticker-
+   card's height is purely content-driven (no explicit height anywhere in
+   App.css), and a News card's extra .news-ticker-card-summary paragraph
+   (Activity cards have no summary at all, just a tag + title) makes it
+   taller than an Activity card by design, everywhere else these are
+   used. Forcing both to the same explicit height here, in this one
+   side-by-side context, is what actually makes them read as matching
+   boxes instead of two different-sized cards that happen to line up. */
+.premium-dashboard-monitor .news-ticker-card {
+  height: 148px;
+  overflow: hidden;
+}
+
+/* ---- Premium Character Detail header ----
+   PILOT ID plate - replaces .detail-header (a stacked identity card) with
+   a console readout: portrait/identity/reconnect on one row, a telemetry
+   rail for the ISK/SP/security/location figures, then an annunciator
+   strip for the two real boolean states (training, needs reauth). Nothing
+   below this in CharacterDetail.tsx changes - the character rail, tab bar,
+   and every tab's own content render exactly as they do under a standard
+   theme. */
+
+.premium-character-header-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.premium-character-portrait-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.premium-character-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.premium-character-identity h2 {
+  margin: 2px 0;
+  font-family: var(--font-display);
+}
+
+.premium-character-annunciators {
+  display: flex;
+  gap: 16px;
+}

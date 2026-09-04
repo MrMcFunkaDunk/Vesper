@@ -1,6 +1,8 @@
 import { formatIsk } from "../lib/format";
 import { searchSystem, type KillEntry, type TopList, type TopListEntry } from "../lib/kills";
 import type { SecurityBandFilters } from "../hooks/useSecurityBandFilters";
+import { useTheme, isPremiumTheme } from "../hooks/useTheme";
+import ScreenHousing from "./premium/ScreenHousing";
 import type { SystemSummary } from "./SystemKillboard";
 import type { CorporationSummary } from "./CorporationKillboard";
 import type { MarketItemRef } from "./MarketBrowser";
@@ -100,26 +102,40 @@ interface TopShowcaseProps {
 /** "Most Valuable Kills/Losses - All Time" showcase strip, matching
  * zKillboard's own Overview/Kills/Losses tab header cards. */
 export function TopShowcase({ items, variant, onSelectKill }: TopShowcaseProps) {
+  const [theme] = useTheme();
   if (items.length === 0) return null;
+  const title = `Most Valuable ${variant === "kill" ? "Kills" : "Losses"} - All Time`;
+  const cards = (
+    <div className="top-kills-showcase">
+      {items.map((k) => (
+        <button
+          key={k.killmail_id}
+          type="button"
+          className={`top-kill-card${variant === "loss" ? " top-kill-card-loss" : ""}`}
+          onClick={() => onSelectKill(k.killmail_id)}
+        >
+          <img className="top-kill-card-ship" src={`https://images.evetech.net/types/${k.ship_type_id}/render?size=128`} alt="" />
+          <span className="top-kill-card-value">{formatIsk(k.total_value)}</span>
+          <span className="top-kill-card-name">
+            {variant === "kill" ? (k.victim_character_name ?? k.ship_type_name) : (k.final_blow_character_name ?? k.ship_type_name)}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+
+  if (isPremiumTheme(theme)) {
+    return (
+      <ScreenHousing title={title} className="top-kills-showcase-premium">
+        {cards}
+      </ScreenHousing>
+    );
+  }
+
   return (
     <>
-      <p className="kills-feed-section-title">Most Valuable {variant === "kill" ? "Kills" : "Losses"} - All Time</p>
-      <div className="top-kills-showcase">
-        {items.map((k) => (
-          <button
-            key={k.killmail_id}
-            type="button"
-            className={`top-kill-card${variant === "loss" ? " top-kill-card-loss" : ""}`}
-            onClick={() => onSelectKill(k.killmail_id)}
-          >
-            <img className="top-kill-card-ship" src={`https://images.evetech.net/types/${k.ship_type_id}/render?size=128`} alt="" />
-            <span className="top-kill-card-value">{formatIsk(k.total_value)}</span>
-            <span className="top-kill-card-name">
-              {variant === "kill" ? (k.victim_character_name ?? k.ship_type_name) : (k.final_blow_character_name ?? k.ship_type_name)}
-            </span>
-          </button>
-        ))}
-      </div>
+      <p className="kills-feed-section-title">{title}</p>
+      {cards}
     </>
   );
 }
@@ -144,6 +160,8 @@ interface TopListsSidebarProps {
  * clickable - there's no killboard view for a single station/structure yet,
  * only for systems/corps/alliances/characters/items. */
 export function TopListsSidebar({ topLists, onSelectCharacter, onSelectCorporation, onSelectSystem, onSelectItem }: TopListsSidebarProps) {
+  const [theme] = useTheme();
+  const premium = isPremiumTheme(theme);
   const lists = topLists.filter((t) => t.list_type !== "alliance");
   if (lists.length === 0) return null;
 
@@ -165,10 +183,9 @@ export function TopListsSidebar({ topLists, onSelectCharacter, onSelectCorporati
 
   return (
     <aside className="kills-top-sidebar">
-      {lists.map((t) => (
-        <div key={t.list_type} className="kills-top-sidebar-panel">
-          <p className="kills-top-sidebar-title">{t.title}</p>
-          {t.values.length === 0 ? (
+      {lists.map((t) => {
+        const table =
+          t.values.length === 0 ? (
             <p className="detail-empty">No data.</p>
           ) : (
             <table className="kills-top-sidebar-table">
@@ -203,9 +220,18 @@ export function TopListsSidebar({ topLists, onSelectCharacter, onSelectCorporati
                 })}
               </tbody>
             </table>
-          )}
-        </div>
-      ))}
+          );
+        return premium ? (
+          <ScreenHousing key={t.list_type} title={t.title} className="kills-top-sidebar-panel-premium">
+            {table}
+          </ScreenHousing>
+        ) : (
+          <div key={t.list_type} className="kills-top-sidebar-panel">
+            <p className="kills-top-sidebar-title">{t.title}</p>
+            {table}
+          </div>
+        );
+      })}
     </aside>
   );
 }

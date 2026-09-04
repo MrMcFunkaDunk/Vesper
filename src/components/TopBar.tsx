@@ -66,14 +66,11 @@ function timeUntilDowntime(now: Date): string {
 const SERVER_STATUS_POLL_ONLINE_MS = 60000;
 const SERVER_STATUS_POLL_OFFLINE_MS = 15000;
 
-function ServerStatusBadge() {
+/** Shared by ServerStatusBadge and CapsuleersOnlineBadge so both boxes read
+ * off one poll instead of each hitting the server-status endpoint on its
+ * own timer. */
+function useServerStatus() {
   const [status, setStatus] = useState<{ online: boolean; players: number | null } | null>(null);
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,6 +101,18 @@ function ServerStatusBadge() {
     };
   }, []);
 
+  return status;
+}
+
+function ServerStatusBadge() {
+  const status = useServerStatus();
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   return (
     <div className="server-status-badge">
       <StatusChip
@@ -111,29 +120,37 @@ function ServerStatusBadge() {
         value={status == null ? "..." : status.online ? "Online" : "Offline"}
         tone={status == null ? "neutral" : status.online ? "online" : "danger"}
       />
-      <span className="server-status-line">
-        {status?.players != null && (
-          <>
-            <span className="server-status-players">{new Intl.NumberFormat("en-US").format(status.players)} online</span>
-            <span> · </span>
-          </>
-        )}
-        <span
-          className={(() => {
-            const msLeft = nextDowntime(now).getTime() - now.getTime();
-            if (msLeft < 300000) return "server-status-downtime-soon server-status-downtime-critical";
-            if (msLeft < 3600000) return "server-status-downtime-soon";
-            return undefined;
-          })()}
-        >
-          Downtime in {timeUntilDowntime(now)}
-        </span>
+      <span className="status-chip-sep">·</span>
+      <span
+        className={(() => {
+          const msLeft = nextDowntime(now).getTime() - now.getTime();
+          if (msLeft < 300000) return "server-status-downtime-soon server-status-downtime-critical";
+          if (msLeft < 3600000) return "server-status-downtime-soon";
+          return undefined;
+        })()}
+      >
+        Downtime in {timeUntilDowntime(now)}
       </span>
     </div>
   );
 }
 
+/** Split out of ServerStatusBadge into its own box - same server-status poll
+ * (via useServerStatus), just its own chip so it can sit between the Server
+ * and Connected boxes instead of crowding onto one line with the downtime
+ * countdown. */
+function CapsuleersOnlineBadge() {
+  const status = useServerStatus();
+  return (
+    <div className="capsuleers-online-badge">
+      <span className="capsuleers-online-count">{status?.players != null ? new Intl.NumberFormat("en-US").format(status.players) : "..."}</span>
+      <span className="capsuleers-online-label">Capsuleers Online</span>
+    </div>
+  );
+}
+
 export const RADIUS_OPTIONS: { value: ProximityRadius; label: string }[] = [
+  { value: 0, label: "Here" },
   { value: 1, label: "1" },
   { value: 2, label: "2" },
   { value: 3, label: "3" },
@@ -142,6 +159,14 @@ export const RADIUS_OPTIONS: { value: ProximityRadius; label: string }[] = [
   { value: 9, label: "9" },
   { value: "region", label: "Region" },
 ];
+
+/** Shared by both radius pickers (here and MapView's own) so the tooltip
+ * wording can't drift between them. */
+export function radiusTitle(value: ProximityRadius): string {
+  if (value === "region") return "Track the whole region";
+  if (value === 0) return "Track only this system - no neighbors";
+  return `Track ${value} jumps out`;
+}
 
 /** Lets the pilot say "I'm here" - a manually-set current system that drives
  * the proximity kill scan (Map ticker highlight + app-wide flash). Sits next
@@ -210,7 +235,7 @@ function LocationTracker() {
                 type="button"
                 className={`location-tracker-radius-btn${radius === option.value ? " location-tracker-radius-active" : ""}`}
                 onClick={() => setRadius(option.value)}
-                title={option.value === "region" ? "Track the whole region" : `Track ${option.value} jumps out`}
+                title={radiusTitle(option.value)}
               >
                 {option.label}
               </button>
@@ -258,7 +283,7 @@ function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout }: TopBarP
       <div className="topbar-right">
         <LocationTracker />
         <ServerStatusBadge />
-        <EveTimeClock />
+        <CapsuleersOnlineBadge />
         <div className="account-menu">
           <button
             type="button"
@@ -313,6 +338,7 @@ function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout }: TopBarP
             </div>
           )}
         </div>
+        <EveTimeClock />
         <NotificationBell />
       </div>
     </header>

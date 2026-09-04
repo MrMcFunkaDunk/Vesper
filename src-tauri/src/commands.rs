@@ -359,6 +359,24 @@ pub async fn get_mail_detail(state: State<'_, AppState>, id: i64, mail_id: i64) 
 }
 
 #[tauri::command]
+pub async fn get_mail_labels(state: State<'_, AppState>, id: i64) -> Result<esi::CharacterMailLabels, String> {
+    let config = config::load()?;
+    esi::fetch_mail_labels(&state.http_client, &config, id).await
+}
+
+#[tauri::command]
+pub async fn send_mail(
+    state: State<'_, AppState>,
+    id: i64,
+    subject: String,
+    body: String,
+    recipients: Vec<esi::MailRecipientInput>,
+) -> Result<i64, String> {
+    let config = config::load()?;
+    esi::send_character_mail(&state.http_client, &config, id, &subject, &body, &recipients).await
+}
+
+#[tauri::command]
 pub async fn get_character_notifications(state: State<'_, AppState>, id: i64) -> Result<esi::CharacterNotifications, String> {
     let config = config::load()?;
     esi::fetch_character_notifications(&state.http_client, &config, id).await
