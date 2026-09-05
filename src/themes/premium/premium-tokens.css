@@ -38,6 +38,12 @@
   --warning-soft: rgba(230, 178, 60, 0.16);
   --danger: #c23b30;
   --danger-soft: rgba(194, 59, 48, 0.16);
+  /* The base App.css neon violet reads as a cold sci-fi color dropped into
+     this warm rust/amber industrial palette (verified live) - a dustier,
+     warmer rose-magenta instead, with a more muted glow to match this
+     deck's own weathered-indicator-light feel rather than a clean neon. */
+  --wormhole: #b8628f;
+  --wormhole-glow: rgba(184, 98, 143, 0.4);
 
   --kill-corp: #6f8a9e;
   --kill-alliance: #9c7a5e;

@@ -2119,7 +2119,18 @@ interface TickerRowProps {
 /** A single ticker entry - shared by both the proximity feed and the general
  * feed below it, since a proximity kill renders identically in each, just in
  * a different list. */
+/** Wormhole system names are always exactly "J" + 6 digits (e.g. J130735) -
+ * a fixed EVE naming convention, never coincidentally matched by a real
+ * k-space system name. J-space has no fixed position on the star map (a
+ * wormhole's connections are random and temporary, not gates), so a kill
+ * there can never show up as a dot anywhere on the map itself the way a
+ * k-space kill does - flagging it here is the only way it's still obviously
+ * visible as "this happened", not silently indistinguishable from a kill
+ * that just isn't showing on the currently-viewed region. */
+const WORMHOLE_SYSTEM_NAME = /^J\d{6}$/;
+
 function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation, onShowOnMap, onMouseEnter, onMouseLeave }: TickerRowProps) {
+  const isWormhole = WORMHOLE_SYSTEM_NAME.test(kill.system_name);
   return (
     <div
       role="button"
@@ -2136,7 +2147,10 @@ function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation,
       onMouseLeave={onMouseLeave}
     >
       <div className="map-ticker-row-top">
-        <span className="map-ticker-time">{formatUtcTime(kill.time)}</span>
+        <div className="map-ticker-time-group">
+          <span className="map-ticker-time">{formatUtcTime(kill.time)}</span>
+          {isWormhole && <span className="map-ticker-wormhole-badge">Wormhole Kill</span>}
+        </div>
         <div className="map-ticker-row-actions">
           <button
             type="button"

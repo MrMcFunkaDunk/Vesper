@@ -29,6 +29,12 @@
   --warning-soft: rgba(224, 168, 92, 0.14);
   --danger: #e0685f;
   --danger-soft: rgba(224, 104, 95, 0.14);
+  /* One fixed neon purple, deliberately not re-picked per theme the way
+     --accent/--danger/--warning are - wormhole space is its own distinct
+     visual identity everywhere it shows up (map ticker, wormhole tooling),
+     not a severity level that should blend with each theme's own palette. */
+  --wormhole: #b389f5;
+  --wormhole-glow: rgba(179, 137, 245, 0.55);
 
   /* Kill-row entity colors - corp/alliance/ship each get their own resting
      color so the two are tellable apart at a glance (character names stay
@@ -168,6 +174,11 @@
   --warning-soft: rgba(181, 121, 31, 0.1);
   --danger: #c94a3f;
   --danger-soft: rgba(201, 74, 63, 0.1);
+  /* Deeper/more saturated than the dark-theme default, with a much fainter
+     glow - a bright white ground makes a light-toned neon glow look washed
+     out rather than legible, so this leans on the color itself instead. */
+  --wormhole: #7c3fd1;
+  --wormhole-glow: rgba(124, 63, 209, 0.25);
 
   --kill-corp: #3f6fa8;
   --kill-alliance: #8551b3;
@@ -7507,12 +7518,33 @@ body[data-reduce-motion="true"] .skeleton-row {
   color: var(--accent);
 }
 
+.map-ticker-time-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .map-ticker-time {
   font-family: var(--font-label);
   font-size: 13px;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* A subtle neon glow, not a loud one - see --wormhole/--wormhole-glow's own
+   comment for why this is one fixed color rather than reskinned per theme. */
+.map-ticker-wormhole-badge {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--wormhole);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-shadow:
+    0 0 5px var(--wormhole-glow),
+    0 0 10px var(--wormhole-glow);
 }
 
 .map-ticker-row-body {
