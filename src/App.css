@@ -1513,9 +1513,19 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 }
 
 .notification-bell-item-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* Marks a notification as clickable-through-to-somewhere (see
+   NotificationItem's own url field) rather than just markable-as-read. */
+.notification-bell-item-link-icon {
+  flex-shrink: 0;
+  color: var(--accent);
 }
 
 .notification-bell-item-message {

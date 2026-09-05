@@ -851,15 +851,24 @@ function CharacterDetail({
           <>
           <div className="skill-queue-list">
             {skillQueue.items.map((item, index) => {
+              // Time-based, not SP-based: level_start_sp/level_end_sp/
+              // training_start_sp are frequently missing from ESI's own
+              // response for the currently-training entry (CCP's own API,
+              // not something VESPER controls) - silently dropping the
+              // whole progress bar and its pulse whenever that happened.
+              // start_date/finish_date are already proven reliable (they're
+              // what the ETA text right next to this is built from), and
+              // for a fixed-rate process like skill training, elapsed-time
+              // fraction and elapsed-SP fraction are the same number -
+              // there's no precision lost switching to the sturdier input.
               const progress =
-                index === 0 && item.level_start_sp != null && item.level_end_sp != null && item.training_start_sp != null
-                  ? Math.min(
-                      1,
-                      Math.max(
-                        0,
-                        (item.training_start_sp - item.level_start_sp) / (item.level_end_sp - item.level_start_sp),
-                      ),
-                    )
+                index === 0 && item.start_date && item.finish_date
+                  ? (() => {
+                      const start = new Date(item.start_date!).getTime();
+                      const finish = new Date(item.finish_date!).getTime();
+                      if (!(finish > start)) return null;
+                      return Math.min(1, Math.max(0, (Date.now() - start) / (finish - start)));
+                    })()
                   : null;
               return (
                 <div key={`${item.skill_id}-${item.queue_position}`} className="skill-queue-row">

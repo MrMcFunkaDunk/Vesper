@@ -2,7 +2,7 @@ use crate::kills::{self, KillEntry};
 use crate::map;
 use crate::market;
 use crate::route::CAPITAL_GROUPS;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -38,6 +38,11 @@ const GANK_MIN_VALUE: f64 = 1_000_000.0;
 /// the database's size for a recorder that runs continuously in the
 /// background for as long as the app is open.
 const RETENTION_DAYS: i64 = 30;
+/// How far back catch_up_tracked_entity_events looks the very first time it
+/// ever runs for a given install (no last_checked_at saved yet) - bounds a
+/// first-run flood to "recent" rather than however far back zKillboard's own
+/// page 1 happens to reach for a busy tracked corp/alliance.
+const CATCHUP_INITIAL_LOOKBACK_HOURS: i64 = 24;
 
 fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_local_data_dir().map_err(|e| format!("could not resolve app data directory: {e}"))?;
@@ -767,7 +772,12 @@ fn emit_tracked_player_events(app: &tauri::AppHandle, kills: &[KillEntry]) {
                     subject_character_name: attacker.character_name.clone(),
                     event: "killed",
                     other_name: kill.victim_character_name.clone(),
-                    ship_type_name: attacker.ship_type_name.clone().unwrap_or_default(),
+                    // The victim's own ship (what actually got destroyed),
+                    // not attacker.ship_type_name (what the tracked entity
+                    // itself was flying) - the frontend's own message reads
+                    // "Killed {victim}'s {ship_type_name}", which only makes
+                    // sense describing the ship that died.
+                    ship_type_name: kill.ship_type_name.clone(),
                     system_name: kill.system_name.clone(),
                     total_value: kill.total_value,
                     killmail_id: kill.killmail_id,
@@ -776,6 +786,129 @@ fn emit_tracked_player_events(app: &tauri::AppHandle, kills: &[KillEntry]) {
             let _ = app.emit("tracked-player-event", event);
         }
     }
+}
+
+/// Parses a killmail's own timestamp for comparison against the catch-up
+/// cursor - None (rather than defaulting to "now" or "epoch") on a bad
+/// parse, since either default risks silently including or excluding a real
+/// kill instead of just skipping the one entry that failed to parse.
+fn parse_kill_time(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw).ok().map(|d| d.with_timezone(&Utc))
+}
+
+/// Runs once at startup (spawned once from lib.rs's setup hook): checks each
+/// tracked entity's own recent kills/losses - the same zKillboard-backed
+/// fetchers the character/corp/alliance killboard pages already use, not a
+/// query against the local kill_history store - against
+/// TrackedEntitiesSettings::last_checked_at, and emits a "tracked-player-
+/// event" for anything that happened while the app was closed. The live
+/// listener (emit_tracked_player_events, right above) only ever sees a kill
+/// that lands while this recorder is actually polling - without this, a
+/// tracked character's death while VESPER was closed would never surface as
+/// a notification at all, only ever showing up if you happened to go look
+/// at that character's own killboard page yourself. Deliberately not sourced
+/// from the local kill_history table: that only has whatever the 30-day
+/// backfill has reached so far (oldest day first - see start_backfill),
+/// which could still be hours away from "yesterday" right after a fresh
+/// install or a rebuilt database, while zKillboard's own per-entity feed is
+/// always current. Best-effort: a corp/alliance "killed" event names
+/// whoever got the final blow rather than searching a full attacker list
+/// for the exact tracked-entity member (fetch_corporation_kills/
+/// fetch_alliance_kills don't fetch that list at all - see enrich_kills's
+/// include_full_attackers - not worth the extra payload for a check that
+/// only runs once a session); a character track has no such ambiguity, it's
+/// always the tracked character itself.
+pub async fn catch_up_tracked_entity_events(app: tauri::AppHandle, client: reqwest::Client) {
+    use crate::tracked_entities::TrackedEntityKind;
+
+    let tracked = crate::tracked_entities::load_tracked_entities(&app);
+    if tracked.entities.is_empty() {
+        return;
+    }
+    // Captured before any fetches start, not after - anything that lands
+    // between now and whenever this finishes gets picked up by the live
+    // listener too, which is a harmless double-check, never a gap.
+    let scan_started_at = Utc::now();
+    let cutoff = tracked
+        .last_checked_at
+        .as_deref()
+        .and_then(parse_kill_time)
+        .unwrap_or_else(|| scan_started_at - Duration::hours(CATCHUP_INITIAL_LOOKBACK_HOURS));
+
+    let mut events: Vec<(DateTime<Utc>, TrackedEntityEvent)> = Vec::new();
+
+    for entity in &tracked.entities {
+        let (losses, kills) = match entity.kind {
+            TrackedEntityKind::Character => (
+                kills::fetch_character_losses(&client, entity.entity_id, 1).await.unwrap_or_default(),
+                kills::fetch_character_kills(&client, entity.entity_id, 1).await.unwrap_or_default(),
+            ),
+            TrackedEntityKind::Corporation => (
+                kills::fetch_corporation_losses(&client, entity.entity_id, 1).await.unwrap_or_default(),
+                kills::fetch_corporation_kills(&client, entity.entity_id, 1).await.unwrap_or_default(),
+            ),
+            TrackedEntityKind::Alliance => (
+                kills::fetch_alliance_losses(&client, entity.entity_id, 1).await.unwrap_or_default(),
+                kills::fetch_alliance_kills(&client, entity.entity_id, 1).await.unwrap_or_default(),
+            ),
+        };
+
+        for kill in losses {
+            let Some(kill_time) = parse_kill_time(&kill.time) else { continue };
+            if kill_time <= cutoff {
+                continue;
+            }
+            events.push((
+                kill_time,
+                TrackedEntityEvent {
+                    tracked_entity_name: entity.entity_name.clone(),
+                    tracked_entity_kind: entity.kind,
+                    subject_character_name: kill.victim_character_name.clone(),
+                    event: "died",
+                    other_name: kill.final_blow_character_name.clone(),
+                    ship_type_name: kill.ship_type_name.clone(),
+                    system_name: kill.system_name.clone(),
+                    total_value: kill.total_value,
+                    killmail_id: kill.killmail_id,
+                },
+            ));
+        }
+
+        for kill in kills {
+            let Some(kill_time) = parse_kill_time(&kill.time) else { continue };
+            if kill_time <= cutoff {
+                continue;
+            }
+            let subject_character_name = match entity.kind {
+                TrackedEntityKind::Character => Some(entity.entity_name.clone()),
+                TrackedEntityKind::Corporation | TrackedEntityKind::Alliance => kill.final_blow_character_name.clone(),
+            };
+            events.push((
+                kill_time,
+                TrackedEntityEvent {
+                    tracked_entity_name: entity.entity_name.clone(),
+                    tracked_entity_kind: entity.kind,
+                    subject_character_name,
+                    event: "killed",
+                    other_name: kill.victim_character_name.clone(),
+                    ship_type_name: kill.ship_type_name.clone(),
+                    system_name: kill.system_name.clone(),
+                    total_value: kill.total_value,
+                    killmail_id: kill.killmail_id,
+                },
+            ));
+        }
+    }
+
+    // Oldest first, so a backlog of several missed events arrives (and
+    // reads, in the bell) in the order they actually happened rather than
+    // newest-first.
+    events.sort_by_key(|(time, _)| *time);
+    for (_, event) in events {
+        let _ = app.emit("tracked-player-event", event);
+    }
+
+    let _ = crate::tracked_entities::set_last_checked_at(&app, scan_started_at.to_rfc3339());
 }
 
 fn row_to_kill_entry(row: &rusqlite::Row) -> rusqlite::Result<KillEntry> {

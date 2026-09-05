@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Volume2, VolumeX, RefreshCw, ShieldCheck, FolderOpen, ExternalLink, Download } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { appLocalDataDir } from "@tauri-apps/api/path";
+import { emit } from "@tauri-apps/api/event";
+import type { TrackedEntityEvent } from "../lib/trackedEntities";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -50,6 +52,7 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
   const [soundVolume, setSoundVolume] = useSoundVolume();
   const [notificationVolume, setNotificationVolume] = useNotificationSoundVolume();
   const [notificationTested, setNotificationTested] = useState(false);
+  const [testAlertSent, setTestAlertSent] = useState(false);
   const { prefs: notifPrefs, setEnabled: setNotifEnabled, update: updateNotifPrefs, permissionDenied } = useNotificationPreferences();
   const [hubRegionId, setHubRegionId] = useDefaultTradeHub();
   const [reduceMotion, setReduceMotion] = useReduceMotion();
@@ -120,6 +123,29 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
     playNotificationPing(notificationVolume);
     setNotificationTested(true);
     window.setTimeout(() => setNotificationTested(false), 1200);
+  }
+
+  /** Emits a fake "tracked-player-event" straight from the frontend - the
+   * bell/toast/desktop-notification listener (useTrackedEntityEvents,
+   * mounted once at the App shell) doesn't care whether an event on this
+   * channel came from the Rust backend or from here, so this triggers the
+   * exact same real notification path a genuine tracked-entity kill would,
+   * with obviously-fake names so it can't be mistaken for a real one. */
+  function handleTestTrackedAlert() {
+    const fakeEvent: TrackedEntityEvent = {
+      tracked_entity_name: "Test Pilot",
+      tracked_entity_kind: "character",
+      subject_character_name: "Test Pilot",
+      event: "died",
+      other_name: "Some Rando",
+      ship_type_name: "Rifter",
+      system_name: "Jita",
+      total_value: 12_500_000,
+      killmail_id: -1,
+    };
+    emit("tracked-player-event", fakeEvent).catch(() => {});
+    setTestAlertSent(true);
+    window.setTimeout(() => setTestAlertSent(false), 1200);
   }
 
   function handleRemoveCharacter(id: number, name: string) {
@@ -265,6 +291,12 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
                 />
                 Tracked player kills/deaths (always appears in the bell + a toast regardless of this toggle)
               </label>
+              <div className="settings-section-row">
+                <button type="button" className="detail-back" onClick={handleTestTrackedAlert}>
+                  {testAlertSent ? "Sent!" : "Send Test Alert"}
+                </button>
+                <span className="settings-inline-label">Fires a fake tracked-player death so you can see what a real one looks like</span>
+              </div>
             </div>
           )}
         </div>

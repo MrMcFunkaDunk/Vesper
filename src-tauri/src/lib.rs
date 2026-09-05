@@ -48,6 +48,7 @@ pub fn run() {
             let client = handle.state::<commands::AppState>().http_client.clone();
             tauri::async_runtime::spawn(map::run_jump_history_sampler(handle.clone(), client.clone()));
             tauri::async_runtime::spawn(kill_history::run_kill_history_recorder(handle.clone(), client.clone()));
+            tauri::async_runtime::spawn(kill_history::catch_up_tracked_entity_events(handle.clone(), client.clone()));
             tauri::async_runtime::spawn(kill_history::run_startup_backfill(handle, client));
             Ok(())
         })

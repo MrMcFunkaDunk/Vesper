@@ -22,6 +22,17 @@ pub struct TrackedEntity {
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct TrackedEntitiesSettings {
     pub entities: Vec<TrackedEntity>,
+    /// ISO 8601 UTC timestamp of the last time catch_up_tracked_entity_events
+    /// (kill_history.rs) checked tracked entities' own kills/losses for
+    /// anything that happened while the app was closed - the live listener
+    /// (emit_tracked_player_events) only ever sees kills that land while the
+    /// app is actually open and running, so without this, a death that
+    /// happened while VESPER was closed would never surface as a
+    /// notification at all, only ever showing up if you happened to go look
+    /// at that character's own killboard page yourself. None before the
+    /// first time this has ever run.
+    #[serde(default)]
+    pub last_checked_at: Option<String>,
 }
 
 fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -65,4 +76,16 @@ pub fn remove_tracked_entity(app: &tauri::AppHandle, entity_id: i64, kind: Track
     settings.entities.retain(|e| !(e.entity_id == entity_id && e.kind == kind));
     save_tracked_entities(app, &settings)?;
     Ok(settings)
+}
+
+/// Advances the catch-up cursor (see TrackedEntitiesSettings::last_checked_at)
+/// - re-reads and re-writes the whole settings file rather than caching it in
+/// memory since add/remove_tracked_entity above already follow that same
+/// read-modify-write pattern, and a user's tracked list can genuinely change
+/// while the catch-up scan (which can take a few seconds across several
+/// entities) is still running.
+pub fn set_last_checked_at(app: &tauri::AppHandle, checked_at: String) -> Result<(), String> {
+    let mut settings = load_tracked_entities(app);
+    settings.last_checked_at = Some(checked_at);
+    save_tracked_entities(app, &settings)
 }

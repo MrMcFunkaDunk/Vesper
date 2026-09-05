@@ -15,6 +15,9 @@ interface TopBarProps {
   onSwitch: (id: number) => void;
   onAdd: () => void;
   onLogout: (id: number) => void;
+  /** Passed straight through to NotificationBell - see its own prop of the
+   * same name. */
+  onOpenKillmail: (killmailId: number) => void;
 }
 
 /** EVE's in-game clock is always UTC, no timezone offset - shown so time-sensitive
@@ -267,7 +270,7 @@ function LocationTracker() {
   );
 }
 
-function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout }: TopBarProps) {
+function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout, onOpenKillmail }: TopBarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const active =
     session.characters.find((c) => c.id === session.active_character_id) ??
@@ -339,7 +342,7 @@ function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout }: TopBarP
           )}
         </div>
         <EveTimeClock />
-        <NotificationBell />
+        <NotificationBell onOpenKillmail={onOpenKillmail} />
       </div>
     </header>
   );

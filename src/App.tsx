@@ -216,7 +216,15 @@ function App() {
         <UpdateBanner />
         <ToastStack />
         <Sidebar activeId={activeId} onSelect={handleSelectNav} />
-        <TopBar title={active.label} activeId={activeId} session={session} onSwitch={handleSwitch} onAdd={handleAdd} onLogout={handleLogout} />
+        <TopBar
+          title={active.label}
+          activeId={activeId}
+          session={session}
+          onSwitch={handleSwitch}
+          onAdd={handleAdd}
+          onLogout={handleLogout}
+          onOpenKillmail={handleOpenKillmail}
+        />
         <Suspense fallback={<div className="app-loading">Loading...</div>}>
         {activeId === "dashboard" ? (
           detailCharacter ? (

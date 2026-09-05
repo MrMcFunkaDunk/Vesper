@@ -12,6 +12,17 @@ export interface NotificationItem {
   id: string;
   title: string;
   message?: string;
+  /** Opened (via the opener plugin) when this notification is clicked, in
+   * addition to marking it read - e.g. a new-update notification linking
+   * straight to that release's GitHub page. Mutually exclusive with
+   * killmailId in practice (nothing sets both) - omitted, a notification
+   * just marks itself read on click, same as before either existed. */
+  url?: string;
+  /** Navigates to this killmail's own detail view in-app (Kills & Intel)
+   * when clicked, in addition to marking it read - e.g. a tracked-entity
+   * kill/death notification. Handled separately from `url` above since this
+   * is in-app React navigation, not something the opener plugin can do. */
+  killmailId?: number;
   /** ISO timestamp. */
   time: string;
   read: boolean;
@@ -20,7 +31,7 @@ export interface NotificationItem {
 interface NotificationCenterState {
   notifications: NotificationItem[];
   unreadCount: number;
-  addNotification: (title: string, message?: string) => void;
+  addNotification: (title: string, message?: string, url?: string, killmailId?: number) => void;
   markRead: (id: string) => void;
   markAllRead: () => void;
   clear: () => void;
@@ -47,11 +58,13 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
   const [notifications, setNotifications] = usePersistentState<NotificationItem[]>(STORAGE_KEY, []);
   const [notificationVolume] = useNotificationSoundVolume();
 
-  function addNotification(title: string, message?: string) {
+  function addNotification(title: string, message?: string, url?: string, killmailId?: number) {
     const item: NotificationItem = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       title,
       message,
+      url,
+      killmailId,
       time: new Date().toISOString(),
       read: false,
     };

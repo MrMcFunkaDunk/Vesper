@@ -5,6 +5,10 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useNotificationCenter } from "../hooks/useNotificationCenter";
 
+/** Where the release itself (installers, sig files, release notes) actually
+ * lives - releases.yml publishes every tagged build here as "v<version>". */
+const RELEASES_URL = "https://github.com/MrMcFunkaDunk/Vesper/releases/tag";
+
 /**
  * Checks for a new VESPER release once per app launch (silent - nothing
  * shows if there's nothing new), and offers a one-click download+install+
@@ -23,7 +27,11 @@ function UpdateBanner() {
       .then((result) => {
         if (result) {
           setUpdate(result);
-          addNotification("Vesper: New update available", `Version ${result.version} is ready (you're on ${result.currentVersion}).`);
+          addNotification(
+            "Vesper: New update available",
+            `Version ${result.version} is ready (you're on ${result.currentVersion}).`,
+            `${RELEASES_URL}/v${result.version}`,
+          );
         }
       })
       .catch(() => {
