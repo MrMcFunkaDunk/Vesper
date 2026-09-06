@@ -694,7 +694,24 @@ function KillDetailView({
                           </span>
                         )}
                       </span>
-                      <span className="kill-attacker-ship">{attacker.ship_type_name ?? ""}</span>
+                      <span
+                        className={`kill-attacker-ship ${attacker.ship_type_id ? "kills-system-clickable" : ""}`}
+                        {...(attacker.ship_type_id && attacker.ship_type_name
+                          ? {
+                              role: "button" as const,
+                              tabIndex: 0,
+                              onClick: () => onSelectItem({ id: attacker.ship_type_id!, name: attacker.ship_type_name! }),
+                              onKeyDown: (e: KeyboardEvent) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  onSelectItem({ id: attacker.ship_type_id!, name: attacker.ship_type_name! });
+                                }
+                              },
+                            }
+                          : {})}
+                      >
+                        {attacker.ship_type_name ?? ""}
+                      </span>
                       <span className="kill-attacker-badges">
                         {attacker.final_blow && <span className="kill-final-blow-badge">Final Blow</span>}
                         {i === 0 && <span className="kill-top-damage-badge">Top Damage</span>}

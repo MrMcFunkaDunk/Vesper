@@ -100,6 +100,7 @@ export interface KillAttackerEntry {
   corporation_name: string | null;
   alliance_id: number | null;
   alliance_name: string | null;
+  ship_type_id: number | null;
   ship_type_name: string | null;
   damage_done: number;
   final_blow: boolean;
