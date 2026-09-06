@@ -310,3 +310,108 @@
   --deck-lamp-off-danger: #301218;
   --deck-lamp-off-neutral: #171d33;
 }
+
+/* AMBER EXCHANGE - trading-floor ticker desk, not a sci-fi bridge like the
+   other three decks: brass/bronze physical fittings under amber
+   exchange-floor light, eveboosters.com's own real palette. Security
+   gradient anchors its amber step at the game's own real 0.4-sec convention
+   (EVE already reads 0.4 as amber) instead of an invented mid-point, and
+   --isk is set equal to --accent rather than --warning (what the other 3
+   decks do) - this deck's whole identity is "money terminal", so ISK gets
+   to be the star color instead of sharing the caution tone. */
+:root[data-theme="amber-exchange"] {
+  color-scheme: dark;
+  --bg: #05070b;
+  --bg-elevated: #0d1017;
+  --bg-elevated-2: #161a23;
+  --border: #2a2318;
+  --border-active: rgba(255, 178, 46, 0.5);
+
+  --text: #e8e4db;
+  --text-secondary: #b8ae98;
+  --text-muted: #7a715f;
+
+  --accent: #ffb22e;
+  --accent-soft: rgba(255, 178, 46, 0.14);
+  --accent-contrast: #1a1006;
+  --metal: #a89a7a;
+  --success: #3ddc97;
+  --success-soft: rgba(61, 220, 151, 0.16);
+  --warning: #ff8a3d;
+  --warning-soft: rgba(255, 138, 61, 0.16);
+  --danger: #ff6161;
+  --danger-soft: rgba(255, 97, 97, 0.16);
+  /* The base neon violet reads cold and sci-fi against this deck's warm
+     brass palette (same clash Bulkhead had) - a warm dusty magenta instead,
+     distinct from Bulkhead's own rose-magenta fix. */
+  --wormhole: #c9689e;
+  --wormhole-glow: rgba(201, 104, 158, 0.45);
+
+  --kill-corp: #6fa8d9;
+  --kill-alliance: #a98ae0;
+  --kill-ship: #ffb22e;
+
+  --isk: #ffb22e;
+  --isk-soft: rgba(255, 178, 46, 0.14);
+
+  --standing-positive: #6fa8d9;
+  --standing-positive-soft: rgba(111, 168, 217, 0.12);
+  --standing-negative: #ff7a6e;
+  --standing-negative-soft: rgba(255, 122, 110, 0.12);
+  --standing-neutral: #8a8168;
+
+  --constellation: #a98ae0;
+  --constellation-soft: rgba(169, 138, 224, 0.16);
+  --region: #6fa8d9;
+  --region-soft: rgba(111, 168, 217, 0.16);
+  --gate: #3ddc97;
+  --gate-soft: rgba(61, 220, 151, 0.16);
+
+  --sec-10: #4a9fd9;
+  --sec-9: #52b8b0;
+  --sec-8: #5fd1a0;
+  --sec-7: #7ed88a;
+  --sec-6: #a8d96a;
+  --sec-5: #dcd45a;
+  --sec-4: #ffb22e;
+  --sec-3: #ff9a3d;
+  --sec-2: #ff7a4a;
+  --sec-1: #ff6161;
+  --sec-min: #d94f8a;
+  --sec-legend-on-light: #14100a;
+  --sec-legend-on-dark: #e8e4db;
+
+  --slot-low: #e8c98f;
+  --slot-low-soft: rgba(232, 201, 143, 0.12);
+  --slot-mid: #8fb8d9;
+  --slot-mid-soft: rgba(143, 184, 217, 0.12);
+  --slot-high: #e89aa0;
+  --slot-high-soft: rgba(232, 154, 160, 0.12);
+
+  --grid-line: rgba(255, 178, 46, 0.035);
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-pill: 0px;
+  --font-display: "Chakra Petch", sans-serif;
+  --font-label: "Chakra Petch", sans-serif;
+  --glow-accent: 0 0 0 1px var(--border-active), 0 0 20px rgba(255, 178, 46, 0.3);
+
+  /* Construction layers - warm brass plate/frame/bezel/cavity instead of
+     the other decks' cool gunmetal, tightest notch of the four (8px vs
+     Bulkhead 12 / Cold Ballast 10 / Command Deck 14) - the "compact
+     ticker" feel. */
+  --deck-plate: #14100a;
+  --deck-frame: #3a3020;
+  --deck-bezel: #5a4a2e;
+  --deck-cavity: #05070b;
+  --deck-rivet: #7a6a4a;
+  --deck-hazard: #ffb22e;
+  --deck-hazard-dark: #05070b;
+  --deck-bevel-dark: rgba(0, 0, 0, 0.65);
+  --deck-bevel-light: rgba(255, 178, 46, 0.08);
+  --deck-notch: 8px;
+  --deck-lamp-off-online: #223018;
+  --deck-lamp-off-warning: #302410;
+  --deck-lamp-off-danger: #301810;
+  --deck-lamp-off-neutral: #201c14;
+}

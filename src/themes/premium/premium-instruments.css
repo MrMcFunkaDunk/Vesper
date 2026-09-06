@@ -75,6 +75,10 @@
   color: var(--warning);
 }
 
+.annunciator-attention .annunciator-label {
+  color: var(--isk);
+}
+
 .annunciator-danger .annunciator-label {
   color: var(--danger);
 }

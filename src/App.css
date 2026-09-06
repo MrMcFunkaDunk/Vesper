@@ -1043,6 +1043,31 @@ select.wh-roller-select,
   white-space: nowrap;
 }
 
+/* Persistent kill-stream sync readout - see TopBar.tsx's KillSyncIndicator.
+   Reuses .kills-live-dot's own pulse animation rather than a new one; the
+   idle variant (no poll has landed yet, or one is in flight) just stops the
+   pulse and dims it instead of a second animation. */
+.topbar-sync-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-family: var(--font-label);
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar-sync-dot-idle {
+  animation: none;
+  opacity: 0.35;
+}
+
 .capsuleers-online-count {
   color: var(--accent);
   font-weight: 600;
@@ -1813,6 +1838,22 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 
 .dashboard-header .status-chip {
   margin-top: 2px;
+}
+
+/* Tick-ruler divider (item 2) - a faint instrument-ticks rule at the bottom
+   edge of a page header, reusing --grid-line so it auto-tints per theme
+   exactly like the background grid already does. Trialled first as Amber
+   Exchange's own bolder accent-colored ticker-tape rule (see
+   amber-exchange.css); this is the quieter version every other theme gets.
+   A border, not a background fill, so it never sits behind header text -
+   just an edge, the way a ruled divider actually reads. */
+.dashboard-header,
+.entity-stats-header,
+.detail-panel-header,
+.industry-build-steps-header {
+  border-bottom: 1px solid;
+  border-image: repeating-linear-gradient(90deg, var(--grid-line) 0 6px, transparent 6px 8px) 1;
+  padding-bottom: 6px;
 }
 
 .dashboard-compare-btn {
@@ -4437,6 +4478,11 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
      header/data drift seen on the Ranks and Stats tables. */
   text-align: right !important;
   font-variant-numeric: tabular-nums;
+  /* Trialled under Amber Exchange only at first (eveboosters.com's own
+     biggest "real trading terminal" tell); carried over to every theme once
+     it checked out live - --font-mono was already a shared, tested token
+     with a real fallback chain, not a new dependency. */
+  font-family: var(--font-mono);
 }
 
 .data-table-th-sortable {
@@ -7480,6 +7526,160 @@ body[data-reduce-motion="true"] .skeleton-row {
 .map-ticker-row-alert-system:hover,
 .map-ticker-row-alert-nearby:hover {
   filter: brightness(1.15);
+}
+
+/* Generalized version of the map ticker's own row-tint recipe above, as a
+   standalone card usable in a grid rather than a list-row - any future
+   anomaly/alert-style feature (or an existing one) can drop this in instead
+   of re-deriving the same inset-stripe-plus-soft-background pattern. Only
+   the three severity tokens the rest of the app already uses - no 4th
+   color invented for this. */
+.severity-card {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.severity-card-danger {
+  box-shadow: inset 3px 0 0 var(--danger);
+  background: var(--danger-soft);
+}
+
+.severity-card-warning {
+  box-shadow: inset 3px 0 0 var(--warning);
+  background: var(--warning-soft);
+}
+
+/* "Worth a look, not urgent" tier - matches the ISK figure's own color
+   rather than the generic --warning tone, same distinction Annunciator's
+   "attention" lamp tone makes (see StatusLamp.tsx). */
+.severity-card-attention {
+  box-shadow: inset 3px 0 0 var(--isk);
+  background: var(--isk-soft);
+}
+
+.severity-card-success {
+  box-shadow: inset 3px 0 0 var(--success);
+  background: var(--success-soft);
+}
+
+.severity-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.severity-card-danger .severity-card-header {
+  color: var(--danger);
+}
+
+.severity-card-warning .severity-card-header {
+  color: var(--warning);
+}
+
+.severity-card-attention .severity-card-header {
+  color: var(--isk);
+}
+
+.severity-card-success .severity-card-header {
+  color: var(--success);
+}
+
+.severity-card-body {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+/* One affected character per line rather than a comma-run - easier to scan
+   once a card holds more than 2-3 names. */
+.severity-card-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.severity-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.premium-dashboard-alert-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* eveboosters.com's own Trade Report split panel - see GainersLosersPanel.tsx. */
+.gainers-losers-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
+
+.gainers-losers-column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gainers-losers-column-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.gainers-losers-column-header-up {
+  color: var(--success);
+}
+
+.gainers-losers-column-header-down {
+  color: var(--danger);
+}
+
+.gainers-losers-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.gainers-losers-row-name {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inline warning icon next to a flagged value - see Screener.tsx's thin-
+   market flag, the first use of this pattern (AlertTriangle's only other
+   use, in wormholes/ConnectionEditor.tsx, is a standalone notice paragraph
+   rather than inline). */
+.screener-thin-market-icon {
+  color: var(--warning);
+  margin-left: 5px;
+  vertical-align: -2px;
 }
 
 .map-ticker-row-top {

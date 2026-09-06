@@ -1,0 +1,91 @@
+/* ============================================================================
+   AMBER EXCHANGE - deck-specific geometry
+   ============================================================================
+   Signature: a physical trading-floor ticker desk, not a sci-fi bridge like
+   the other three decks - a ticker-tape dash rule instead of Bulkhead's
+   hazard band/Cold Ballast's vertical rail/Command Deck's tactical glass, a
+   ledger double-rule on instrument badges, a single dog-eared corner clip on
+   stat cards instead of 4 rivets/a top tick/a plain border, and a warm
+   downward exchange-floor lighting wash instead of a vignette/raster/sheen.
+   ============================================================================ */
+
+/* Ticker-tape rule across the page header's bottom edge - short accent
+   dashes over the dark cavity color, like a paper ticker tape laid along
+   the desk, instead of Bulkhead's hazard stripes or Cold Ballast/Command
+   Deck's single accent line. */
+:root[data-theme="amber-exchange"] .dashboard-header,
+:root[data-theme="amber-exchange"] .entity-stats-header,
+:root[data-theme="amber-exchange"] .detail-panel-header,
+:root[data-theme="amber-exchange"] .industry-build-steps-header {
+  border-bottom: 3px solid;
+  border-image: repeating-linear-gradient(90deg, var(--accent) 0 10px, var(--deck-cavity) 10px 16px) 3;
+}
+
+/* Monospace numerals (item 6) started as an Amber-Exchange-only trial and
+   is now universal - see .data-table-numeric in App.css. Nothing deck-
+   specific needed here any more. */
+
+/* Ledger double-rule on the topbar instrument badges - a thin bezel line
+   above a darker rule below, like a ruled ledger row, instead of Cold
+   Ballast's containment ring or Command Deck's segmented double-line. */
+:root[data-theme="amber-exchange"] .server-status-badge,
+:root[data-theme="amber-exchange"] .capsuleers-online-badge,
+:root[data-theme="amber-exchange"] .account-trigger,
+:root[data-theme="amber-exchange"] .eve-time-clock,
+:root[data-theme="amber-exchange"] .location-tracker-current,
+:root[data-theme="amber-exchange"] .topbar-sync-badge {
+  border-top: 1px solid var(--deck-bezel);
+  border-bottom: 2px solid var(--deck-frame);
+  box-shadow: inset 0 1px 0 var(--deck-bevel-light), inset 0 -3px 6px rgba(0, 0, 0, 0.5);
+}
+
+/* Dog-eared stat cards - a single clipped top-right corner, like a folded
+   ledger page, instead of Bulkhead's 4 corner rivets or Cold Ballast's top
+   tick mark. */
+:root[data-theme="amber-exchange"] .market-stat-card {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+  border-top: 1px solid var(--deck-bezel);
+  background-color: var(--deck-plate);
+}
+
+/* Ticker-dash brand divider instead of Bulkhead's rivet row or Cold
+   Ballast/Command Deck's plain accent line. */
+:root[data-theme="amber-exchange"] .brand-divider {
+  height: 2px;
+  background: repeating-linear-gradient(90deg, var(--accent) 0 6px, transparent 6px 10px);
+}
+
+/* Compact ticker-desk sidebar - a bronze frame line, thinner than
+   Bulkhead's thick single border, no rivet texture. */
+:root[data-theme="amber-exchange"] .sidebar {
+  border-right: 2px solid var(--deck-frame);
+  box-shadow: inset -1px 0 0 var(--deck-bevel-light);
+}
+
+/* Nav items read as ticker rows - a left tick that brightens on the active
+   row, tighter than Bulkhead's chamfer, added on top of (not instead of)
+   the shared energized-rail glow every deck's active nav item already gets
+   from premium-structure.css (see command-deck.css's own note on why this
+   has to be the SAME box-shadow declaration). */
+:root[data-theme="amber-exchange"] .nav-item-active {
+  box-shadow: inset 3px 0 0 var(--accent), inset 8px 0 14px -10px var(--accent);
+}
+
+/* Boot label - the ignition flash text (see premium-structure.css's
+   .main::before for the shared position/timing). */
+:root[data-theme="amber-exchange"] .main::before {
+  content: "MKT.LINK — LIVE";
+}
+
+/* Signature atmosphere - a soft warm wash falling from the top of the
+   screen, like sodium-vapor exchange-floor lighting overhead, instead of
+   Bulkhead's vignette, Cold Ballast's CRT raster, or Command Deck's
+   diagonal sheen. */
+:root[data-theme="amber-exchange"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 178, 46, 0.05) 0%, transparent 40%);
+}

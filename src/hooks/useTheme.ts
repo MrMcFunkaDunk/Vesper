@@ -10,7 +10,8 @@ export type ThemeId =
   | "crt-green"
   | "bulkhead"
   | "cold-ballast"
-  | "command-deck";
+  | "command-deck"
+  | "amber-exchange";
 
 export const THEMES: { id: ThemeId; label: string; description: string; tier?: "premium" }[] = [
   { id: "dark", label: "Dark (default)", description: "VESPER's original dark navy/cyan look." },
@@ -36,6 +37,12 @@ export const THEMES: { id: ThemeId; label: string; description: string; tier?: "
     id: "command-deck",
     label: "Command Deck",
     description: "Bridge HUD glass paired against warm amber switch banks - void navy, royal blue, and Exo 2 display type.",
+    tier: "premium",
+  },
+  {
+    id: "amber-exchange",
+    label: "Amber Exchange",
+    description: "A trading-floor ticker desk - brass and bronze fittings, amber exchange-floor light, and gains/losses that glow the moment they move.",
     tier: "premium",
   },
 ];

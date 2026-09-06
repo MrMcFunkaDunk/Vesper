@@ -42,7 +42,7 @@ import { useDefaultLandingTab } from "./hooks/useDefaultLandingTab";
 import { useReduceMotion } from "./hooks/useReduceMotion";
 import { useTheme } from "./hooks/useTheme";
 import "./App.css";
-// Premium deck themes (Bulkhead/Cold Ballast/Command Deck) live entirely
+// Premium deck themes (Bulkhead/Cold Ballast/Command Deck/Amber Exchange) live entirely
 // outside App.css, in their own small stylesheet architecture - never
 // capable of altering the six standard themes above. premium-structure.css
 // is scoped behind :root[data-theme="x"] selectors since it retrofits
@@ -61,6 +61,7 @@ import "./themes/premium/premium-instruments.css";
 import "./themes/premium/bulkhead.css";
 import "./themes/premium/cold-ballast.css";
 import "./themes/premium/command-deck.css";
+import "./themes/premium/amber-exchange.css";
 
 function App() {
   const [activeId, setActiveId] = useDefaultLandingTab(NAV_ITEMS[0].id);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, AlertTriangle } from "lucide-react";
 import { getMapData, type MapData } from "../lib/map";
 import { getMarketGroups, getMarketGroupTypes, getRegionMarketOrders, type MarketGroupNode, type TypeSummary } from "../lib/market";
 import { formatIsk } from "../lib/format";
@@ -12,6 +12,13 @@ import { SortableTh } from "./SortableTh";
  * lookup (two, in hauling mode - one per region). Keeping this small
  * enough to stay fast and polite to ESI. */
 const MAX_SCAN_ITEMS = 50;
+
+/** Below this many units on the sell side, a margin that looks great on
+ * paper may not actually fill - the classic screener trap. Establishes the
+ * inline-warning-icon pattern: AlertTriangle placed right after the flagged
+ * value rather than as its own standalone notice paragraph (its only other
+ * use so far, in wormholes/ConnectionEditor.tsx). */
+const THIN_MARKET_VOLUME = 10;
 
 type ScreenerMode = "spread" | "hauling";
 
@@ -304,7 +311,19 @@ function Screener() {
                       <td className="data-table-numeric wallet-amount-negative">{formatIsk(o.bestBuy)}</td>
                       <td className="data-table-numeric wallet-amount-positive">{formatIsk(o.bestSell)}</td>
                       <td className="data-table-numeric wallet-amount-positive">{o.marginPct.toFixed(1)}%</td>
-                      <td className="data-table-numeric">{o.sellVolume.toLocaleString()}</td>
+                      <td className="data-table-numeric">
+                        {o.sellVolume.toLocaleString()}
+                        {o.sellVolume < THIN_MARKET_VOLUME && (
+                          <AlertTriangle
+                            size={13}
+                            strokeWidth={2}
+                            className="screener-thin-market-icon"
+                            aria-label="Thin market"
+                          >
+                            <title>{`Only ${o.sellVolume} unit${o.sellVolume === 1 ? "" : "s"} on the sell side - this margin may not fill at this price.`}</title>
+                          </AlertTriangle>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

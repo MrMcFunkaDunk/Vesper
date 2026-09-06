@@ -4,7 +4,7 @@
  * theme is active (see StatusChip.tsx); does nothing visually under any
  * standard theme, since none of its CSS classes are styled there - the
  * whole treatment lives in premium-structure.css, gated on
- * :root[data-theme="bulkhead"|"cold-ballast"|"command-deck"].
+ * :root[data-theme="bulkhead"|"cold-ballast"|"command-deck"|"amber-exchange"].
  *
  * Two housing shapes: a round bulb (`shape="circle"`, the default - most
  * status contexts) and a rectangular annunciator window (`shape="rect"`),
@@ -14,7 +14,7 @@
  * `lit={false}` renders the housing in its dark, desaturated "unpowered"
  * material rather than just fading a lit one - an off lamp on real
  * equipment still has a visible physical presence, it just isn't glowing. */
-export type LampTone = "online" | "warning" | "danger" | "neutral";
+export type LampTone = "online" | "warning" | "attention" | "danger" | "neutral";
 
 interface StatusLampProps {
   tone: LampTone;

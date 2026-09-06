@@ -3,6 +3,7 @@ import { getRegionMarketHistory, type MarketHistoryPoint } from "../lib/market";
 import { TRADE_HUB_REGIONS } from "../lib/map";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import MiniPriceChart from "./MiniPriceChart";
+import GainersLosersPanel, { type GainerLoserItem } from "./GainersLosersPanel";
 
 // Same fixed sets as the market ticker (MineralTicker.tsx) and the Ore
 // Table's own mineral/ice-product columns - the mining-relevant items
@@ -50,7 +51,23 @@ const SECTIONS: Section[] = [
   { title: "Ice Products", items: ICE_PRODUCT_ITEMS },
 ];
 
-function MarketHistorySection({ section, regionId, timeframeDays }: { section: Section; regionId: number; timeframeDays: number }) {
+function MarketHistorySection({
+  section,
+  regionId,
+  timeframeDays,
+  onItemsChange,
+}: {
+  section: Section;
+  regionId: number;
+  timeframeDays: number;
+  /** Reports this section's own changePct-over-the-current-timeframe list up
+   * to MarketHistoryTab, which combines every section's list for the
+   * Gainers/Losers panel - each section keeps fetching/owning its own
+   * history exactly as before, this just additionally surfaces what it
+   * already computes per chart (see MiniPriceChart's own changePct) instead
+   * of the parent re-deriving it from scratch. */
+  onItemsChange: (sectionTitle: string, items: GainerLoserItem[]) => void;
+}) {
   const [open, setOpen] = useState(true);
   const [history, setHistory] = useState<Map<number, MarketHistoryPoint[]>>(new Map());
 
@@ -71,6 +88,21 @@ function MarketHistorySection({ section, regionId, timeframeDays }: { section: S
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, regionId]);
+
+  useEffect(() => {
+    const items: GainerLoserItem[] = [];
+    for (const item of section.items) {
+      const points = history.get(item.typeId);
+      const sliced = points ? (Number.isFinite(timeframeDays) ? points.slice(-timeframeDays) : points) : null;
+      if (!sliced || sliced.length < 2) continue;
+      const first = sliced[0].average;
+      const last = sliced[sliced.length - 1].average;
+      if (first <= 0) continue;
+      items.push({ typeId: item.typeId, name: item.name, changePct: ((last - first) / first) * 100 });
+    }
+    onItemsChange(section.title, items);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history, timeframeDays, section]);
 
   return (
     <div className="market-history-section">
@@ -105,6 +137,8 @@ function MarketHistoryTab() {
   const [hubRegionId, setHubRegionId] = useState(defaultTradeHub);
   const [timeframe, setTimeframe] = useState<TimeframeId>("1y");
   const timeframeDays = TIMEFRAMES.find((t) => t.id === timeframe)?.days ?? 365;
+  const [sectionItems, setSectionItems] = useState<Record<string, GainerLoserItem[]>>({});
+  const combinedItems = Object.values(sectionItems).flat();
 
   return (
     <div className="industry-production">
@@ -134,8 +168,15 @@ function MarketHistoryTab() {
       </div>
 
       <div className="industry-results-panel">
+        <GainersLosersPanel items={combinedItems} />
         {SECTIONS.map((section) => (
-          <MarketHistorySection key={section.title} section={section} regionId={hubRegionId} timeframeDays={timeframeDays} />
+          <MarketHistorySection
+            key={section.title}
+            section={section}
+            regionId={hubRegionId}
+            timeframeDays={timeframeDays}
+            onItemsChange={(title, items) => setSectionItems((prev) => ({ ...prev, [title]: items }))}
+          />
         ))}
       </div>
     </div>

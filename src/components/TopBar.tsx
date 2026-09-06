@@ -3,10 +3,12 @@ import { MapPin, X } from "lucide-react";
 import { getServerStatus, type Session } from "../lib/eve";
 import { searchSystemsLive, type SystemSearchMatch } from "../lib/map";
 import { useLocationTracking, type ProximityRadius } from "../hooks/useLocationTracking";
+import { useRecentActivity } from "../hooks/useRecentActivity";
 import StatusChip from "./StatusChip";
 import HelpBadge from "./HelpBadge";
 import NotificationBell from "./NotificationBell";
 import { HELP_CONTENT } from "../lib/helpContent";
+import { formatSecondsAgo } from "../lib/format";
 
 interface TopBarProps {
   title: string;
@@ -270,6 +272,29 @@ function LocationTracker() {
   );
 }
 
+/** Persistent "data is actually live" readout, promoted from the same
+ * live-dot/formatSecondsAgo pattern RecentKillsFeed/TrackedSystemsFeed use
+ * per-widget - scoped to the one feed that's genuinely global (the kill
+ * stream RecentActivityProvider polls from the app root regardless of which
+ * tab is open), not an unscoped "everything is synced" claim. */
+function KillSyncIndicator() {
+  const { lastUpdated, loading } = useRecentActivity();
+  if (!lastUpdated) {
+    return (
+      <div className="topbar-sync-badge" title="Waiting for the first kill-stream poll to resolve">
+        <span className="kills-live-dot topbar-sync-dot-idle" />
+        <span>Kills syncing...</span>
+      </div>
+    );
+  }
+  return (
+    <div className="topbar-sync-badge" title="Most recent successful kill-stream poll">
+      <span className={`kills-live-dot${loading ? " topbar-sync-dot-idle" : ""}`} />
+      <span>Kills {formatSecondsAgo(lastUpdated)}</span>
+    </div>
+  );
+}
+
 function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout, onOpenKillmail }: TopBarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const active =
@@ -287,6 +312,7 @@ function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout, onOpenKil
         <LocationTracker />
         <ServerStatusBadge />
         <CapsuleersOnlineBadge />
+        <KillSyncIndicator />
         <div className="account-menu">
           <button
             type="button"

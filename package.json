@@ -10,6 +10,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@fontsource/chakra-petch": "^5.3.0",
     "@fontsource/exo-2": "^5.3.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/orbitron": "^5.3.0",

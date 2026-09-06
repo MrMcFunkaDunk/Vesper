@@ -71,8 +71,8 @@ function PremiumCharacterHeader({ character, overview, attributes, reconnecting,
       />
 
       <div className="premium-character-annunciators">
-        <Annunciator label="Training" state={overview?.training_skill_name ? "on" : "off"} />
-        <Annunciator label="Reauth" state={overview?.needs_reauth ? "danger" : "off"} />
+        <Annunciator label="Training" state={overview?.training_skill_name ? "on" : "attention"} />
+        <Annunciator label="Reauth" state={overview?.needs_reauth ? "danger" : "on"} />
       </div>
 
       {overview?.training_skill_name && (

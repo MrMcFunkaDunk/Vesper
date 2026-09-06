@@ -23,6 +23,11 @@ import "@fontsource/saira-condensed/500.css";
 import "@fontsource/saira-condensed/600.css";
 import "@fontsource/saira-condensed/700.css";
 import "@fontsource/share-tech-mono";
+// Amber Exchange's own --font-display/--font-label face - eveboosters.com's
+// real headline font, kept distinct from the other three decks' faces.
+import "@fontsource/chakra-petch/500.css";
+import "@fontsource/chakra-petch/600.css";
+import "@fontsource/chakra-petch/700.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

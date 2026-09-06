@@ -1,4 +1,4 @@
-import { Plus, Scale } from "lucide-react";
+import { Plus, Scale, ShieldAlert, GraduationCap } from "lucide-react";
 import CharacterCard from "../CharacterCard";
 import NewsTicker from "../NewsTicker";
 import LiveActivityTicker from "../LiveActivityTicker";
@@ -53,6 +53,15 @@ function PremiumDashboard({
   const anyResolved = characters.some((c) => overviews[c.id] !== undefined);
   const reauthCount = loadedOverviews.filter((o) => o.needs_reauth).length;
   const trainingCount = loadedOverviews.filter((o) => o.training_skill_name).length;
+  // Named lists (not just counts) for the Alert Bank's severity cards below -
+  // the Annunciators already show on/off state; these add the one thing
+  // that doesn't fit a lamp: WHICH characters.
+  const nameFor = (characterId: number) => characters.find((c) => c.id === characterId)?.name ?? "Unknown";
+  const reauthNames = loadedOverviews.filter((o) => o.needs_reauth).map((o) => nameFor(o.character_id));
+  const trainingNames = loadedOverviews.filter((o) => o.training_skill_name).map((o) => nameFor(o.character_id));
+  // An idle skill queue is the amber "worth a look" case - not urgent like
+  // reauth, but a wasted skill queue is a real thing worth surfacing by name.
+  const idleNames = loadedOverviews.filter((o) => !o.training_skill_name).map((o) => nameFor(o.character_id));
   const totalIsk = loadedOverviews.reduce((sum, o) => sum + (o.isk_balance ?? 0), 0);
   const totalSp = loadedOverviews.reduce((sum, o) => sum + (o.total_sp ?? 0), 0);
   const anyIskKnown = loadedOverviews.some((o) => o.isk_balance != null);
@@ -122,9 +131,62 @@ function PremiumDashboard({
         </ScreenHousing>
 
         <ScreenHousing title="Alert Bank" className="premium-dashboard-alerts">
-          <Annunciator label="SIGN-IN" state={pending ? "warn" : "off"} />
-          <Annunciator label="REAUTH" state={reauthCount > 0 ? "danger" : "off"} />
-          <Annunciator label="TRAINING" state={trainingCount > 0 ? "on" : "off"} />
+          {/* Always lit now - green means "checked, all clear", not "nothing
+             to report". Amber (attention) for something worth a look but not
+             urgent, red (danger) for something that actually needs doing. */}
+          <Annunciator label="SIGN-IN" state={pending ? "attention" : "on"} />
+          <Annunciator label="REAUTH" state={reauthCount > 0 ? "danger" : "on"} />
+          <Annunciator label="TRAINING" state={trainingCount > 0 ? "on" : "attention"} />
+          <div className="premium-dashboard-alert-cards">
+            {reauthCount > 0 && (
+              <div className="severity-card severity-card-danger">
+                <div className="severity-card-header">
+                  <ShieldAlert size={14} strokeWidth={2} />
+                  Reauth needed
+                </div>
+                <ul className="severity-card-body severity-card-list">
+                  {reauthNames.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {trainingCount > 0 && (
+              <div className="severity-card severity-card-success">
+                <div className="severity-card-header">
+                  <GraduationCap size={14} strokeWidth={2} />
+                  Training active
+                </div>
+                <ul className="severity-card-body severity-card-list">
+                  {trainingNames.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {idleNames.length > 0 && (
+              <div className="severity-card severity-card-attention">
+                <div className="severity-card-header">
+                  <GraduationCap size={14} strokeWidth={2} />
+                  Not training
+                </div>
+                <ul className="severity-card-body severity-card-list">
+                  {idleNames.map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {reauthCount === 0 && idleNames.length === 0 && loadedOverviews.length > 0 && (
+              <div className="severity-card severity-card-success">
+                <div className="severity-card-header">
+                  <GraduationCap size={14} strokeWidth={2} />
+                  All clear
+                </div>
+                <div className="severity-card-body">No reauth needed and everyone's training.</div>
+              </div>
+            )}
+          </div>
         </ScreenHousing>
       </div>
 

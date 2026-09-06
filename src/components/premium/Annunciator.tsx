@@ -1,11 +1,12 @@
 import StatusLamp, { type LampTone } from "./StatusLamp";
 
-export type AnnunciatorState = "on" | "off" | "warn" | "danger";
+export type AnnunciatorState = "on" | "off" | "warn" | "attention" | "danger";
 
 const STATE_TONE: Record<AnnunciatorState, LampTone> = {
   on: "online",
   off: "neutral",
   warn: "warning",
+  attention: "attention",
   danger: "danger",
 };
 
@@ -18,11 +19,19 @@ interface AnnunciatorProps {
  * StatusLamp housing as the round indicators, just in the rect shape. Only
  * ever fed real, already-known VESPER state (see PremiumDashboard) - never
  * fabricated gameplay values, per the premium design brief's own repeated
- * rule against inventing status that doesn't exist. */
+ * rule against inventing status that doesn't exist.
+ *
+ * A dark/unlit lamp used to double as "nothing to report" - which reads as
+ * "is this thing even working?", not "all clear". Every real caller now
+ * always lights the lamp: green ("on") when everything's fine, amber
+ * ("attention") for something worth a look but not urgent, red ("danger")
+ * for something that actually needs doing (e.g. reauth) - only red blinks,
+ * so the truly urgent tier reads as more alarming than a steady amber.
+ * "off"/"warn" stay in the type for now but nothing calls them any more. */
 function Annunciator({ label, state }: AnnunciatorProps) {
   return (
     <span className={`annunciator annunciator-${state}`}>
-      <StatusLamp shape="rect" tone={STATE_TONE[state]} lit={state !== "off"} blink={state === "warn" || state === "danger"} />
+      <StatusLamp shape="rect" tone={STATE_TONE[state]} lit={state !== "off"} blink={state === "danger"} />
       <span className="annunciator-label">{label}</span>
     </span>
   );
