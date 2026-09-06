@@ -3,7 +3,16 @@ import { Search, X, Crosshair, MapPin, BarChart3, RefreshCw } from "lucide-react
 import SystemStatsPanel from "./SystemStatsPanel";
 import { getMapData, getCharacterHomeSystems, getPlayerStructures, type MapData, type MapSystem, type PlayerStructureInfo } from "../lib/map";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { securityColor, securityColorResolved, formatSecurity, formatUtcTime, formatIskCompact, formatExactTime } from "../lib/format";
+import {
+  securityColor,
+  securityColorResolved,
+  securityBand,
+  isWSpaceSystemName,
+  formatSecurity,
+  formatUtcTime,
+  formatIskCompact,
+  formatExactTime,
+} from "../lib/format";
 import { useRecentActivity } from "../hooks/useRecentActivity";
 import { useLocationTracking } from "../hooks/useLocationTracking";
 import { useMapDisplayPrefs } from "../hooks/useMapDisplayPrefs";
@@ -2119,18 +2128,28 @@ interface TickerRowProps {
 /** A single ticker entry - shared by both the proximity feed and the general
  * feed below it, since a proximity kill renders identically in each, just in
  * a different list. */
-/** Wormhole system names are always exactly "J" + 6 digits (e.g. J130735) -
- * a fixed EVE naming convention, never coincidentally matched by a real
- * k-space system name. J-space has no fixed position on the star map (a
- * wormhole's connections are random and temporary, not gates), so a kill
- * there can never show up as a dot anywhere on the map itself the way a
- * k-space kill does - flagging it here is the only way it's still obviously
- * visible as "this happened", not silently indistinguishable from a kill
- * that just isn't showing on the currently-viewed region. */
-const WORMHOLE_SYSTEM_NAME = /^J\d{6}$/;
+/** Every row carries a small security-band tag next to its timestamp,
+ * tinted by the kill system's exact security status - securityColor(), the
+ * same per-0.1 --sec-N scale the map's own system dots use - so a row and
+ * its dot on the map read as the same colour.
+ *
+ * Wormhole space is the case that most needs it: J-space has no fixed
+ * position on the star map (a wormhole's connections are random and
+ * temporary, not gates), so a kill there can never show up as a dot at all
+ * the way a k-space kill does - without the tag it's silently
+ * indistinguishable from a kill that just isn't in the currently-viewed
+ * region. It keeps its own fixed violet + glow (see --wormhole) rather
+ * than a point on the security scale, since w-space isn't a security
+ * level. A k-space kill whose security didn't resolve (rare - see
+ * poll_recent_activity) gets no tag rather than a guessed one. */
+const SEC_BAND_LABEL = { high: "Highsec", low: "Lowsec", null: "Nullsec" } as const;
 
 function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation, onShowOnMap, onMouseEnter, onMouseLeave }: TickerRowProps) {
-  const isWormhole = WORMHOLE_SYSTEM_NAME.test(kill.system_name);
+  const isWormhole = isWSpaceSystemName(kill.system_name);
+  const secTag =
+    !isWormhole && kill.system_security != null
+      ? { label: SEC_BAND_LABEL[securityBand(kill.system_security)], color: securityColor(kill.system_security) }
+      : null;
   return (
     <div
       role="button"
@@ -2150,6 +2169,11 @@ function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation,
         <div className="map-ticker-time-group">
           <span className="map-ticker-time">{formatUtcTime(kill.time)}</span>
           {isWormhole && <span className="map-ticker-wormhole-badge">Wormhole Kill</span>}
+          {secTag && (
+            <span className="map-ticker-sec-badge" style={{ color: secTag.color }}>
+              {secTag.label}
+            </span>
+          )}
         </div>
         <div className="map-ticker-row-actions">
           <button

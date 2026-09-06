@@ -95,6 +95,13 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    // Mirrors THEMES' own tier field into the DOM as a real attribute -
+    // premium-structure.css's shared rules key off :root[data-tier="premium"]
+    // instead of enumerating every premium theme id by name, so a new deck
+    // needs no edits there. Cleared (not left stale) when switching back to
+    // a standard theme - an empty string removes any prior match instead of
+    // a dangling data-tier="premium" attribute standard themes never look at.
+    document.documentElement.dataset.tier = isPremiumTheme(theme) ? "premium" : "";
   }, [theme]);
 
   useEffect(() => {

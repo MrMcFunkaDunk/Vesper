@@ -51,17 +51,27 @@ function PremiumDashboard({
   // resolved, no data" - the ESI link lamp only cares whether the fetch
   // pipeline itself has produced anything at all, loaded or not).
   const anyResolved = characters.some((c) => overviews[c.id] !== undefined);
-  const reauthCount = loadedOverviews.filter((o) => o.needs_reauth).length;
-  const trainingCount = loadedOverviews.filter((o) => o.training_skill_name).length;
-  // Named lists (not just counts) for the Alert Bank's severity cards below -
-  // the Annunciators already show on/off state; these add the one thing
-  // that doesn't fit a lamp: WHICH characters.
-  const nameFor = (characterId: number) => characters.find((c) => c.id === characterId)?.name ?? "Unknown";
-  const reauthNames = loadedOverviews.filter((o) => o.needs_reauth).map((o) => nameFor(o.character_id));
-  const trainingNames = loadedOverviews.filter((o) => o.training_skill_name).map((o) => nameFor(o.character_id));
-  // An idle skill queue is the amber "worth a look" case - not urgent like
-  // reauth, but a wasted skill queue is a real thing worth surfacing by name.
-  const idleNames = loadedOverviews.filter((o) => !o.training_skill_name).map((o) => nameFor(o.character_id));
+  // Named lists for the Alert Bank's severity cards below - the Annunciators
+  // already show on/off state; these add the one thing that doesn't fit a
+  // lamp: WHICH characters. Built in one pass (rather than a separate
+  // .filter() per list plus a linear characters.find() per name) since every
+  // loaded overview needs to land in exactly one of reauthNames/idleNames'
+  // sibling training list anyway. reauthCount/trainingCount are just these
+  // lists' own .length - no separate counts to keep in sync.
+  const characterNameById = new Map(characters.map((c) => [c.id, c.name]));
+  const reauthNames: string[] = [];
+  const trainingNames: string[] = [];
+  const idleNames: string[] = [];
+  for (const o of loadedOverviews) {
+    const name = characterNameById.get(o.character_id) ?? "Unknown";
+    if (o.needs_reauth) reauthNames.push(name);
+    // An idle skill queue is the amber "worth a look" case - not urgent like
+    // reauth, but a wasted skill queue is a real thing worth surfacing by name.
+    if (o.training_skill_name) trainingNames.push(name);
+    else idleNames.push(name);
+  }
+  const reauthCount = reauthNames.length;
+  const trainingCount = trainingNames.length;
   const totalIsk = loadedOverviews.reduce((sum, o) => sum + (o.isk_balance ?? 0), 0);
   const totalSp = loadedOverviews.reduce((sum, o) => sum + (o.total_sp ?? 0), 0);
   const anyIskKnown = loadedOverviews.some((o) => o.isk_balance != null);
@@ -104,8 +114,12 @@ function PremiumDashboard({
 
       <div className="premium-dashboard-zones">
         <ScreenHousing title="Sys State" className="premium-dashboard-sysstate">
-          <Annunciator label="ESI LINK" state={anyResolved ? "on" : "off"} />
-          <Annunciator label="SYNC" state={anyResolved ? "on" : "off"} />
+          {/* Amber ("attention") rather than dark while the first overview
+             fetch is still in flight - a dark lamp here read as "is this
+             thing even working?" exactly like the Alert Bank's old off
+             state did, before every real lamp in this file went always-lit. */}
+          <Annunciator label="ESI LINK" state={anyResolved ? "on" : "attention"} />
+          <Annunciator label="SYNC" state={anyResolved ? "on" : "attention"} />
           <Annunciator label="CACHE" state="on" />
         </ScreenHousing>
 
@@ -133,10 +147,21 @@ function PremiumDashboard({
         <ScreenHousing title="Alert Bank" className="premium-dashboard-alerts">
           {/* Always lit now - green means "checked, all clear", not "nothing
              to report". Amber (attention) for something worth a look but not
-             urgent, red (danger) for something that actually needs doing. */}
+             urgent, red (danger) for something that actually needs doing.
+             REAUTH/TRAINING specifically stay amber ("checking...") until at
+             least one overview has actually resolved - otherwise an account
+             with nothing loaded yet showed a false green "no reauth needed"
+             and a false amber "nobody training", neither of which had been
+             checked. */}
           <Annunciator label="SIGN-IN" state={pending ? "attention" : "on"} />
-          <Annunciator label="REAUTH" state={reauthCount > 0 ? "danger" : "on"} />
-          <Annunciator label="TRAINING" state={trainingCount > 0 ? "on" : "attention"} />
+          <Annunciator label="REAUTH" state={!anyResolved ? "attention" : reauthCount > 0 ? "danger" : "on"} />
+          <Annunciator label="TRAINING" state={!anyResolved ? "attention" : trainingCount > 0 ? "on" : "attention"} />
+          {/* No separate "all clear" fallback card - every loaded character
+             lands in exactly one of Training active / Not training below
+             (training_skill_name is either set or it isn't), so those two
+             lists already cover the full picture together; a 4th summary
+             card could only ever fire when it overlapped one of these two,
+             which is exactly the bug that was here before. */}
           <div className="premium-dashboard-alert-cards">
             {reauthCount > 0 && (
               <div className="severity-card severity-card-danger">
@@ -175,15 +200,6 @@ function PremiumDashboard({
                     <li key={name}>{name}</li>
                   ))}
                 </ul>
-              </div>
-            )}
-            {reauthCount === 0 && idleNames.length === 0 && loadedOverviews.length > 0 && (
-              <div className="severity-card severity-card-success">
-                <div className="severity-card-header">
-                  <GraduationCap size={14} strokeWidth={2} />
-                  All clear
-                </div>
-                <div className="severity-card-body">No reauth needed and everyone's training.</div>
               </div>
             )}
           </div>

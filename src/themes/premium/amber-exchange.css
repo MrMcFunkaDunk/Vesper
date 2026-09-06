@@ -32,8 +32,7 @@
 :root[data-theme="amber-exchange"] .capsuleers-online-badge,
 :root[data-theme="amber-exchange"] .account-trigger,
 :root[data-theme="amber-exchange"] .eve-time-clock,
-:root[data-theme="amber-exchange"] .location-tracker-current,
-:root[data-theme="amber-exchange"] .topbar-sync-badge {
+:root[data-theme="amber-exchange"] .location-tracker-current {
   border-top: 1px solid var(--deck-bezel);
   border-bottom: 2px solid var(--deck-frame);
   box-shadow: inset 0 1px 0 var(--deck-bevel-light), inset 0 -3px 6px rgba(0, 0, 0, 0.5);

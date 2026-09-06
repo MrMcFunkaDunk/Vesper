@@ -276,6 +276,11 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
       <div className="sidebar-footer">
         <TechnicalLabel>VES//NAV-02</TechnicalLabel>
         {version && `v${version}`}
+        {/* import.meta.env.DEV is Vite's own dev-vs-production build flag -
+           true under `tauri dev`/`vite`, false in whatever `tauri build`
+           actually ships - so this never needs manually toggling on or off
+           per release; a real build is automatically never marked DEV. */}
+        {import.meta.env.DEV && <span className="sidebar-dev-badge">DEV</span>}
       </div>
       {contextMenu && (
         <ColorPickerMenu

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getRegionMarketHistory, type MarketHistoryPoint } from "../lib/market";
+import { getRegionMarketHistory, percentChange, type MarketHistoryPoint } from "../lib/market";
 import { TRADE_HUB_REGIONS } from "../lib/map";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import MiniPriceChart from "./MiniPriceChart";
@@ -98,7 +98,7 @@ function MarketHistorySection({
       const first = sliced[0].average;
       const last = sliced[sliced.length - 1].average;
       if (first <= 0) continue;
-      items.push({ typeId: item.typeId, name: item.name, changePct: ((last - first) / first) * 100 });
+      items.push({ typeId: item.typeId, name: item.name, changePct: percentChange(first, last) });
     }
     onItemsChange(section.title, items);
     // eslint-disable-next-line react-hooks/exhaustive-deps

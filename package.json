@@ -1,13 +1,14 @@
 {
   "name": "vesper",
   "private": true,
-  "version": "1.7.3",
+  "version": "1.7.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev -c src-tauri/tauri.dev.conf.json"
   },
   "dependencies": {
     "@fontsource/chakra-petch": "^5.3.0",

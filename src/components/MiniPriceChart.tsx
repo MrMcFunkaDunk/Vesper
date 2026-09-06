@@ -1,5 +1,5 @@
 import { formatIsk } from "../lib/format";
-import type { MarketHistoryPoint } from "../lib/market";
+import { percentChange, type MarketHistoryPoint } from "../lib/market";
 
 interface MiniPriceChartProps {
   points: MarketHistoryPoint[];
@@ -38,7 +38,7 @@ function MiniPriceChart({ points, name }: MiniPriceChartProps) {
 
   const first = points[0].average;
   const last = points[points.length - 1].average;
-  const changePct = first > 0 ? ((last - first) / first) * 100 : 0;
+  const changePct = percentChange(first, last);
 
   return (
     <div className="mini-price-chart">

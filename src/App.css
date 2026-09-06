@@ -877,6 +877,23 @@ select.wh-roller-select,
   color: var(--text-muted);
 }
 
+/* Only ever rendered by import.meta.env.DEV (see Sidebar.tsx) - a real
+   build is automatically never marked DEV, nothing to remember to remove
+   before a release. Deliberately fixed red/white rather than a theme
+   token - this needs to be unmistakable at a glance regardless of which of
+   the app's 9 themes is active, not blend in with any of them. */
+.sidebar-dev-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: #e5262f;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
 /* Top bar */
 
 .topbar {
@@ -1045,22 +1062,14 @@ select.wh-roller-select,
 
 /* Persistent kill-stream sync readout - see TopBar.tsx's KillSyncIndicator.
    Reuses .kills-live-dot's own pulse animation rather than a new one; the
-   idle variant (no poll has landed yet, or one is in flight) just stops the
-   pulse and dims it instead of a second animation. */
+   idle variant (a poll hasn't landed in a while) just stops the pulse and
+   dims it instead of a second animation. Rendered with the shared
+   .server-status-badge box class (see the comment above it) rather than
+   duplicating that recipe - this only overrides the two properties that
+   actually differ from it. */
 .topbar-sync-badge {
-  display: flex;
-  align-items: center;
   gap: 7px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg);
   font-family: var(--font-label);
-  font-size: 13px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
 
 .topbar-sync-dot-idle {
@@ -7745,6 +7754,20 @@ body[data-reduce-motion="true"] .skeleton-row {
   text-shadow:
     0 0 5px var(--wormhole-glow),
     0 0 10px var(--wormhole-glow);
+}
+
+/* Same slot and type treatment as the wormhole badge, but the colour comes
+   inline from securityColor() (the --sec-N scale, per-0.1) so the tag and
+   that system's dot on the map are always the same colour. Deliberately no
+   neon glow - that stays unique to the wormhole badge, which flags the one
+   kind of kill that never appears on the map at all. */
+.map-ticker-sec-badge {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
 .map-ticker-row-body {

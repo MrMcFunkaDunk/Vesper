@@ -402,10 +402,14 @@ function GateCheck({ onSelectSystem, onSelectGate }: GateCheckProps) {
             <p className="gatecheck-results-heading">
               Your route <span>({rows.length - 1} jumps)</span>
             </p>
+            <p className="gatecheck-caveat">Displaying confirmed kills from the last 60 minutes // EVE Time.</p>
             <p className="gatecheck-caveat">
-              Showing kills from the last hour (EVE time) - a kill drops off this list on its own once it's more than
-              an hour old, so a clear system now isn't a guarantee it stays that way. A system can show a lot of
-              kills in total but none at a gate if the fighting isn't happening near one you'd actually jump through.
+              Kills automatically expire from this feed once they pass the one-hour threshold. A system showing clear
+              now should not be considered safe — new activity can appear at any time.
+            </p>
+            <p className="gatecheck-caveat">
+              High system kill counts do not necessarily indicate gate danger. If no gate activity is detected, the
+              fighting may be occurring elsewhere in-system, away from the stargates on your route.
             </p>
             <div className="gatecheck-table-wrap">
               <table className="gatecheck-table">

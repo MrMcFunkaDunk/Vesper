@@ -272,25 +272,44 @@ function LocationTracker() {
   );
 }
 
+/** A poll taking this much longer than expected is "might actually be stuck",
+ * not just a quiet moment - matches ServerStatusBadge's own 60s healthy-poll
+ * convention above rather than inventing a new number. */
+const KILL_SYNC_STALE_AFTER_MS = 60_000;
+
 /** Persistent "data is actually live" readout, promoted from the same
  * live-dot/formatSecondsAgo pattern RecentKillsFeed/TrackedSystemsFeed use
  * per-widget - scoped to the one feed that's genuinely global (the kill
  * stream RecentActivityProvider polls from the app root regardless of which
- * tab is open), not an unscoped "everything is synced" claim. */
+ * tab is open), not an unscoped "everything is synced" claim.
+ *
+ * Reads lastPolledAt (last successful poll, whether or not it returned new
+ * kills), not lastUpdated (last time the kill list itself changed) - a quiet
+ * stretch with zero new kills is a healthy feed, not a stale one, and this
+ * badge is answering "is the feed alive", not "did anything happen". Ticks
+ * once a second so "Ns ago" stays live between polls, the same reason
+ * RecentKillsFeed does the same thing for its own "Updated Ns ago" text. */
 function KillSyncIndicator() {
-  const { lastUpdated, loading } = useRecentActivity();
-  if (!lastUpdated) {
+  const { lastPolledAt } = useRecentActivity();
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => forceTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!lastPolledAt) {
     return (
-      <div className="topbar-sync-badge" title="Waiting for the first kill-stream poll to resolve">
+      <div className="server-status-badge topbar-sync-badge" title="Waiting for the first kill-stream poll to resolve">
         <span className="kills-live-dot topbar-sync-dot-idle" />
         <span>Kills syncing...</span>
       </div>
     );
   }
+  const stale = Date.now() - new Date(lastPolledAt).getTime() > KILL_SYNC_STALE_AFTER_MS;
   return (
-    <div className="topbar-sync-badge" title="Most recent successful kill-stream poll">
-      <span className={`kills-live-dot${loading ? " topbar-sync-dot-idle" : ""}`} />
-      <span>Kills {formatSecondsAgo(lastUpdated)}</span>
+    <div className="server-status-badge topbar-sync-badge" title="Most recent successful kill-stream poll">
+      <span className={`kills-live-dot${stale ? " topbar-sync-dot-idle" : ""}`} />
+      <span>Kills {formatSecondsAgo(lastPolledAt)}</span>
     </div>
   );
 }

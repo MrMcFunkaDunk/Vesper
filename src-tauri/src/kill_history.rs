@@ -50,29 +50,41 @@ fn db_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("kill_history.sqlite"))
 }
 
-/// Runs once per app session, the moment anything here first opens the
-/// database - PRAGMA quick_check walks the whole file's structure, which
-/// would be too slow to pay on every single open (the live recorder polls
-/// constantly), but paying it exactly once at first use catches exactly the
-/// case that matters: corruption left over from a previous session (a
-/// crash, a stale second instance racing this one, anything else that can
-/// leave a WAL-mode SQLite file "database disk image is malformed" on disk)
-/// gets caught and repaired before the first real query has a chance to
-/// surface a raw error to the user instead. This file is a pure local cache
-/// - every row in it is re-derivable from zKillboard/ESI (see
-/// start_backfill) - so wiping and starting clean is always a safe
-/// recovery, never real data loss. Best-effort: if the corrupted file can't
-/// be removed (e.g. still locked by something), this just leaves it in
-/// place and the caller's own open/query goes on to fail exactly as it
-/// would have without this check - never worse than today's behavior.
-static CORRUPTION_CHECKED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
+/// How often ensure_not_corrupted is willing to re-pay PRAGMA quick_check's
+/// full-file walk. A one-time-per-process check (the original version of
+/// this) only ever catches corruption that was ALREADY on disk when the app
+/// started - corruption that happens mid-session (two app instances racing
+/// each other against the same file, a process killed mid-write) sails
+/// straight past that one-time gate and every query after it fails with a
+/// raw "database disk image is malformed" for the rest of the process's
+/// life, with no recovery. Re-checking on a bounded interval instead bounds
+/// how long that failure mode can persist - a few minutes of raw errors
+/// instead of "until the app is fully restarted" - while still keeping the
+/// expensive walk far rarer than the live recorder's own poll cadence.
+const CORRUPTION_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Runs the moment anything here first opens the database, then again at
+/// most once per CORRUPTION_RECHECK_INTERVAL - see that constant's own
+/// comment for why a one-time check isn't enough. PRAGMA quick_check walks
+/// the whole file's structure; catching corruption here means it gets
+/// repaired before the next real query has a chance to surface a raw error
+/// to the user instead. This file is a pure local cache - every row in it is
+/// re-derivable from zKillboard/ESI (see start_backfill) - so wiping and
+/// starting clean is always a safe recovery, never real data loss.
+/// Best-effort: if the corrupted file can't be removed (e.g. still locked by
+/// something), this just leaves it in place and the caller's own open/query
+/// goes on to fail exactly as it would have without this check - never
+/// worse than today's behavior.
+static LAST_CORRUPTION_CHECK: LazyLock<Mutex<Option<std::time::Instant>>> = LazyLock::new(|| Mutex::new(None));
 
 fn ensure_not_corrupted(path: &std::path::Path) {
-    let mut checked = CORRUPTION_CHECKED.lock().unwrap();
-    if *checked {
-        return;
+    let mut last_checked = LAST_CORRUPTION_CHECK.lock().unwrap();
+    if let Some(when) = *last_checked {
+        if when.elapsed() < CORRUPTION_RECHECK_INTERVAL {
+            return;
+        }
     }
-    *checked = true;
+    *last_checked = Some(std::time::Instant::now());
     if !path.exists() {
         return;
     }
@@ -93,6 +105,20 @@ fn ensure_not_corrupted(path: &std::path::Path) {
         }
     }
 }
+
+/// A connection that never opens a write_tx only ever collides with another
+/// writer for the instant a commit takes, so 5s is already generous for a
+/// genuine retry - and it fails fast if a connection is actually wedged
+/// (a leaked handle, a bug elsewhere), rather than every read in the app
+/// waiting out the same long timeout a rare writer-vs-writer collision needs.
+const DEFAULT_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// write_tx callers specifically can hold the write lock for a couple of
+/// seconds at a time (see write_tx's own doc comment) - this is the timeout
+/// only they bump up to, right before opening their transaction, rather than
+/// every connection this module opens paying for the long tail a rare write-
+/// side collision needs.
+const WRITE_BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Every read/write against this database goes through here rather than a
 /// bare rusqlite::Connection::open - this file has many independent
@@ -115,33 +141,38 @@ fn ensure_not_corrupted(path: &std::path::Path) {
 /// other connection has committed since the snapshot - blocking a
 /// read-lock holder risks a deadlock, so SQLite refuses to. Every write
 /// transaction in this file therefore has to open with `write_tx` (BEGIN
-/// IMMEDIATE), which takes the write lock before any snapshot exists.
-///
-/// 15s rather than a few: during the 30-day startup backfill the backfill
-/// and the live recorder write this database from two separate connections
-/// at once, and a single record_kills call (an INSERT batch of up to
-/// BACKFILL_CHUNK_SIZE kills plus all their attackers, then mark_ganked,
-/// then a full-table retention prune) can hold the write lock for a couple
-/// of seconds at a time - a blocked writer needs enough room to wait that
-/// out.
+/// IMMEDIATE), which takes the write lock before any snapshot exists - and
+/// write_tx itself raises this connection's busy_timeout to
+/// WRITE_BUSY_TIMEOUT right before doing so, rather than every connection
+/// this function opens (including every read-only query_* below) paying
+/// for that longer timeout.
 fn open_db(path: &std::path::Path) -> Result<rusqlite::Connection, String> {
     ensure_not_corrupted(path);
     let conn = rusqlite::Connection::open(path).map_err(|e| format!("failed to open kill history database: {e}"))?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| format!("failed to set WAL journal mode: {e}"))?;
-    conn.busy_timeout(std::time::Duration::from_secs(15)).map_err(|e| format!("failed to set busy timeout: {e}"))?;
+    conn.busy_timeout(DEFAULT_BUSY_TIMEOUT).map_err(|e| format!("failed to set busy timeout: {e}"))?;
     Ok(conn)
 }
 
 /// Opens a write transaction as `BEGIN IMMEDIATE` instead of rusqlite's
 /// default `BEGIN DEFERRED`. See open_db's note: any transaction here that
-/// reads before it writes (mark_ganked does - it looks up the gank
-/// candidates, then UPDATEs them) will have its read->write upgrade fail
-/// outright with "database is locked" if the always-running live recorder
-/// commits from its own connection in between, and busy_timeout does not
-/// cover that case. An immediate transaction takes the write lock at BEGIN,
-/// so there is never a snapshot to invalidate and a writer-vs-writer
-/// collision is the ordinary busy_timeout-covered wait instead.
+/// reads before it writes (mark_ganked used to - see its own comment, it now
+/// does its reads on a separate plain connection before ever taking this
+/// lock) will have its read->write upgrade fail outright with "database is
+/// locked" if the always-running live recorder commits from its own
+/// connection in between, and busy_timeout does not cover that case. An
+/// immediate transaction takes the write lock at BEGIN, so there is never a
+/// snapshot to invalidate and a writer-vs-writer collision is the ordinary
+/// busy_timeout-covered wait instead - which is why this raises the
+/// connection's busy_timeout to WRITE_BUSY_TIMEOUT first: during the 30-day
+/// startup backfill, the backfill and the live recorder write this database
+/// from two separate connections at once, and a single record_kills call
+/// (an INSERT batch of up to BACKFILL_CHUNK_SIZE kills plus all their
+/// attackers, then mark_ganked, then a full-table retention prune) can hold
+/// the write lock for a couple of seconds at a time - a blocked writer needs
+/// enough room to wait that out, but only while it's actually about to write.
 fn write_tx(conn: &mut rusqlite::Connection) -> Result<rusqlite::Transaction<'_>, String> {
+    conn.busy_timeout(WRITE_BUSY_TIMEOUT).map_err(|e| format!("failed to raise busy timeout for write: {e}"))?;
     conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| format!("sqlite transaction failed: {e}"))
 }
@@ -637,14 +668,25 @@ pub async fn record_kills(app: &tauri::AppHandle, client: &reqwest::Client, kill
 /// CONCORD response - and retroactively marks it "ganked". Mirrors
 /// zKillboard's own cron/9.ganked.php logic (verified live against their
 /// source), substituting a time window for their killID-proximity check.
+///
+/// Reads and writes are deliberately two separate passes over two separate
+/// connections: every lookup below (the ganker/system lookup, the candidate
+/// scan, the already-concorded check) runs first on a plain read connection
+/// with no lock held at all, collecting the final list of killmail_ids to
+/// update; only that final UPDATE loop opens write_tx, so the exclusive
+/// write lock is held for the handful of UPDATEs it actually needs instead
+/// of for the whole read phase too. Doing the reads inside write_tx (the
+/// original shape here) would still be correct, but holds the write lock
+/// exactly as long as this function takes to run - working against the
+/// concurrency this file's own write_tx/busy_timeout fix exists for.
 async fn mark_ganked(app: &tauri::AppHandle, concord_kill_ids: Vec<i64>) -> Result<(), String> {
     let path = db_path(app)?;
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let mut conn = open_db(&path)?;
-        let tx = write_tx(&mut conn)?;
+        let read_conn = open_db(&path)?;
+        let mut to_mark: Vec<i64> = Vec::new();
 
         for concord_kill_id in concord_kill_ids {
-            let ganger_and_time: Option<(Option<i64>, String)> = tx
+            let ganger_and_time: Option<(Option<i64>, String)> = read_conn
                 .query_row(
                     "SELECT victim_character_id, killmail_time FROM kill_history WHERE killmail_id = ?1",
                     [concord_kill_id],
@@ -653,11 +695,11 @@ async fn mark_ganked(app: &tauri::AppHandle, concord_kill_ids: Vec<i64>) -> Resu
                 .ok();
             let Some((Some(ganker_character_id), concord_time)) = ganger_and_time else { continue };
 
-            let system_id: i64 = tx
+            let system_id: i64 = read_conn
                 .query_row("SELECT solar_system_id FROM kill_history WHERE killmail_id = ?1", [concord_kill_id], |row| row.get(0))
                 .unwrap_or(0);
 
-            let mut stmt = tx
+            let mut stmt = read_conn
                 .prepare(
                     "SELECT DISTINCT a.killmail_id FROM kill_history_attackers a
                      JOIN kill_history k ON k.killmail_id = a.killmail_id
@@ -675,7 +717,7 @@ async fn mark_ganked(app: &tauri::AppHandle, concord_kill_ids: Vec<i64>) -> Resu
                 .collect();
 
             for candidate_id in candidates {
-                let already_concorded: bool = tx
+                let already_concorded: bool = read_conn
                     .query_row(
                         "SELECT COUNT(*) FROM kill_history_attackers WHERE killmail_id = ?1 AND corporation_id = ?2",
                         rusqlite::params![candidate_id, CONCORD_CORPORATION_ID],
@@ -686,11 +728,20 @@ async fn mark_ganked(app: &tauri::AppHandle, concord_kill_ids: Vec<i64>) -> Resu
                 if already_concorded {
                     continue;
                 }
-                tx.execute("UPDATE kill_history SET ganked = 1 WHERE killmail_id = ?1", [candidate_id])
-                    .map_err(|e| format!("failed to mark kill as ganked: {e}"))?;
+                to_mark.push(candidate_id);
             }
         }
 
+        if to_mark.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = open_db(&path)?;
+        let tx = write_tx(&mut conn)?;
+        for candidate_id in to_mark {
+            tx.execute("UPDATE kill_history SET ganked = 1 WHERE killmail_id = ?1", [candidate_id])
+                .map_err(|e| format!("failed to mark kill as ganked: {e}"))?;
+        }
         tx.commit().map_err(|e| format!("failed to commit ganked updates: {e}"))
     })
     .await
@@ -1870,9 +1921,14 @@ mod concurrency_tests {
 
     /// Models the real collision: two independent writers (the live
     /// recorder and the backfill) each opening their own connection and
-    /// running the read-then-write / insert / prune transaction shapes
-    /// this file actually uses, in a tight loop, against one WAL database.
-    /// Before the `write_tx` switch this reliably produced
+    /// running insert / read-then-write / prune transaction shapes against
+    /// one WAL database in a tight loop. Step 2 below is deliberately still
+    /// the read-then-write-in-one-transaction shape mark_ganked *used* to
+    /// have (it now splits its reads onto a separate plain connection
+    /// before ever opening write_tx - see mark_ganked's own comment) - kept
+    /// here as a direct stress test of write_tx's own guarantee against
+    /// that pattern in general, not a simulation of mark_ganked's current
+    /// code. Before the `write_tx` switch this reliably produced
     /// "failed to mark kill as ganked: database is locked"; with it, every
     /// transaction either commits or waits its turn - never fails.
     #[test]
@@ -1906,8 +1962,10 @@ mod concurrency_tests {
                     tx.commit().map_err(|e| format!("commit: {e}"))?;
                 }
 
-                // 2. mark_ganked: read the candidates, THEN write - a fresh
-                //    connection and transaction, exactly as mark_ganked does.
+                // 2. The read-then-write-in-one-transaction shape mark_ganked
+                //    used to have (see write_tx's own doc comment) - a fresh
+                //    connection and transaction reading candidates, then
+                //    writing them, all inside one write_tx.
                 {
                     let mut conn = open_db(&backfill_path)?;
                     let tx = write_tx(&mut conn)?;

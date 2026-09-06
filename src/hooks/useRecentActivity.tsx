@@ -7,7 +7,17 @@ const POLL_RETRY_DELAY_MS = 5_000;
 interface RecentActivityState {
   kills: KillEntry[];
   loading: boolean;
+  /** Last time the visible kill list actually changed (a poll returned new
+   * kills) - what RecentKillsFeed's own "Updated Ns ago" means: how fresh is
+   * what's on screen. */
   lastUpdated: string | null;
+  /** Last time a poll of this feed *succeeded*, whether or not it returned
+   * anything new - a real kill lull (e.g. around downtime) can go a long
+   * time with a perfectly healthy feed and zero new kills, during which
+   * lastUpdated correctly stops advancing but this should keep advancing.
+   * TopBar's KillSyncIndicator reads this one - it's asking "is the feed
+   * alive", not "did the list change". */
+  lastPolledAt: string | null;
   refreshCount: number;
   refresh: () => void;
 }
@@ -37,6 +47,7 @@ export function RecentActivityProvider({ children }: RecentActivityProviderProps
   const [kills, setKills] = useState<KillEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [lastPolledAt, setLastPolledAt] = useState<string | null>(null);
   const [refreshCount, setRefreshCount] = useState(0);
   const reportError = useErrorReporter();
 
@@ -45,6 +56,7 @@ export function RecentActivityProvider({ children }: RecentActivityProviderProps
       const results = await getRecentActivityKills();
       setKills((prev) => mergeKillFeeds(prev, results));
       setLastUpdated(new Date().toISOString());
+      setLastPolledAt(new Date().toISOString());
       setRefreshCount((n) => n + 1);
     } catch (err) {
       reportError(`Failed to load recent kills: ${String(err)}`);
@@ -61,6 +73,7 @@ export function RecentActivityProvider({ children }: RecentActivityProviderProps
         try {
           const incoming = await pollRecentActivityKills();
           if (!active) break;
+          setLastPolledAt(new Date().toISOString());
           if (incoming.length > 0) {
             setKills((prev) => mergeKillFeeds(prev, incoming));
             setLastUpdated(new Date().toISOString());
@@ -85,7 +98,7 @@ export function RecentActivityProvider({ children }: RecentActivityProviderProps
   }, []);
 
   return (
-    <RecentActivityContext.Provider value={{ kills, loading, lastUpdated, refreshCount, refresh: loadSnapshot }}>
+    <RecentActivityContext.Provider value={{ kills, loading, lastUpdated, lastPolledAt, refreshCount, refresh: loadSnapshot }}>
       {children}
     </RecentActivityContext.Provider>
   );

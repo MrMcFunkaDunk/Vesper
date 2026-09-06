@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getRegionMarketHistory } from "../lib/market";
+import { getRegionMarketHistory, percentChange } from "../lib/market";
 import { formatIsk } from "../lib/format";
 
 const THE_FORGE_REGION_ID = 10000002;
@@ -73,7 +73,7 @@ async function loadEntry(m: { typeId: number; name: string }): Promise<TickerEnt
     if (history.length === 0) return null;
     const latest = history[history.length - 1];
     const prev = history[history.length - 2] ?? latest;
-    const changePct = prev.average > 0 ? ((latest.average - prev.average) / prev.average) * 100 : 0;
+    const changePct = percentChange(prev.average, latest.average);
     return { typeId: m.typeId, name: m.name, price: latest.average, changePct };
   } catch {
     return null;

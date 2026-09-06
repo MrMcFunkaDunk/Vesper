@@ -264,6 +264,15 @@ export function getRegionMarketHistory(regionId: number, typeId: number): Promis
   return invoke("get_region_market_history", { regionId, typeId });
 }
 
+/** Percent change from one price point to another - the one formula
+ * MiniPriceChart, MineralTicker, and MarketHistoryTab's Gainers/Losers panel
+ * each need, just over different endpoints (a whole window's first/last
+ * point, or yesterday vs today). Returns 0 rather than NaN/Infinity when
+ * `from` is 0 or negative (a market with no real history yet). */
+export function percentChange(from: number, to: number): number {
+  return from > 0 ? ((to - from) / from) * 100 : 0;
+}
+
 export interface MarketPrice {
   type_id: number;
   adjusted_price: number | null;
