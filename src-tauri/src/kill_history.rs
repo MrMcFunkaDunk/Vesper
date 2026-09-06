@@ -104,14 +104,46 @@ fn ensure_not_corrupted(path: &std::path::Path) {
 /// "database is locked" silently dropped an entire backfill day the first
 /// time the startup backfill ran alongside the live recorder) - WAL mode
 /// lets readers and a writer coexist, and a busy_timeout makes a genuine
-/// writer-vs-writer collision retry for a few seconds instead of failing
-/// on the spot.
+/// writer-vs-writer collision retry for a while instead of failing on the
+/// spot.
+///
+/// The busy_timeout only rescues a collision where the blocked connection
+/// isn't already holding a lock. A transaction that does a read before its
+/// first write takes a WAL read snapshot up front, and SQLite will fail
+/// that transaction's later read->write upgrade with SQLITE_BUSY_SNAPSHOT
+/// ("database is locked") *without* waiting on busy_timeout the moment any
+/// other connection has committed since the snapshot - blocking a
+/// read-lock holder risks a deadlock, so SQLite refuses to. Every write
+/// transaction in this file therefore has to open with `write_tx` (BEGIN
+/// IMMEDIATE), which takes the write lock before any snapshot exists.
+///
+/// 15s rather than a few: during the 30-day startup backfill the backfill
+/// and the live recorder write this database from two separate connections
+/// at once, and a single record_kills call (an INSERT batch of up to
+/// BACKFILL_CHUNK_SIZE kills plus all their attackers, then mark_ganked,
+/// then a full-table retention prune) can hold the write lock for a couple
+/// of seconds at a time - a blocked writer needs enough room to wait that
+/// out.
 fn open_db(path: &std::path::Path) -> Result<rusqlite::Connection, String> {
     ensure_not_corrupted(path);
     let conn = rusqlite::Connection::open(path).map_err(|e| format!("failed to open kill history database: {e}"))?;
     conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| format!("failed to set WAL journal mode: {e}"))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5)).map_err(|e| format!("failed to set busy timeout: {e}"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(15)).map_err(|e| format!("failed to set busy timeout: {e}"))?;
     Ok(conn)
+}
+
+/// Opens a write transaction as `BEGIN IMMEDIATE` instead of rusqlite's
+/// default `BEGIN DEFERRED`. See open_db's note: any transaction here that
+/// reads before it writes (mark_ganked does - it looks up the gank
+/// candidates, then UPDATEs them) will have its read->write upgrade fail
+/// outright with "database is locked" if the always-running live recorder
+/// commits from its own connection in between, and busy_timeout does not
+/// cover that case. An immediate transaction takes the write lock at BEGIN,
+/// so there is never a snapshot to invalidate and a writer-vs-writer
+/// collision is the ordinary busy_timeout-covered wait instead.
+fn write_tx(conn: &mut rusqlite::Connection) -> Result<rusqlite::Transaction<'_>, String> {
+    conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("sqlite transaction failed: {e}"))
 }
 
 fn ensure_schema(conn: &rusqlite::Connection) -> Result<(), String> {
@@ -463,7 +495,7 @@ pub async fn record_kills(app: &tauri::AppHandle, client: &reqwest::Client, kill
     let concord_kill_ids: Vec<i64> = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<i64>, String> {
         let mut conn = open_db(&path)?;
         ensure_schema(&conn)?;
-        let tx = conn.transaction().map_err(|e| format!("sqlite transaction failed: {e}"))?;
+        let tx = write_tx(&mut conn)?;
 
         let mut concord_kill_ids = Vec::new();
 
@@ -609,7 +641,7 @@ async fn mark_ganked(app: &tauri::AppHandle, concord_kill_ids: Vec<i64>) -> Resu
     let path = db_path(app)?;
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         let mut conn = open_db(&path)?;
-        let tx = conn.transaction().map_err(|e| format!("sqlite transaction failed: {e}"))?;
+        let tx = write_tx(&mut conn)?;
 
         for concord_kill_id in concord_kill_ids {
             let ganger_and_time: Option<(Option<i64>, String)> = tx
@@ -665,19 +697,37 @@ async fn mark_ganked(app: &tauri::AppHandle, concord_kill_ids: Vec<i64>) -> Resu
     .map_err(|e| format!("ganked correlation task failed: {e}"))?
 }
 
+/// record_kills calls this after every batch - the live recorder's steady
+/// trickle and, crucially, every single chunk of the 30-day backfill - so
+/// it runs against a database holding a month of EVE-wide kills (hundreds
+/// of thousands of rows, millions of attacker rows). The cutoff is a
+/// precomputed timestamp string in the exact format killmail_time is
+/// stored in (ESI's `2026-08-27T12:34:56Z`), compared with a bare `<`:
+/// that lets both deletes SEARCH idx_kill_history_time / idx_kha_time
+/// (verified: EXPLAIN QUERY PLAN goes from full "SCAN ... USING COVERING
+/// INDEX" to "SEARCH ... (killmail_time<?)", ~170ms -> ~0ms on the live
+/// database). Wrapping the column in datetime() the way the old query did
+/// defeats the index and forces a full scan of both tables while holding
+/// the write lock - exactly the kind of long lock hold that turns a
+/// concurrent writer's wait into a "database is locked" failure.
 async fn prune(app: &tauri::AppHandle) -> Result<(), String> {
     let path = db_path(app)?;
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        let conn = open_db(&path)?;
-        let cutoff = format!("-{RETENTION_DAYS} days");
-        conn.execute(
-            "DELETE FROM kill_history_attackers WHERE datetime(killmail_time) < datetime('now', ?1)",
-            [&cutoff],
-        )
-        .map_err(|e| format!("failed to prune kill_history_attackers: {e}"))?;
-        conn.execute("DELETE FROM kill_history WHERE datetime(killmail_time) < datetime('now', ?1)", [&cutoff])
+        let mut conn = open_db(&path)?;
+        // Same instant on both statements, and matches how killmail_time is
+        // written (see row inserts in record_kills - straight from ESI).
+        let cutoff = (Utc::now() - Duration::days(RETENTION_DAYS)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        // One immediate transaction rather than two autocommit statements:
+        // takes the write lock once for both deletes, and keeps the child
+        // (kill_history_attackers) and parent (kill_history) rows dropping
+        // as a single unit so a concurrent reader never sees one without
+        // the other.
+        let tx = write_tx(&mut conn)?;
+        tx.execute("DELETE FROM kill_history_attackers WHERE killmail_time < ?1", [&cutoff])
+            .map_err(|e| format!("failed to prune kill_history_attackers: {e}"))?;
+        tx.execute("DELETE FROM kill_history WHERE killmail_time < ?1", [&cutoff])
             .map_err(|e| format!("failed to prune kill_history: {e}"))?;
-        Ok(())
+        tx.commit().map_err(|e| format!("failed to commit kill history prune: {e}"))
     })
     .await
     .map_err(|e| format!("kill history prune task failed: {e}"))?
@@ -1713,4 +1763,256 @@ pub async fn run_startup_backfill(app: tauri::AppHandle, client: reqwest::Client
         }
     }
     start_backfill(app, client).await;
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+
+    fn temp_db_path() -> PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("vesper_kill_history_test_{}_{nanos}.sqlite", std::process::id()))
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(PathBuf::from(format!("{}{suffix}", path.display())));
+        }
+    }
+
+    fn seed_row(path: &std::path::Path) {
+        let conn = open_db(path).unwrap();
+        ensure_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO kill_history (killmail_id, killmail_time, solar_system_id, system_name, ship_type_id, ship_type_name)
+             VALUES (1, '2026-08-27T00:00:00Z', 30000142, 'Jita', 587, 'Rifter')",
+            [],
+        )
+        .unwrap();
+    }
+
+    /// The bug `write_tx` exists to prevent, reproduced directly: a
+    /// `BEGIN DEFERRED` transaction (rusqlite's `Connection::transaction`
+    /// default) that reads before it writes takes a WAL read snapshot, and
+    /// SQLite fails its later read->write upgrade *immediately* - not a
+    /// busy_timeout retry - once any other connection has committed against
+    /// that snapshot. This is exactly what the startup backfill's
+    /// mark_ganked hit while the always-running live recorder wrote from
+    /// its own connection: "failed to mark kill as ganked: database is
+    /// locked", on date after date.
+    #[test]
+    fn deferred_read_then_write_loses_to_a_concurrent_commit() {
+        let path = temp_db_path();
+        seed_row(&path);
+
+        let mut writer = open_db(&path).unwrap();
+        let other = open_db(&path).unwrap();
+
+        let tx = writer.transaction().unwrap();
+        let _: i64 = tx
+            .query_row("SELECT killmail_id FROM kill_history WHERE killmail_id = 1", [], |r| r.get(0))
+            .unwrap();
+
+        // Another connection commits before our transaction writes.
+        other.execute("UPDATE kill_history SET total_value = 1.0 WHERE killmail_id = 1", []).unwrap();
+
+        let err = tx
+            .execute("UPDATE kill_history SET ganked = 1 WHERE killmail_id = 1", [])
+            .expect_err("deferred read-then-write should fail after a concurrent commit");
+        assert!(err.to_string().to_lowercase().contains("lock"), "expected a lock error, got: {err}");
+
+        drop(tx);
+        cleanup(&path);
+    }
+
+    /// `write_tx` (`BEGIN IMMEDIATE`) takes the write lock up front, so
+    /// there is no snapshot to invalidate: a read-then-write transaction
+    /// commits cleanly even with another connection writing the whole time.
+    /// The other writer simply waits on busy_timeout and applies afterward.
+    #[test]
+    fn immediate_write_tx_survives_a_concurrent_writer() {
+        let path = temp_db_path();
+        seed_row(&path);
+
+        let mut writer = open_db(&path).unwrap();
+        let tx = write_tx(&mut writer).unwrap();
+        let _: i64 = tx
+            .query_row("SELECT killmail_id FROM kill_history WHERE killmail_id = 1", [], |r| r.get(0))
+            .unwrap();
+
+        let other_path = path.clone();
+        let other = std::thread::spawn(move || {
+            let conn = open_db(&other_path).unwrap();
+            conn.execute("UPDATE kill_history SET total_value = 2.0 WHERE killmail_id = 1", [])
+        });
+
+        // Give the other thread time to reach its (now blocked) write.
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        tx.execute("UPDATE kill_history SET ganked = 1 WHERE killmail_id = 1", []).unwrap();
+        tx.commit().unwrap();
+
+        assert_eq!(other.join().unwrap().unwrap(), 1, "the concurrent writer should have applied its row after waiting");
+
+        let check = open_db(&path).unwrap();
+        let (ganked, value): (i64, f64) = check
+            .query_row(
+                "SELECT ganked, total_value FROM kill_history WHERE killmail_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(ganked, 1, "our own mark-as-ganked write should have committed");
+        assert_eq!(value, 2.0, "the concurrent writer's update should also be present");
+
+        cleanup(&path);
+    }
+
+    /// Models the real collision: two independent writers (the live
+    /// recorder and the backfill) each opening their own connection and
+    /// running the read-then-write / insert / prune transaction shapes
+    /// this file actually uses, in a tight loop, against one WAL database.
+    /// Before the `write_tx` switch this reliably produced
+    /// "failed to mark kill as ganked: database is locked"; with it, every
+    /// transaction either commits or waits its turn - never fails.
+    #[test]
+    fn concurrent_writers_never_hit_database_is_locked() {
+        let path = temp_db_path();
+        seed_row(&path);
+
+        const ITERS: i64 = 60;
+        let backfill_path = path.clone();
+
+        // "Backfill": one chunk per iteration, in the same three separate
+        // transactions record_kills actually uses - a write-first INSERT
+        // batch, then a *read-first* mark-ganked pass (the transaction
+        // shape that was failing), then a retention-style delete.
+        let backfill = std::thread::spawn(move || -> Result<(), String> {
+            for i in 0..ITERS {
+                // 1. record_kills' INSERT batch (write-first).
+                {
+                    let mut conn = open_db(&backfill_path)?;
+                    ensure_schema(&conn)?;
+                    let tx = write_tx(&mut conn)?;
+                    for j in 0..20 {
+                        let id = 1_000 + i * 100 + j;
+                        tx.execute(
+                            "INSERT OR IGNORE INTO kill_history (killmail_id, killmail_time, solar_system_id, system_name, ship_type_id, ship_type_name, total_value)
+                             VALUES (?1, '2026-08-27T00:00:00Z', 30000142, 'Jita', 587, 'Rifter', 5000000.0)",
+                            [id],
+                        )
+                        .map_err(|e| format!("insert: {e}"))?;
+                    }
+                    tx.commit().map_err(|e| format!("commit: {e}"))?;
+                }
+
+                // 2. mark_ganked: read the candidates, THEN write - a fresh
+                //    connection and transaction, exactly as mark_ganked does.
+                {
+                    let mut conn = open_db(&backfill_path)?;
+                    let tx = write_tx(&mut conn)?;
+                    let candidates: Vec<i64> = {
+                        let mut stmt = tx
+                            .prepare("SELECT killmail_id FROM kill_history WHERE ganked = 0 AND total_value >= 1000000.0 LIMIT 10")
+                            .map_err(|e| format!("prepare: {e}"))?;
+                        let rows = stmt.query_map([], |r| r.get(0)).map_err(|e| format!("query: {e}"))?;
+                        rows.flatten().collect()
+                    };
+                    // A concurrent recorder commit lands right about here -
+                    // the window that used to invalidate a deferred
+                    // transaction's snapshot before this UPDATE.
+                    for candidate in candidates {
+                        tx.execute("UPDATE kill_history SET ganked = 1 WHERE killmail_id = ?1", [candidate])
+                            .map_err(|e| format!("failed to mark kill as ganked: {e}"))?;
+                    }
+                    tx.commit().map_err(|e| format!("ganked commit: {e}"))?;
+                }
+
+                // 3. prune.
+                {
+                    let mut conn = open_db(&backfill_path)?;
+                    let tx = write_tx(&mut conn)?;
+                    tx.execute("DELETE FROM kill_history WHERE killmail_id > 100000", [])
+                        .map_err(|e| format!("prune: {e}"))?;
+                    tx.commit().map_err(|e| format!("prune commit: {e}"))?;
+                }
+            }
+            Ok(())
+        });
+
+        // "Live recorder": a steady trickle of new kills from its own
+        // connection, exactly what was invalidating the backfill's snapshot.
+        let recorder_path = path.clone();
+        let recorder = std::thread::spawn(move || -> Result<(), String> {
+            for i in 0..ITERS {
+                let mut conn = open_db(&recorder_path)?;
+                ensure_schema(&conn)?;
+                let tx = write_tx(&mut conn)?;
+                for j in 0..5 {
+                    let id = 500_000 + i * 100 + j;
+                    tx.execute(
+                        "INSERT OR IGNORE INTO kill_history (killmail_id, killmail_time, solar_system_id, system_name, ship_type_id, ship_type_name)
+                         VALUES (?1, '2026-09-05T12:00:00Z', 30002187, 'Amarr', 587, 'Rifter')",
+                        [id],
+                    )
+                    .map_err(|e| format!("recorder insert: {e}"))?;
+                }
+                tx.commit().map_err(|e| format!("recorder commit: {e}"))?;
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Ok(())
+        });
+
+        backfill.join().unwrap().expect("backfill thread hit a database error");
+        recorder.join().unwrap().expect("recorder thread hit a database error");
+
+        cleanup(&path);
+    }
+
+    /// prune's cutoff is a plain string compared with `<`; this pins that a
+    /// lexicographic compare against the stored `...Z` timestamp format
+    /// actually drops the right rows (older than the cutoff) and keeps the
+    /// rest, matching the old datetime()-wrapped semantics.
+    #[test]
+    fn prune_cutoff_drops_only_older_rows() {
+        let path = temp_db_path();
+        let conn = open_db(&path).unwrap();
+        ensure_schema(&conn).unwrap();
+
+        for (id, time) in [
+            (1, "2026-07-01T00:00:00Z"), // well before cutoff
+            (2, "2026-08-06T23:59:59Z"), // one second before cutoff
+            (3, "2026-08-07T00:00:00Z"), // exactly the cutoff - kept (`<`)
+            (4, "2026-08-20T12:00:00Z"), // after cutoff
+        ] {
+            conn.execute(
+                "INSERT INTO kill_history (killmail_id, killmail_time, solar_system_id, system_name, ship_type_id, ship_type_name)
+                 VALUES (?1, ?2, 30000142, 'Jita', 587, 'Rifter')",
+                rusqlite::params![id, time],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO kill_history_attackers (killmail_id, killmail_time, final_blow) VALUES (?1, ?2, 1)",
+                rusqlite::params![id, time],
+            )
+            .unwrap();
+        }
+
+        let cutoff = "2026-08-07T00:00:00Z";
+        conn.execute("DELETE FROM kill_history_attackers WHERE killmail_time < ?1", [cutoff]).unwrap();
+        conn.execute("DELETE FROM kill_history WHERE killmail_time < ?1", [cutoff]).unwrap();
+
+        let remaining: Vec<i64> = {
+            let mut stmt = conn.prepare("SELECT killmail_id FROM kill_history ORDER BY killmail_id").unwrap();
+            stmt.query_map([], |r| r.get(0)).unwrap().flatten().collect()
+        };
+        assert_eq!(remaining, vec![3, 4], "rows 1 and 2 are older than the cutoff and should be gone");
+
+        let attackers: i64 =
+            conn.query_row("SELECT COUNT(*) FROM kill_history_attackers", [], |r| r.get(0)).unwrap();
+        assert_eq!(attackers, 2, "attacker rows for the pruned kills should be gone too");
+
+        drop(conn);
+        cleanup(&path);
+    }
 }

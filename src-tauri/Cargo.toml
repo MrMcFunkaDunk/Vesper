@@ -4,6 +4,12 @@ version = "1.7.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+# `tauri dev` shells out to plain `cargo run` (no --bin flag), which only
+# auto-resolves when exactly one binary target exists. A second bin under
+# src/bin/ (e.g. a one-off debug probe) makes that ambiguous and `cargo run`
+# refuses to guess - this pins the default explicitly so extra bin targets
+# never break the dev workflow again.
+default-run = "tauri-app"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
