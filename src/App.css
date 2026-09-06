@@ -7756,11 +7756,12 @@ body[data-reduce-motion="true"] .skeleton-row {
     0 0 10px var(--wormhole-glow);
 }
 
-/* Same slot and type treatment as the wormhole badge, but the colour comes
-   inline from securityColor() (the --sec-N scale, per-0.1) so the tag and
-   that system's dot on the map are always the same colour. Deliberately no
-   neon glow - that stays unique to the wormhole badge, which flags the one
-   kind of kill that never appears on the map at all. */
+/* Same slot, type, and neon-glow treatment as the wormhole badge, but the
+   colour comes inline from securityColor() (the --sec-N scale, per-0.1) so
+   the tag and that system's dot on the map are always the same colour - the
+   glow itself is built from currentColor rather than a fixed --*-glow token
+   since it needs to follow whichever --sec-N value is actually inline here,
+   not one fixed colour the way the wormhole badge's own glow is. */
 .map-ticker-sec-badge {
   font-family: var(--font-label);
   font-size: 10.5px;
@@ -7768,6 +7769,9 @@ body[data-reduce-motion="true"] .skeleton-row {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   white-space: nowrap;
+  text-shadow:
+    0 0 5px color-mix(in srgb, currentColor 55%, transparent),
+    0 0 10px color-mix(in srgb, currentColor 55%, transparent);
 }
 
 .map-ticker-row-body {
