@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { Calculator, X } from "lucide-react";
 import { getCharacterLoyalty, type CharacterLoyalty } from "../lib/eve";
 import { getLoyaltyStoreOffers, type LoyaltyStoreOffer } from "../lib/loyalty";
-import { getMarketPrices } from "../lib/market";
+import { getMarketPrices, getRegionSellMinPrice } from "../lib/market";
+import { TRADE_HUB_REGIONS, regionLabelWithHub } from "../lib/map";
 import { formatIsk, typeIconUrl } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useSortableRows } from "../hooks/useSortableRows";
@@ -33,6 +35,10 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
   const [loadingOffers, setLoadingOffers] = useState(false);
   const [prices, setPrices] = useState<Map<number, number>>(new Map());
   const [query, setQuery] = useState("");
+  const [calcOfferId, setCalcOfferId] = useState<number | null>(null);
+  const [calcQty, setCalcQty] = useState("");
+  const [hubPrices, setHubPrices] = useState<Map<number, number | null>>(new Map());
+  const [loadingHubPrices, setLoadingHubPrices] = useState(false);
 
   useEffect(() => {
     setLoyalty(null);
@@ -94,6 +100,23 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
     return ranked;
   }, [offers, prices]);
 
+  // Click-to-select alternative to typing a search term - every distinct
+  // item name plus every distinct significant word across them (so picking
+  // "Datacore" from the list narrows to all 6 variants exactly like typing
+  // "Datacore" would, not just the one exact item you clicked), fed into
+  // the search box's own <datalist> so browsing beats retyping the same
+  // filter term every visit without losing the ability to type one.
+  const itemSuggestions = useMemo(() => {
+    const names = new Set<string>();
+    for (const o of rankedOffers) {
+      names.add(o.type_name);
+      for (const word of o.type_name.split(/\s+/)) {
+        if (word.length > 1) names.add(word);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [rankedOffers]);
+
   const filteredOffers = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rankedOffers;
@@ -107,6 +130,42 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
     reward_value: (o) => o.rewardValue,
     isk_per_lp: (o) => o.iskPerLp,
   }, "isk_per_lp");
+
+  const calcOffer = rankedOffers.find((o) => o.offer_id === calcOfferId) ?? null;
+
+  // Re-fetches whenever the selected offer's reward item changes - not on
+  // every keystroke in the quantity box, since the per-hub sell price only
+  // depends on which item is selected, never on how many you're buying.
+  useEffect(() => {
+    if (calcOffer == null) {
+      setHubPrices(new Map());
+      return;
+    }
+    let cancelled = false;
+    setLoadingHubPrices(true);
+    Promise.all(TRADE_HUB_REGIONS.map((hub) => getRegionSellMinPrice(hub.regionId, calcOffer.type_id).then((price) => [hub.regionId, price] as const)))
+      .then((results) => {
+        if (!cancelled) setHubPrices(new Map(results));
+      })
+      .catch((err) => reportError(`Failed to load trade hub prices: ${String(err)}`))
+      .finally(() => {
+        if (!cancelled) setLoadingHubPrices(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calcOffer?.type_id, reportError]);
+
+  const desiredQty = Math.max(0, Math.floor(Number(calcQty) || 0));
+  // Most LP offers hand back more than one unit per completion (see the
+  // screenshot's own "x5" datacore offers) - rounds UP to the nearest whole
+  // completion so "I want 5000" against a x5 offer buys exactly 1000 runs,
+  // not a fractional one, and actualReceived says plainly if that overshoots.
+  const runsNeeded = calcOffer && desiredQty > 0 ? Math.ceil(desiredQty / calcOffer.quantity) : 0;
+  const actualReceived = calcOffer ? runsNeeded * calcOffer.quantity : 0;
+  const totalLpCost = calcOffer ? runsNeeded * calcOffer.lp_cost : 0;
+  const totalIskCost = calcOffer ? runsNeeded * calcOffer.totalCost : 0;
 
   if (characterId == null) {
     return <p className="detail-empty">Pick a character to see their loyalty points and LP stores.</p>;
@@ -144,17 +203,115 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
         <p className="detail-empty">This corporation has no LP store offers.</p>
       ) : (
         <>
-          <input
-            type="text"
-            className="contracts-search-input"
-            placeholder="Filter items..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          <div className="lp-store-filter-row">
+            <input
+              type="text"
+              list="lp-store-item-suggestions"
+              className="contracts-search-input"
+              placeholder="Pick or type an item..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <datalist id="lp-store-item-suggestions">
+              {itemSuggestions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+            {query.trim() !== "" && (
+              <button type="button" className="wh-link-btn" onClick={() => setQuery("")}>
+                ← Back to full list
+              </button>
+            )}
+          </div>
           <p className="settings-section-hint">
-            Ranked by estimated ISK profit per LP spent (reward value minus ISK cost and any turned-in items' value,
-            all priced at EVE-wide average - a rough guide, not a guaranteed sell price).
+            Click the search box to pick an item instead of typing one, or type your own search term. Ranked by
+            estimated ISK profit per LP spent (reward value minus ISK cost and any turned-in items' value, all priced
+            at EVE-wide average - a rough guide, not a guaranteed sell price). Click the calculator on any row to
+            price out a bulk buy against live sell orders at all 5 trade hubs.
           </p>
+
+          {calcOffer && (
+            <div className="lp-calculator">
+              <div className="lp-calculator-header">
+                <span className="asset-item-cell">
+                  <img src={typeIconUrl(calcOffer.type_id, 32, calcOffer.type_name)} alt="" className="asset-item-icon" />
+                  {calcOffer.type_name}
+                  {calcOffer.quantity > 1 ? ` (x${calcOffer.quantity} per completion)` : ""}
+                </span>
+                <button type="button" className="wh-link-btn" onClick={() => setCalcOfferId(null)}>
+                  <X size={13} strokeWidth={2} /> Close
+                </button>
+              </div>
+              <label className="wh-field-label lp-calculator-qty">
+                How many {calcOffer.type_name} do you want?
+                <input
+                  type="number"
+                  min={0}
+                  className="industry-field-input"
+                  placeholder="e.g. 5000"
+                  value={calcQty}
+                  onChange={(e) => setCalcQty(e.target.value)}
+                />
+              </label>
+              {desiredQty > 0 && (
+                <>
+                  <p className="settings-section-hint">
+                    That's {runsNeeded.toLocaleString()} completion{runsNeeded === 1 ? "" : "s"} of this exchange, for{" "}
+                    {actualReceived.toLocaleString()} {calcOffer.type_name} total
+                    {actualReceived !== desiredQty ? ` (rounded up from ${desiredQty.toLocaleString()})` : ""}.
+                  </p>
+                  <div className="lp-calculator-totals">
+                    <div className="lp-calculator-stat">
+                      <span className="lp-calculator-stat-label">Total LP Cost</span>
+                      <span className="lp-calculator-stat-value">{totalLpCost.toLocaleString()} LP</span>
+                    </div>
+                    <div className="lp-calculator-stat">
+                      <span className="lp-calculator-stat-label">Total ISK Cost</span>
+                      <span className="lp-calculator-stat-value wallet-amount-negative">{formatIsk(totalIskCost)}</span>
+                    </div>
+                  </div>
+                  <div className="data-table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Trade Hub</th>
+                          <th className="data-table-numeric">Sell Price (each)</th>
+                          <th className="data-table-numeric">Total Sell Value</th>
+                          <th className="data-table-numeric">Potential Profit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {loadingHubPrices ? (
+                          <tr>
+                            <td colSpan={4} className="detail-empty">
+                              Checking live sell orders...
+                            </td>
+                          </tr>
+                        ) : (
+                          TRADE_HUB_REGIONS.map((hub) => {
+                            const sellPrice = hubPrices.get(hub.regionId);
+                            const totalValue = sellPrice != null ? sellPrice * actualReceived : null;
+                            const profit = totalValue != null ? totalValue - totalIskCost : null;
+                            return (
+                              <tr key={hub.regionId}>
+                                <td>{regionLabelWithHub(hub.regionName)}</td>
+                                <td className="data-table-numeric">{sellPrice != null ? formatIsk(sellPrice) : "No sell orders"}</td>
+                                <td className="data-table-numeric">{totalValue != null ? formatIsk(totalValue) : "—"}</td>
+                                <td className={`data-table-numeric ${profit != null && profit >= 0 ? "wallet-amount-positive" : "wallet-amount-negative"}`}>
+                                  {profit != null ? formatIsk(profit) : "—"}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="data-table-wrap">
             <table className="data-table">
               <thead>
@@ -165,11 +322,12 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
                   <th>Turn In</th>
                   <SortableTh label="Reward Value" sortKey="reward_value" activeKey={sortedOffers.sortKey} dir={sortedOffers.sortDir} onSort={sortedOffers.sort} numeric />
                   <SortableTh label="ISK / LP" sortKey="isk_per_lp" activeKey={sortedOffers.sortKey} dir={sortedOffers.sortDir} onSort={sortedOffers.sort} numeric />
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {sortedOffers.rows.map((o) => (
-                  <tr key={o.offer_id}>
+                  <tr key={o.offer_id} className={o.offer_id === calcOfferId ? "lp-store-row-active" : ""}>
                     <td>
                       <span className="asset-item-cell">
                         <img src={typeIconUrl(o.type_id, 32, o.type_name)} alt="" className="asset-item-icon" />
@@ -187,6 +345,19 @@ function LpStorePanel({ characterId }: LpStorePanelProps) {
                     <td className="data-table-numeric wallet-amount-positive">{formatIsk(o.rewardValue)}</td>
                     <td className={`data-table-numeric ${o.iskPerLp >= 0 ? "wallet-amount-positive" : "wallet-amount-negative"}`}>
                       {formatIsk(o.iskPerLp)}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="lp-store-calc-btn"
+                        title={`Calculate a bulk buy of ${o.type_name}`}
+                        onClick={() => {
+                          setCalcOfferId(o.offer_id);
+                          setCalcQty((prev) => (calcOfferId === o.offer_id ? prev : String(o.quantity)));
+                        }}
+                      >
+                        <Calculator size={14} strokeWidth={2} />
+                      </button>
                     </td>
                   </tr>
                 ))}

@@ -7,6 +7,7 @@ import type { TrackedEntityEvent } from "../lib/trackedEntities";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from "@tauri-apps/plugin-autostart";
 import { playProximityAlert, playNotificationPing } from "../lib/sound";
 import { useSoundEnabled } from "../hooks/useSoundEnabled";
 import { useSoundVolume } from "../hooks/useSoundVolume";
@@ -67,6 +68,7 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
   const [updateCheck, setUpdateCheck] = useState<"idle" | "checking" | "up-to-date" | "error">("idle");
   const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
   const [installingUpdate, setInstallingUpdate] = useState(false);
+  const [autostart, setAutostart] = useState(false);
   const reportError = useErrorReporter();
 
   useEffect(() => {
@@ -74,6 +76,30 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
       .then(setVersion)
       .catch(() => {});
   }, []);
+
+  // The OS-level registration (a Windows Registry Run key, in practice) is
+  // the actual source of truth, not a preference this app stores itself -
+  // reading it back on mount means the toggle can never drift from what's
+  // really registered, even if it changed outside VESPER (e.g. Windows'
+  // own Startup Apps settings).
+  useEffect(() => {
+    isAutostartEnabled()
+      .then(setAutostart)
+      .catch(() => {});
+  }, []);
+
+  async function handleAutostartToggle(checked: boolean) {
+    try {
+      if (checked) {
+        await enableAutostart();
+      } else {
+        await disableAutostart();
+      }
+      setAutostart(checked);
+    } catch (err) {
+      reportError(`Failed to ${checked ? "enable" : "disable"} launch at startup: ${String(err)}`);
+    }
+  }
 
   async function handleCheckForUpdates() {
     setUpdateCheck("checking");
@@ -299,6 +325,14 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
               </div>
             </div>
           )}
+        </div>
+
+        <div className="settings-section">
+          <h3>Startup</h3>
+          <label className="settings-checkbox-row">
+            <input type="checkbox" checked={autostart} onChange={(e) => handleAutostartToggle(e.target.checked)} />
+            Launch VESPER when Windows starts
+          </label>
         </div>
 
         <div className="settings-section">

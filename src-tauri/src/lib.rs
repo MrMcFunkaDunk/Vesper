@@ -36,6 +36,22 @@ pub fn run() {
         .expect("failed to build HTTP client");
 
     tauri::Builder::default()
+        // Must be the first plugin registered (Tauri's own convention - it
+        // needs to intercept a relaunch before anything else runs). Autostart
+        // makes a second, accidental launch (a startup entry AND a manual
+        // double-click, or two dev sessions) far more likely than before -
+        // exactly the kind of concurrent-instance collision that corrupted
+        // kill_history.sqlite earlier. Rather than let a second process start
+        // and fight the first one over that same database, this focuses the
+        // already-running window and lets the new launch attempt exit.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())

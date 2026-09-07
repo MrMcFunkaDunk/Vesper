@@ -14418,3 +14418,86 @@ label.settings-sync-file-row {
   background: var(--bg-elevated);
   color: var(--accent);
 }
+
+.lp-store-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Bulk-buy calculator - see LpStorePanel.tsx. Sits above the offer table
+   rather than inline/expanding a row, since its own results table needs
+   real width and shouldn't fight the offer table's own columns for it. */
+.lp-calculator {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.lp-calculator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.lp-calculator-qty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 240px;
+  margin-bottom: 8px;
+}
+
+.lp-calculator-totals {
+  display: flex;
+  gap: 24px;
+  margin: 12px 0;
+}
+
+.lp-calculator-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lp-calculator-stat-label {
+  font-family: var(--font-label);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.lp-calculator-stat-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.lp-store-calc-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.lp-store-calc-btn:hover {
+  color: var(--accent);
+  border-color: var(--border-active);
+}
+
+.lp-store-row-active {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--accent-soft);
+}

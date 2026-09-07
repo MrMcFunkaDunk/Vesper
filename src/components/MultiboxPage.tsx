@@ -210,7 +210,16 @@ function MultiboxProfileBar({
   );
 }
 
-function MultiboxPage() {
+interface MultiboxPageProps {
+  /** Owned by App.tsx (see useMultiboxAutoDetect's own comment for why) -
+   * this page only reads/writes it, so the setting stays correct even
+   * while this whole component is unmounted (it's lazy-loaded, gone the
+   * moment you leave this tab). */
+  autoDetect: boolean;
+  onAutoDetectChange: (enabled: boolean) => void;
+}
+
+function MultiboxPage({ autoDetect, onAutoDetectChange }: MultiboxPageProps) {
   const [clients, setClients] = useState<MultiboxClient[]>([]);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [pending, setPending] = useState(false);
@@ -354,6 +363,11 @@ function MultiboxPage() {
               <h3>General</h3>
               <p className="settings-section-hint">Applies live to any already-open previews within about a second.</p>
 
+              <label className="settings-checkbox-row">
+                <input type="checkbox" checked={autoDetect} onChange={(e) => onAutoDetectChange(e.target.checked)} />
+                Automatically open the floating preview once 2+ EVE clients are running (checked from anywhere in
+                VESPER, not just this tab)
+              </label>
               <label className="settings-checkbox-row">
                 <input type="checkbox" checked={settings.always_on_top} onChange={(e) => updateSettings({ always_on_top: e.target.checked })} />
                 Always on top of other windows

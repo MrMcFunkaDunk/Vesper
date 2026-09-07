@@ -33,6 +33,7 @@ import LoginScreen from "./components/LoginScreen";
 import { getSession, setActiveCharacter, logoutCharacter, startLogin, type Session } from "./lib/eve";
 import { DASHBOARD_SCOPES } from "./lib/scopes";
 import { useErrorReporter } from "./hooks/useErrorReporter";
+import { useMultiboxAutoDetect } from "./hooks/useMultiboxAutoDetect";
 import { CharacterLocationProvider } from "./hooks/useCharacterLocation";
 import { ChainAutoMappingEffect } from "./hooks/useChainAutoMapping";
 import { SkillQueueWatchEffect } from "./hooks/useSkillQueueWatch";
@@ -79,6 +80,11 @@ function App() {
   const [pendingMarketItem, setPendingMarketItem] = useState<MarketItemRef | null>(null);
   const [pendingFitShipTypeId, setPendingFitShipTypeId] = useState<number | null>(null);
   const reportError = useErrorReporter();
+  // Mounted here (not inside MultiboxPage, which is lazy-loaded and
+  // unmounts the moment you leave that tab) so 2+ running EVE clients gets
+  // noticed and the floating preview opens regardless of which tab is
+  // active - see the hook's own comment for why.
+  const [multiboxAutoDetect, setMultiboxAutoDetect] = useMultiboxAutoDetect();
 
   // The Map page owns real per-session state worth keeping warm across
   // navigation - the canvas's own zoom/pan, the heat map, and (via
@@ -298,7 +304,7 @@ function App() {
         ) : activeId === "mining" ? (
           <MiningPage characters={session.characters} />
         ) : activeId === "multiboxing" ? (
-          <MultiboxPage />
+          <MultiboxPage autoDetect={multiboxAutoDetect} onAutoDetectChange={setMultiboxAutoDetect} />
         ) : (
           <MainContent icon={active.icon} label={active.label} description={active.description} />
         )}
