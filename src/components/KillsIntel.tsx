@@ -315,7 +315,7 @@ function KillsIntel({
             }
           }}
         >
-          Kills &amp; Intel
+          Killboard
         </span>
         {stack.slice(0, -1).map((view, i) => (
           <span key={i}>
@@ -492,7 +492,7 @@ function KillsIntel({
         </div>
 
         <div className="kills-header">
-          <p className="eyebrow">Kills & Intel</p>
+          <p className="eyebrow">Killboard</p>
           <h2>{tabLabel}</h2>
         </div>
 

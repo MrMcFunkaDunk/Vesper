@@ -7872,6 +7872,15 @@ body[data-reduce-motion="true"] .skeleton-row {
   padding: 1.5px 0;
 }
 
+/* An open ring rather than a filled square - matches the actual contested-
+   system marker on the map itself (a stroked circle, not a filled dot),
+   so the legend swatch reads as "this is what that ring looks like". */
+.map-legend-swatch-ring {
+  background: none !important;
+  border: 2px solid;
+  border-radius: 50%;
+}
+
 .map-legend-swatch {
   display: flex;
   align-items: center;
@@ -9968,12 +9977,7 @@ body[data-reduce-motion="true"] .mineral-ticker-half-clone {
   }
 }
 
-/* --- Intel Check (local threat) --------------------------------------- */
-
-.main-intel-check {
-  align-items: flex-start;
-  justify-content: flex-start;
-}
+/* --- Local Threat / D-Scan (Map, Gate & Intel Check page) -------------- */
 
 .intel-check-page {
   width: 100%;
@@ -9983,16 +9987,8 @@ body[data-reduce-motion="true"] .mineral-ticker-half-clone {
   gap: var(--space-lg);
 }
 
-.intel-check-header h2 {
-  margin: 2px 0 0;
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 25px;
-  color: var(--text);
-}
-
 .intel-check-intro {
-  margin: 8px 0 0;
+  margin: 0;
   max-width: 760px;
   font-size: 14.5px;
   line-height: 1.5;
@@ -10010,148 +10006,6 @@ body[data-reduce-motion="true"] .mineral-ticker-half-clone {
   display: flex;
   gap: 10px;
   margin-top: -4px;
-}
-
-/* --- Intel Check: Live Feed tab ---------------------------------------- */
-
-.intel-feed-listener-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.intel-feed-listener-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.intel-feed-listener-chip {
-  padding: 8px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--bg-elevated);
-  color: var(--text);
-  font-family: var(--font-label);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.intel-feed-listener-chip:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.intel-feed-toolbar-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.intel-feed-selected-listener {
-  margin: 0;
-  font-family: var(--font-label);
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.intel-feed-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-.intel-feed-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-label);
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.intel-feed-live-dot {
-  color: var(--accent);
-  animation: intel-feed-pulse 1.6s ease-in-out infinite;
-}
-
-@keyframes intel-feed-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-.intel-feed-checked {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 360px;
-}
-
-.intel-feed-checked-label {
-  margin: 0;
-  font-family: var(--font-label);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-}
-
-.intel-feed-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  padding: 10px 14px;
-  max-height: 640px;
-  overflow-y: auto;
-}
-
-.intel-feed-line {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--border-subtle, var(--border));
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.intel-feed-line:last-child {
-  border-bottom: none;
-}
-
-.intel-feed-line-time {
-  flex: 0 0 auto;
-  font-family: var(--font-label);
-  font-size: 11.5px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.intel-feed-line-speaker {
-  flex: 0 0 auto;
-  background: none;
-  border: none;
-  padding: 0;
-  font-family: var(--font-label);
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-.intel-feed-line-speaker:hover {
-  text-decoration: underline;
-}
-
-.intel-feed-line-message {
-  flex: 1 1 auto;
-  color: var(--text-secondary);
-  word-break: break-word;
 }
 
 .intel-check-grid {

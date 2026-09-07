@@ -45,7 +45,7 @@ import {
   type DecryptorEffect,
 } from "../lib/industryMath";
 import { formatIsk, typeIconUrl } from "../lib/format";
-import { searchSystemsLive, TRADE_HUB_REGIONS, type SystemSearchMatch } from "../lib/map";
+import { searchSystemsLive, TRADE_HUB_REGIONS, tradeHubName, type SystemSearchMatch } from "../lib/map";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useIndustryDefaults } from "../hooks/useIndustryDefaults";
@@ -1390,7 +1390,7 @@ function ProductionCalculator() {
               <select className="industry-field-input" value={hubRegionId} onChange={(e) => setHubRegionId(Number(e.target.value))}>
                 {TRADE_HUB_REGIONS.map((h) => (
                   <option key={h.regionId} value={h.regionId}>
-                    {h.regionName}
+                    {tradeHubName(h.regionName)}
                   </option>
                 ))}
               </select>
@@ -2003,7 +2003,7 @@ function ReprocessingCalculator() {
               <select className="industry-field-input" value={hubRegionId} onChange={(e) => setHubRegionId(Number(e.target.value))}>
                 {TRADE_HUB_REGIONS.map((h) => (
                   <option key={h.regionId} value={h.regionId}>
-                    {h.regionName}
+                    {tradeHubName(h.regionName)}
                   </option>
                 ))}
               </select>

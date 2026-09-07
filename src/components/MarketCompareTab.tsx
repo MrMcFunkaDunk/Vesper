@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { searchMarketTypes, getRegionSellMinPrice, getRegionMarketOrders, type TypeSearchMatch, type MarketOrder } from "../lib/market";
 import { weightedPercentilePrice } from "../lib/mining";
-import { TRADE_HUB_REGIONS } from "../lib/map";
+import { TRADE_HUB_REGIONS, tradeHubName } from "../lib/map";
 import { formatIsk, typeIconUrl } from "../lib/format";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
@@ -205,7 +205,7 @@ function MarketCompareTab() {
                     const diff = r.price != null && cheapest != null && cheapest > 0 ? ((r.price - cheapest) / cheapest) * 100 : null;
                     return (
                       <tr key={r.regionId}>
-                        <td>{r.regionName}</td>
+                        <td>{tradeHubName(r.regionName)}</td>
                         <td className="data-table-numeric market-stat-value-isk">{r.price != null ? formatIsk(r.price) : "No orders"}</td>
                         <td className={`data-table-numeric${diff != null && diff > 0 ? " wallet-amount-negative" : diff === 0 ? " wallet-amount-positive" : ""}`}>
                           {diff != null ? `${diff > 0 ? "+" : ""}${diff.toFixed(1)}%` : "–"}

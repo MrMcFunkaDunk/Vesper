@@ -16,7 +16,6 @@ const MapPage = lazy(() => import("./components/MapPage"));
 const MailPage = lazy(() => import("./components/MailPage"));
 const WalletMarketPage = lazy(() => import("./components/WalletMarketPage"));
 const PlanetaryIndustry = lazy(() => import("./components/PlanetaryIndustry"));
-const IntelCheck = lazy(() => import("./components/IntelCheck"));
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const CalendarPage = lazy(() => import("./components/CalendarPage"));
 const FittingsPage = lazy(() => import("./components/FittingsPage"));
@@ -278,8 +277,6 @@ function App() {
             onConsumeInitialMarketItem={() => setPendingMarketItem(null)}
             onFitShip={handleFitShip}
           />
-        ) : activeId === "intel-check" ? (
-          <IntelCheck onSelectCharacter={handleOpenCharacterKillboard} />
         ) : activeId === "planetary" ? (
           <PlanetaryIndustry characters={session.characters} />
         ) : activeId === "settings" ? (
@@ -316,6 +313,7 @@ function App() {
                 onSelectKill={handleOpenKillmail}
                 onSelectSystem={handleOpenSystemKills}
                 onSelectGate={handleOpenGateKillboard}
+                onSelectCharacter={handleOpenCharacterKillboard}
                 characters={session.characters}
               />
             </Suspense>

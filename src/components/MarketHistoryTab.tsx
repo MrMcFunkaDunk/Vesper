@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getRegionMarketHistory, percentChange, type MarketHistoryPoint } from "../lib/market";
-import { TRADE_HUB_REGIONS } from "../lib/map";
+import { TRADE_HUB_REGIONS, tradeHubName } from "../lib/map";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import MiniPriceChart from "./MiniPriceChart";
 import GainersLosersPanel, { type GainerLoserItem } from "./GainersLosersPanel";
@@ -149,7 +149,7 @@ function MarketHistoryTab() {
             <select className="industry-field-input" value={hubRegionId} onChange={(e) => setHubRegionId(Number(e.target.value))}>
               {TRADE_HUB_REGIONS.map((h) => (
                 <option key={h.regionId} value={h.regionId}>
-                  {h.regionName}
+                  {tradeHubName(h.regionName)}
                 </option>
               ))}
             </select>

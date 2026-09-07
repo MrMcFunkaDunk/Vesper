@@ -20,6 +20,7 @@ mod route;
 mod scout;
 mod settings_sync;
 mod skillplans;
+mod threats;
 mod tracked_entities;
 mod wars;
 mod wormholes;
@@ -169,6 +170,11 @@ pub fn run() {
             commands::get_alliance_losses,
             commands::get_map_data,
             commands::get_system_detail,
+            commands::get_fw_systems,
+            commands::get_sovereignty_map,
+            commands::get_sov_structures,
+            commands::get_incursions,
+            commands::get_system_activity,
             commands::get_system_kill_history,
             commands::get_system_jump_history,
             commands::get_character_home_systems,

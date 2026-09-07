@@ -7,7 +7,6 @@ import {
   Wallet,
   Orbit,
   Mail,
-  UserSearch,
   Settings,
   Map as MapIcon,
   Factory,
@@ -29,7 +28,6 @@ import dashboardIcon from "../assets/sidebar-icons/dashboard.png";
 import killsIntelIcon from "../assets/sidebar-icons/kills-intel.png";
 import walletMarketIcon from "../assets/sidebar-icons/wallet-market.png";
 import mailIcon from "../assets/sidebar-icons/mail.png";
-import intelCheckIcon from "../assets/sidebar-icons/intel-check.png";
 import settingsIcon from "../assets/sidebar-icons/settings.png";
 import planetaryIndustryIcon from "../assets/sidebar-icons/planetary-industry.png";
 import mapIcon from "../assets/sidebar-icons/map.png";
@@ -60,7 +58,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     id: "kills",
-    label: "Kills & Intel",
+    label: "Killboard",
     icon: Radar,
     image: killsIntelIcon,
     description:
@@ -68,11 +66,11 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     id: "map",
-    label: "Map & Gate Checker",
+    label: "Map, Gate & Intel Check",
     icon: MapIcon,
     image: mapIcon,
     description:
-      "A searchable map of New Eden with live kill activity, so you can see where the action is and plan routes around it.",
+      "A searchable map of New Eden with live kill activity, plus gate-camp checking and local/D-Scan intel tools, so you can see where the action is and plan routes around it.",
   },
   {
     id: "path-wormhole-finder",
@@ -103,13 +101,6 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Mail,
     image: mailIcon,
     description: "A read-only view of your EVE mail inbox.",
-  },
-  {
-    id: "intel-check",
-    label: "Intel Check",
-    icon: UserSearch,
-    image: intelCheckIcon,
-    description: "Paste a chat list and look up affiliations for everyone in it.",
   },
   {
     id: "industry",
@@ -174,7 +165,6 @@ const NAV_CHANNEL_CODE: Record<string, string> = {
   wallet: "LOG",
   planetary: "LOG",
   mail: "COM",
-  "intel-check": "CBT",
   industry: "LOG",
   mining: "LOG",
   "fittings-fleets": "CBT",

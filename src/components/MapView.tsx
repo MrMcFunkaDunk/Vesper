@@ -1,7 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X, Crosshair, MapPin, BarChart3, RefreshCw } from "lucide-react";
 import SystemStatsPanel from "./SystemStatsPanel";
-import { getMapData, getCharacterHomeSystems, getPlayerStructures, type MapData, type MapSystem, type PlayerStructureInfo } from "../lib/map";
+import {
+  getMapData,
+  getCharacterHomeSystems,
+  getPlayerStructures,
+  getFwSystems,
+  fwFactionColor,
+  FW_FACTION_LIST,
+  getSovereigntyMap,
+  getSovStructures,
+  isSovVulnerableNow,
+  getIncursions,
+  getSystemActivity,
+  colorForId,
+  type MapData,
+  type MapSystem,
+  type PlayerStructureInfo,
+  type FwSystemStatus,
+  type SovEntry,
+  type SovStructureStatus,
+  type IncursionSystem,
+  type SystemActivityCounts,
+} from "../lib/map";
+import { useTrackedEntities } from "../hooks/useTrackedEntities";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import {
   securityColor,
@@ -21,6 +43,11 @@ import { getSystemKillHeat, type KillEntry, type SystemKillHeat } from "../lib/k
 import type { SystemSummary } from "./SystemKillboard";
 import { getCharacterLocation, type SessionCharacter } from "../lib/eve";
 import { THEME_CHANGE_EVENT, useTheme, isPremiumTheme } from "../hooks/useTheme";
+
+/** Which last-hour aggregate the background heat glow currently reads from
+ * - only one at a time (three overlapping glows would be unreadable), see
+ * the "Heat" mode selector in .map-layer-toggles. */
+type HeatMode = "kills" | "traffic" | "npc";
 
 const TICKER_LIMIT = 60;
 /** The nearby feed is a short-lived spotlight, not a growing log - capped
@@ -246,9 +273,16 @@ const HEAT_REFRESH_MS = 30_000;
  * lands around 100+ kills, matching the classic in-game kill heatmap this
  * is modeled on. 1-e^(-count/40): ~3% at 1 kill, ~46% at 25, ~92% at 100. */
 const HEAT_INTENSITY_DIVISOR = 40;
+/** Ship-jump counts at a busy trade hub run into the thousands/hour - kill
+ * counts never do - so the Traffic heat mode needs a much wider divisor or
+ * every populated system would read as identically maxed-out. */
+const TRAFFIC_INTENSITY_DIVISOR = 400;
+/** NPC/ratting kill counts sit closer to player kill counts than to jump
+ * counts, but still run a bit hotter in a busy null-sec system. */
+const NPC_INTENSITY_DIVISOR = 80;
 
-function heatIntensity(killCount: number): number {
-  return 1 - Math.exp(-killCount / HEAT_INTENSITY_DIVISOR);
+function heatIntensity(count: number, divisor: number = HEAT_INTENSITY_DIVISOR): number {
+  return 1 - Math.exp(-count / divisor);
 }
 
 /** Dim red -> vivid red as intensity climbs - stays red throughout rather
@@ -261,13 +295,34 @@ const HEAT_COLOR_STOPS: [number, number, number, number][] = [
   [1, 255, 40, 34],
 ];
 
-function heatColor(intensity: number): [number, number, number] {
-  let lo = HEAT_COLOR_STOPS[0];
-  let hi = HEAT_COLOR_STOPS[HEAT_COLOR_STOPS.length - 1];
-  for (let i = 0; i < HEAT_COLOR_STOPS.length - 1; i++) {
-    if (intensity >= HEAT_COLOR_STOPS[i][0] && intensity <= HEAT_COLOR_STOPS[i + 1][0]) {
-      lo = HEAT_COLOR_STOPS[i];
-      hi = HEAT_COLOR_STOPS[i + 1];
+/** Dim cyan -> bright cyan/white for the Traffic (ship-jump) heat mode -
+ * deliberately a cool color, never confusable with the kill heat's red at a
+ * glance regardless of which mode is currently active. */
+const TRAFFIC_COLOR_STOPS: [number, number, number, number][] = [
+  [0, 18, 60, 70],
+  [0.4, 30, 140, 170],
+  [1, 60, 220, 255],
+];
+
+/** Dim amber -> bright amber for the NPC-activity (ratting) heat mode - a
+ * third, distinct hue from both kills (red) and traffic (cyan). */
+const NPC_COLOR_STOPS: [number, number, number, number][] = [
+  [0, 70, 50, 12],
+  [0.4, 170, 120, 20],
+  [1, 255, 190, 40],
+];
+
+/** Sansha is the only faction that runs incursions - one fixed color, no
+ * palette needed the way FW's 4 factions or sov's arbitrary owners need. */
+const INCURSION_COLOR = "#c23b8a";
+
+function heatColor(intensity: number, stops: [number, number, number, number][] = HEAT_COLOR_STOPS): [number, number, number] {
+  let lo = stops[0];
+  let hi = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (intensity >= stops[i][0] && intensity <= stops[i + 1][0]) {
+      lo = stops[i];
+      hi = stops[i + 1];
       break;
     }
   }
@@ -539,6 +594,16 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const tickerHoveredIdRef = useRef<number | null>(null);
   const currentSystemIdRef = useRef<number | null>(null);
   const showServiceIconsRef = useRef(true);
+  const showFwContestedRef = useRef(false);
+  const fwSystemsRef = useRef<Map<number, FwSystemStatus>>(new Map());
+  const showSovRef = useRef(false);
+  const sovRef = useRef<Map<number, SovEntry>>(new Map());
+  const sovStructuresRef = useRef<Map<number, SovStructureStatus>>(new Map());
+  const trackedSovIdsRef = useRef<Set<number>>(new Set());
+  const showIncursionsRef = useRef(false);
+  const incursionsRef = useRef<Map<number, IncursionSystem>>(new Map());
+  const heatModeRef = useRef<HeatMode>("kills");
+  const activityRef = useRef<Map<number, SystemActivityCounts>>(new Map());
   const homePinsBySystemRef = useRef<Map<number, CharacterPin[]>>(new Map());
   const locationPinsBySystemRef = useRef<Map<number, CharacterPin[]>>(new Map());
   /** Screen-space hit boxes for every home/location pin drawn on the current
@@ -600,7 +665,21 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * state copy to notice when a resync actually changes it. */
   const [systemHeat, setSystemHeat] = useState<Map<number, SystemHeat>>(new Map());
   const [homeSystemCount, setHomeSystemCount] = useState(0);
-  const { legendOpen, setLegendOpen, showServiceIcons, setShowServiceIcons } = useMapDisplayPrefs();
+  const {
+    legendOpen,
+    setLegendOpen,
+    showServiceIcons,
+    setShowServiceIcons,
+    showFwContested,
+    setShowFwContested,
+    showSov,
+    setShowSov,
+    showIncursions,
+    setShowIncursions,
+    heatMode,
+    setHeatMode,
+  } = useMapDisplayPrefs();
+  const { entities: trackedEntities } = useTrackedEntities();
   // Ticks forward periodically purely to force the nearby-feed expiry check
   // below to re-run even when no new kill has arrived - otherwise a kill
   // sitting past PROXIMITY_EXPIRY_MS would only actually drop out of the
@@ -796,7 +875,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     // the Map tab and coming back fully unmounts/remounts it) - the pulse
     // should always resume on its own rather than depending on getting the
     // exact right effect ever fire again after a fresh mount.
-    if (animFrameRef.current === null && hasRecentHeat(heatMapRef.current, Date.now())) {
+    if (
+      animFrameRef.current === null &&
+      (hasRecentHeat(heatMapRef.current, Date.now()) ||
+        (showFwContestedRef.current && [...fwSystemsRef.current.values()].some((s) => s.contested)) ||
+        (showSovRef.current && [...sovStructuresRef.current.values()].some((s) => isSovVulnerableNow(s))))
+    ) {
       ensureAnimating();
     }
 
@@ -905,32 +989,67 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     // "was busy a while ago" read as visibly different states, not the
     // same static glow. draw() keeps re-running every animation frame
     // while anything is actively pulsing (see ensureAnimating below).
-    for (const [systemId, entry] of heatMapRef.current) {
-      if (entry.count <= 0) continue;
-      const system = systemById.get(systemId);
-      if (!system || !inView(system.x, system.y)) continue;
-      const sx = toScreenX(system.x);
-      const sy = toScreenY(system.y);
+    if (heatModeRef.current === "kills") {
+      for (const [systemId, entry] of heatMapRef.current) {
+        if (entry.count <= 0) continue;
+        const system = systemById.get(systemId);
+        if (!system || !inView(system.x, system.y)) continue;
+        const sx = toScreenX(system.x);
+        const sy = toScreenY(system.y);
 
-      const intensity = heatIntensity(entry.count);
-      const [hr, hg, hb] = heatColor(intensity);
-      // Purely a function of kill count - no pulse/wave here at all. Only
-      // the system dot itself (drawn later below) pulses; the heat glow is
-      // a steady "how hot has this system been" read that never animates.
-      const alpha = intensity;
+        const intensity = heatIntensity(entry.count);
+        const [hr, hg, hb] = heatColor(intensity);
+        // Purely a function of kill count - no pulse/wave here at all. Only
+        // the system dot itself (drawn later below) pulses; the heat glow is
+        // a steady "how hot has this system been" read that never animates.
+        const alpha = intensity;
 
-      const glowRadius = dotRadius * (4.5 + intensity * 11);
-      const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowRadius);
-      glow.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.95, 0.05, 0.95)})`);
-      glow.addColorStop(0.45, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.5, 0.03, 0.55)})`);
-      glow.addColorStop(1, `rgba(${hr}, ${hg}, ${hb}, 0)`);
-      ctx.save();
-      ctx.globalCompositeOperation = "screen";
-      ctx.fillStyle = glow;
-      ctx.beginPath();
-      ctx.arc(sx, sy, glowRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+        const glowRadius = dotRadius * (4.5 + intensity * 11);
+        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowRadius);
+        glow.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.95, 0.05, 0.95)})`);
+        glow.addColorStop(0.45, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.5, 0.03, 0.55)})`);
+        glow.addColorStop(1, `rgba(${hr}, ${hg}, ${hb}, 0)`);
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(sx, sy, glowRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    } else {
+      // Traffic (ship jumps) / NPC Activity modes - same glow technique as
+      // the kill heat above, just a different data source, divisor (see
+      // TRAFFIC_INTENSITY_DIVISOR/NPC_INTENSITY_DIVISOR's own comments for
+      // why jump counts need a much wider one), and color ramp, so no mode
+      // is ever visually confusable with another. No pulse/dot-level
+      // reactivity here - VESPER has no live jump/NPC-kill feed the way it
+      // does for player kills, only this last-hour aggregate.
+      const divisor = heatModeRef.current === "traffic" ? TRAFFIC_INTENSITY_DIVISOR : NPC_INTENSITY_DIVISOR;
+      const stops = heatModeRef.current === "traffic" ? TRAFFIC_COLOR_STOPS : NPC_COLOR_STOPS;
+      for (const entry of activityRef.current.values()) {
+        const count = heatModeRef.current === "traffic" ? entry.ship_jumps : entry.npc_kills;
+        if (count <= 0) continue;
+        const system = systemById.get(entry.system_id);
+        if (!system || !inView(system.x, system.y)) continue;
+        const sx = toScreenX(system.x);
+        const sy = toScreenY(system.y);
+
+        const intensity = heatIntensity(count, divisor);
+        const [hr, hg, hb] = heatColor(intensity, stops);
+        const glowRadius = dotRadius * (4.5 + intensity * 11);
+        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowRadius);
+        glow.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${clamp(intensity * 0.95, 0.05, 0.95)})`);
+        glow.addColorStop(0.45, `rgba(${hr}, ${hg}, ${hb}, ${clamp(intensity * 0.5, 0.03, 0.55)})`);
+        glow.addColorStop(1, `rgba(${hr}, ${hg}, ${hb}, 0)`);
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(sx, sy, glowRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
     }
 
     renderedPinsRef.current = [];
@@ -1008,6 +1127,98 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         ctx.strokeStyle = `rgba(${accentRgb}, 0.45)`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
+      }
+
+      // Faction-warfare contested ring - same fixed-pixel reasoning as the
+      // ticker-hover ring above, so a front-line system stands out even
+      // zoomed way out. Colored by the occupying faction (the one that wins
+      // it if it flips) and gently pulsing, so "actively contested right
+      // now" reads as distinctly different from the map's other static
+      // rings. Gated on the Faction Warfare toggle - see .map-layer-toggles.
+      if (showFwContestedRef.current) {
+        const fw = fwSystemsRef.current.get(system.id);
+        if (fw?.contested) {
+          const fwWave = pulseWave(now, system.id + 500_000, 0.35);
+          ctx.beginPath();
+          ctx.arc(sx, sy, 13, 0, Math.PI * 2);
+          ctx.strokeStyle = fwFactionColor(fw.occupier_faction_id);
+          ctx.globalAlpha = fwWave;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      // Sovereignty ownership - a static (non-pulsing) filled halo colored
+      // by whichever alliance/corp holds it, a deterministic hash color
+      // rather than a fixed palette since there's no small fixed set of
+      // null-sec owners the way there are only 4 FW factions. Sits at a
+      // slightly bigger radius than the FW ring above so the two never
+      // visually collide on the rare system that somehow has both.
+      if (showSovRef.current) {
+        const sov = sovRef.current.get(system.id);
+        const ownerId = sov?.alliance_id ?? sov?.corporation_id;
+        if (ownerId) {
+          const sovColor = colorForId(ownerId);
+          ctx.beginPath();
+          ctx.arc(sx, sy, 15, 0, Math.PI * 2);
+          ctx.strokeStyle = sovColor;
+          ctx.globalAlpha = 0.85;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+
+          // A corp/alliance you're already tracking for kill alerts (see
+          // Kills & Intel) gets called out with the app's own accent color
+          // rather than needing a second, separate watchlist just for sov.
+          if (trackedSovIdsRef.current.has(ownerId)) {
+            ctx.beginPath();
+            ctx.arc(sx, sy, 19, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(${accentRgb}, 0.8)`;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+
+          // The structure's vulnerability window is a real "can be attacked
+          // right now" signal, distinct from ownership itself - pulses like
+          // the FW ring above, in a fixed alert color rather than the
+          // owner's own (which could be anything and might not read as
+          // urgent) so "someone can flip this right now" always stands out.
+          const structure = sovStructuresRef.current.get(system.id);
+          if (structure && isSovVulnerableNow(structure, now)) {
+            const sovWave = pulseWave(now, system.id + 750_000, 0.35);
+            ctx.beginPath();
+            ctx.arc(sx, sy, 15, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(${dangerRgb}, ${sovWave})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Active Sansha incursion - a fixed, always-the-same color (Sansha is
+      // the only faction that runs incursions, unlike FW's 4 empires) since
+      // there's nothing to differentiate by. The staging system gets a
+      // second, wider ring so it reads as "the one to go to", not just
+      // another infested system in the same constellation.
+      if (showIncursionsRef.current) {
+        const incursion = incursionsRef.current.get(system.id);
+        if (incursion) {
+          ctx.beginPath();
+          ctx.arc(sx, sy, 15, 0, Math.PI * 2);
+          ctx.strokeStyle = INCURSION_COLOR;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          if (incursion.is_staging) {
+            ctx.beginPath();
+            ctx.arc(sx, sy, 20, 0, Math.PI * 2);
+            ctx.strokeStyle = INCURSION_COLOR;
+            ctx.globalAlpha = 0.55;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
+        }
       }
 
       // The tracked "current location" marker - an actual pin, always drawn
@@ -1276,6 +1487,41 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         requestDraw();
       })
       .catch((err) => reportError(`Failed to load system kill heat: ${String(err)}`));
+    // Front lines move constantly, so this rides the exact same mount/
+    // interval/focus/manual-resync triggers as the heat fetch above rather
+    // than needing its own separate polling setup. Every filter below does
+    // the same for the same reason - null-sec flips, incursions relocate,
+    // and last-hour activity ages out continuously.
+    getFwSystems()
+      .then((systems) => {
+        fwSystemsRef.current = new Map(systems.map((s) => [s.solar_system_id, s]));
+        requestDraw();
+      })
+      .catch((err) => reportError(`Failed to load faction warfare status: ${String(err)}`));
+    getSovereigntyMap()
+      .then((entries) => {
+        sovRef.current = new Map(entries.map((e) => [e.system_id, e]));
+        requestDraw();
+      })
+      .catch((err) => reportError(`Failed to load sovereignty map: ${String(err)}`));
+    getSovStructures()
+      .then((structures) => {
+        sovStructuresRef.current = new Map(structures.map((s) => [s.solar_system_id, s]));
+        requestDraw();
+      })
+      .catch((err) => reportError(`Failed to load sovereignty structure timers: ${String(err)}`));
+    getIncursions()
+      .then((systems) => {
+        incursionsRef.current = new Map(systems.map((s) => [s.system_id, s]));
+        requestDraw();
+      })
+      .catch((err) => reportError(`Failed to load incursions: ${String(err)}`));
+    getSystemActivity()
+      .then((entries) => {
+        activityRef.current = new Map(entries.map((e) => [e.system_id, e]));
+        requestDraw();
+      })
+      .catch((err) => reportError(`Failed to load system traffic/activity: ${String(err)}`));
   }
 
   useEffect(() => {
@@ -1328,6 +1574,42 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     requestDraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showServiceIcons]);
+
+  useEffect(() => {
+    showFwContestedRef.current = showFwContested;
+    requestDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFwContested]);
+
+  useEffect(() => {
+    showSovRef.current = showSov;
+    requestDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSov]);
+
+  useEffect(() => {
+    showIncursionsRef.current = showIncursions;
+    requestDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showIncursions]);
+
+  useEffect(() => {
+    heatModeRef.current = heatMode;
+    requestDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatMode]);
+
+  // Cross-references sov ownership against the same tracked corp/alliance
+  // list Kills & Intel already uses for kill/death alerts - a corp or
+  // alliance you're already tracking gets its sov space visually called out
+  // without needing a separate watchlist just for the map.
+  useEffect(() => {
+    trackedSovIdsRef.current = new Set(
+      trackedEntities.filter((e) => e.kind === "corporation" || e.kind === "alliance").map((e) => e.entity_id),
+    );
+    requestDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackedEntities]);
 
   useEffect(() => {
     if (!mapData) return;
@@ -1876,6 +2158,38 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
               </button>
               <button
                 type="button"
+                className={`map-icons-toggle${showFwContested ? " map-icons-toggle-active" : ""}`}
+                onClick={() => setShowFwContested((v) => !v)}
+                title="Ring any faction-warfare system that's actively contested (can flip to the occupying faction right now)"
+              >
+                FW
+              </button>
+              <button
+                type="button"
+                className={`map-icons-toggle${showSov ? " map-icons-toggle-active" : ""}`}
+                onClick={() => setShowSov((v) => !v)}
+                title="Show null-sec sovereignty ownership, tracked-alliance space, and structure vulnerability windows"
+              >
+                Sov
+              </button>
+              <button
+                type="button"
+                className={`map-icons-toggle${showIncursions ? " map-icons-toggle-active" : ""}`}
+                onClick={() => setShowIncursions((v) => !v)}
+                title="Ring every system currently infested by a live Sansha incursion"
+              >
+                Incursion
+              </button>
+              <button
+                type="button"
+                className="map-icons-toggle"
+                onClick={() => setHeatMode((m) => (m === "kills" ? "traffic" : m === "traffic" ? "npc" : "kills"))}
+                title="Cycle the background heat glow between last-hour Kills, Traffic (ship jumps), and NPC activity"
+              >
+                Heat: {heatMode === "kills" ? "Kills" : heatMode === "traffic" ? "Traffic" : "NPC"}
+              </button>
+              <button
+                type="button"
                 className="map-icons-toggle"
                 onClick={resync}
                 title="Force the heat map and pulse to refresh right now, in case they've gone stale"
@@ -2011,6 +2325,40 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                 )}
                 {homeSystemCount > 0 && (
                   <p className="map-legend-hint">Portraits mark each character's home station</p>
+                )}
+                {showFwContested && (
+                  <>
+                    <p>Faction Warfare (Contested)</p>
+                    {FW_FACTION_LIST.map((f) => (
+                      <div key={f.id} className="map-legend-row">
+                        <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: f.color }} />
+                        <span>{f.name}</span>
+                      </div>
+                    ))}
+                    <p className="map-legend-hint">Ring color is the faction occupying it - the one that wins it if it flips</p>
+                  </>
+                )}
+                {showSov && (
+                  <>
+                    <p>Sovereignty</p>
+                    <div className="map-legend-row">
+                      <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: "var(--accent)" }} />
+                      <span>Space held by a tracked alliance/corp</span>
+                    </div>
+                    <div className="map-legend-row">
+                      <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: "var(--danger)" }} />
+                      <span>Structure vulnerable (can flip) right now</span>
+                    </div>
+                    <p className="map-legend-hint">
+                      Every other ring color is a hash of the owning alliance/corp - same owner, same color, every session
+                    </p>
+                  </>
+                )}
+                {showIncursions && (
+                  <div className="map-legend-row">
+                    <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: INCURSION_COLOR }} />
+                    <span>Active Sansha incursion (wider ring = staging system)</span>
+                  </div>
                 )}
               </div>
             )}

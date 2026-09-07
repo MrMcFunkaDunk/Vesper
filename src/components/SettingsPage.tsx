@@ -21,7 +21,7 @@ import { useColorOverrides } from "../hooks/useColorOverrides";
 import { useNavOrder } from "../hooks/useNavOrder";
 import { resyncMarketData } from "../lib/market";
 import type { Session } from "../lib/eve";
-import { TRADE_HUB_REGIONS } from "../lib/map";
+import { TRADE_HUB_REGIONS, tradeHubName } from "../lib/map";
 import { NAV_ITEMS } from "./Sidebar";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import SettingsSyncPanel from "./SettingsSyncPanel";
@@ -339,7 +339,7 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
           <h3>Tracked Players, Corporations &amp; Alliances</h3>
           <p className="settings-section-hint">
             Get notified the moment any of these shows up on a killmail, anywhere in New Eden - as the victim or one
-            of the attackers. The full list also lives in Kills &amp; Intel's "Tracked Players" tab.
+            of the attackers. The full list also lives in Killboard's "Tracked Players" tab.
           </p>
           <TrackedEntitiesPanel />
         </div>
@@ -353,7 +353,7 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
           <select className="industry-field-input settings-hub-select" value={hubRegionId} onChange={(e) => setHubRegionId(Number(e.target.value))}>
             {TRADE_HUB_REGIONS.map((h) => (
               <option key={h.regionId} value={h.regionId}>
-                {h.regionName}
+                {tradeHubName(h.regionName)}
               </option>
             ))}
           </select>

@@ -3,7 +3,7 @@ import { getReprocessingMaterials } from "../lib/industry";
 import { getCategoryGroups, getGroupItems, getRegionSellMinPrices, type GroupSummary, type TypeSummary } from "../lib/market";
 import { materialsPerCubicMeter, isCompressedVariant } from "../lib/mining";
 import { formatIsk, typeIconUrl } from "../lib/format";
-import { TRADE_HUB_REGIONS } from "../lib/map";
+import { TRADE_HUB_REGIONS, tradeHubName } from "../lib/map";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
@@ -338,7 +338,7 @@ function OreTableTab() {
             <select className="industry-field-input" value={hubRegionId} onChange={(e) => setHubRegionId(Number(e.target.value))}>
               {TRADE_HUB_REGIONS.map((h) => (
                 <option key={h.regionId} value={h.regionId}>
-                  {h.regionName}
+                  {tradeHubName(h.regionName)}
                 </option>
               ))}
             </select>

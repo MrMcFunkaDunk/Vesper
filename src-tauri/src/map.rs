@@ -720,6 +720,141 @@ async fn fetch_system_kills(client: &reqwest::Client) -> HashMap<i64, (i64, i64,
     entries.into_iter().map(|e| (e.system_id, (e.ship_kills, e.npc_kills, e.pod_kills))).collect()
 }
 
+#[derive(Deserialize)]
+struct FwSystemEntry {
+    solar_system_id: i64,
+    owner_faction_id: i64,
+    occupier_faction_id: i64,
+    /// ESI's own enum: "captured", "contested", "uncontested", "vs_multiple" -
+    /// collapsed in get_fw_systems to the one thing the map filter actually
+    /// cares about, whether this can flip to the occupier right now.
+    contested: String,
+    victory_points: i64,
+    victory_points_threshold: i64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct FwSystemStatus {
+    pub solar_system_id: i64,
+    pub owner_faction_id: i64,
+    pub occupier_faction_id: i64,
+    pub contested: bool,
+    pub victory_points: i64,
+    pub victory_points_threshold: i64,
+}
+
+/// One entry per Upwell sov structure (TCU/iHub) currently placed anywhere
+/// in null-sec - not every system has one, and a system can only ever have
+/// at most one of each structure type, so this is already naturally keyed
+/// by system for the map's purposes.
+#[derive(Deserialize)]
+struct SovStructureEntry {
+    solar_system_id: i64,
+    alliance_id: Option<i64>,
+    vulnerability_occupancy_level: Option<f64>,
+    vulnerable_start_time: Option<String>,
+    vulnerable_end_time: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SovStructureStatus {
+    pub solar_system_id: i64,
+    pub alliance_id: Option<i64>,
+    pub vulnerability_occupancy_level: Option<f64>,
+    /// ISO 8601 - "is this happening right now" is a Date comparison against
+    /// the current time, which belongs on the frontend rather than needing
+    /// this backend call re-issued just because the clock ticked forward.
+    pub vulnerable_start_time: Option<String>,
+    pub vulnerable_end_time: Option<String>,
+}
+
+/// Live vulnerability windows for every null-sec sov structure - when a
+/// system's TCU/iHub can actually be reinforced right now, not just who
+/// owns it (see get_sovereignty_map for ownership alone). Public ESI, one
+/// call for the whole universe.
+pub async fn get_sov_structures(client: &reqwest::Client) -> Result<Vec<SovStructureStatus>, String> {
+    let entries: Vec<SovStructureEntry> = esi::public_get(client, "/sovereignty/structures/").await?;
+    Ok(entries
+        .into_iter()
+        .map(|e| SovStructureStatus {
+            solar_system_id: e.solar_system_id,
+            alliance_id: e.alliance_id,
+            vulnerability_occupancy_level: e.vulnerability_occupancy_level,
+            vulnerable_start_time: e.vulnerable_start_time,
+            vulnerable_end_time: e.vulnerable_end_time,
+        })
+        .collect())
+}
+
+#[derive(Serialize, Clone)]
+pub struct SystemActivityCounts {
+    pub system_id: i64,
+    pub ship_kills: i64,
+    pub npc_kills: i64,
+    pub pod_kills: i64,
+    pub ship_jumps: i64,
+}
+
+/// Live last-hour ship-jump and ship/NPC/pod-kill counts for every system in
+/// New Eden, in one call each - the same whole-universe ESI aggregates
+/// fetch_system_jumps/fetch_system_kills above already use for the system
+/// detail popup, just exposed as their own map-wide command (a Traffic or
+/// NPC-activity heat overlay, not the popup) since the Map screen wants to
+/// poll this on its own interval rather than only fetching one system's
+/// slice out of it on demand.
+pub async fn get_system_activity(client: &reqwest::Client) -> Result<Vec<SystemActivityCounts>, String> {
+    let (jumps, kills) = futures::join!(fetch_system_jumps(client), fetch_system_kills(client));
+    let mut by_system: HashMap<i64, SystemActivityCounts> = HashMap::new();
+    for (system_id, ship_jumps) in jumps {
+        by_system.entry(system_id).or_insert_with(|| SystemActivityCounts {
+            system_id,
+            ship_kills: 0,
+            npc_kills: 0,
+            pod_kills: 0,
+            ship_jumps: 0,
+        }).ship_jumps = ship_jumps;
+    }
+    for (system_id, (ship_kills, npc_kills, pod_kills)) in kills {
+        let entry = by_system.entry(system_id).or_insert_with(|| SystemActivityCounts {
+            system_id,
+            ship_kills: 0,
+            npc_kills: 0,
+            pod_kills: 0,
+            ship_jumps: 0,
+        });
+        entry.ship_kills = ship_kills;
+        entry.npc_kills = npc_kills;
+        entry.pod_kills = pod_kills;
+    }
+    Ok(by_system.into_values().collect())
+}
+
+/// Live faction warfare front-line status for every warzone system in New
+/// Eden - a small, bounded list (only the ~380 FW systems, not the whole
+/// universe), so a single public ESI call is enough, same shape as
+/// fetch_system_jumps/fetch_system_kills above. Its own top-level command
+/// (not folded into get_map_data) since this changes constantly as sov
+/// flips and the Map screen wants to poll it on its own interval, the same
+/// reason kill heat is its own separate fetch rather than living in the
+/// heavier, SQLite-cached map payload. Faction id -> name/color is a fixed,
+/// tiny, decades-stable set (the 4 empires), so that mapping lives in the
+/// frontend rather than costing an extra ESI name-resolution round trip
+/// here for values that never change.
+pub async fn get_fw_systems(client: &reqwest::Client) -> Result<Vec<FwSystemStatus>, String> {
+    let entries: Vec<FwSystemEntry> = esi::public_get(client, "/fw/systems/").await?;
+    Ok(entries
+        .into_iter()
+        .map(|e| FwSystemStatus {
+            solar_system_id: e.solar_system_id,
+            owner_faction_id: e.owner_faction_id,
+            occupier_faction_id: e.occupier_faction_id,
+            contested: e.contested == "contested",
+            victory_points: e.victory_points,
+            victory_points_threshold: e.victory_points_threshold,
+        })
+        .collect())
+}
+
 /// Loads the universe map (systems/jumps/regions/station services) from the
 /// local SQLite cache, plus a live industry-facility fetch. SQLite access is
 /// blocking, so it's kept off the async runtime via spawn_blocking.

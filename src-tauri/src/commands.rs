@@ -1,4 +1,4 @@
-use crate::{abyssal, asset_history, auth, characters, combat_overlay, config, esi, fittings, intel_feed, kill_history, kills, map, market, multibox, news, pi, price_widget, route, scout, settings_sync, skillplans, tracked_entities, wars, wormholes};
+use crate::{abyssal, asset_history, auth, characters, combat_overlay, config, esi, fittings, intel_feed, kill_history, kills, map, market, multibox, news, pi, price_widget, route, scout, settings_sync, skillplans, threats, tracked_entities, wars, wormholes};
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -677,6 +677,31 @@ pub async fn get_map_data(app: AppHandle, state: State<'_, AppState>) -> Result<
 #[tauri::command]
 pub async fn get_system_detail(app: AppHandle, state: State<'_, AppState>, system_id: i64) -> Result<map::SystemDetail, String> {
     map::get_system_detail(app, &state.http_client, system_id).await
+}
+
+#[tauri::command]
+pub async fn get_fw_systems(state: State<'_, AppState>) -> Result<Vec<map::FwSystemStatus>, String> {
+    map::get_fw_systems(&state.http_client).await
+}
+
+#[tauri::command]
+pub async fn get_sovereignty_map(state: State<'_, AppState>) -> Result<Vec<threats::SovEntry>, String> {
+    threats::fetch_sovereignty_map(&state.http_client).await
+}
+
+#[tauri::command]
+pub async fn get_sov_structures(state: State<'_, AppState>) -> Result<Vec<map::SovStructureStatus>, String> {
+    map::get_sov_structures(&state.http_client).await
+}
+
+#[tauri::command]
+pub async fn get_incursions(state: State<'_, AppState>) -> Result<Vec<threats::IncursionSystem>, String> {
+    threats::fetch_incursions(&state.http_client).await
+}
+
+#[tauri::command]
+pub async fn get_system_activity(state: State<'_, AppState>) -> Result<Vec<map::SystemActivityCounts>, String> {
+    map::get_system_activity(&state.http_client).await
 }
 
 /// Real 48h kill history for the Stats popup's Ship/NPC/Pod Kills graphs -
