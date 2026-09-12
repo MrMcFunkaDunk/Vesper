@@ -68,6 +68,15 @@ interface LocationTrackingState {
    * trigger as pulseToken - consumed by the app-wide overlay to play an
    * alert sound. */
   soundToken: number;
+  /** Gate-jump distance from currentSystem to every system reachable via
+   * stargates (no wormhole legs, matching the map's own jump graph) - a
+   * single BFS out from currentSystem rather than one walk per lookup, so
+   * any consumer (e.g. Local Threat's "how far is that kill from me" line)
+   * can do an O(1) lookup per system instead of re-walking the graph
+   * itself. Empty when no location is set; a system with no entry here is
+   * either currentSystem's own component has no gate route to it (a
+   * wormhole system) or the map hasn't loaded yet. */
+  jumpDistances: Map<number, number>;
 }
 
 const LocationTrackingContext = createContext<LocationTrackingState | null>(null);
@@ -184,6 +193,34 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
     return systemsWithinJumps(currentSystem.id, radius, adjacency);
   }, [currentSystem, radius, mapData, adjacency]);
 
+  /** Full BFS out from currentSystem, one pass, recording the depth every
+   * reachable system was first found at - unlike radiusSystemIds above
+   * (which stops at the chosen alert radius), this keeps going until the
+   * whole reachable graph is covered, since a consumer might want the
+   * distance to a system far outside the alert radius (e.g. "how far was
+   * that kill from me", not "is it close enough to alert on"). */
+  const jumpDistances = useMemo(() => {
+    const distances = new Map<number, number>();
+    if (!currentSystem) return distances;
+    distances.set(currentSystem.id, 0);
+    let frontier = [currentSystem.id];
+    let depth = 0;
+    while (frontier.length > 0) {
+      depth++;
+      const next: number[] = [];
+      for (const systemId of frontier) {
+        for (const neighbor of adjacency.get(systemId) ?? []) {
+          if (!distances.has(neighbor)) {
+            distances.set(neighbor, depth);
+            next.push(neighbor);
+          }
+        }
+      }
+      frontier = next;
+    }
+    return distances;
+  }, [currentSystem, adjacency]);
+
   useEffect(() => {
     if (seenKillIdsRef.current === null) {
       // First snapshot - just remember what's already there so the whole
@@ -254,8 +291,19 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
   // every consumer a brand-new object each time, making them all eligible to
   // re-render regardless of whether anything they read actually changed.
   const value = useMemo(
-    () => ({ currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, pulseSeverity, soundToken }),
-    [currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, pulseSeverity, soundToken],
+    () => ({
+      currentSystem,
+      setCurrentSystem,
+      radius,
+      setRadius,
+      radiusSystemIds,
+      alertKillIds,
+      pulseToken,
+      pulseSeverity,
+      soundToken,
+      jumpDistances,
+    }),
+    [currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, pulseSeverity, soundToken, jumpDistances],
   );
 
   return (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bell, ExternalLink, Skull } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useNotificationCenter } from "../hooks/useNotificationCenter";
-import { formatSecondsAgo } from "../lib/format";
+import { formatNotificationTime } from "../lib/format";
 
 interface NotificationBellProps {
   /** Navigates to a killmail's own detail view in Kills & Intel - passed
@@ -75,7 +75,7 @@ function NotificationBell({ onOpenKillmail }: NotificationBellProps) {
                     )}
                   </span>
                   {n.message && <span className="notification-bell-item-message">{n.message}</span>}
-                  <span className="notification-bell-item-time">{formatSecondsAgo(n.time)}</span>
+                  <span className="notification-bell-item-time">{formatNotificationTime(n.time)}</span>
                 </button>
               ))}
             </div>

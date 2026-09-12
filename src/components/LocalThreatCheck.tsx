@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { checkIntel, type IntelEntry } from "../lib/kills";
 import { useErrorReporter } from "../hooks/useErrorReporter";
-import { formatIsk } from "../lib/format";
+import { formatIsk, formatRelativeTime } from "../lib/format";
+import { useLocationTracking, type CurrentSystem } from "../hooks/useLocationTracking";
 
 interface LocalThreatCheckProps {
   onSelectCharacter: (characterId: number) => void;
@@ -44,14 +45,59 @@ function killDeathRatio(entry: IntelEntry): string {
   return (entry.ships_destroyed / entry.ships_lost).toFixed(1);
 }
 
+/** "2h ago in Jita · 20 jumps from Auga" - the whole point of surfacing this
+ * at all is "are they actually active right now, and are they anywhere near
+ * me", so recency reads first, then place, then distance. Falls back
+ * gracefully at each step: no system name resolved, no location set, or no
+ * gate route to it (a wormhole system) all just drop that trailing piece
+ * rather than showing something broken. */
+function lastKillSummary(entry: IntelEntry, currentSystem: CurrentSystem | null, jumpDistances: Map<number, number>): string {
+  if (!entry.last_kill_time) return "Never";
+  const when = formatRelativeTime(entry.last_kill_time);
+  if (!entry.last_kill_system_name) return when;
+  const base = `${when} in ${entry.last_kill_system_name}`;
+  if (!currentSystem || entry.last_kill_system_id == null) return base;
+  const jumps = jumpDistances.get(entry.last_kill_system_id);
+  if (jumps == null) return base;
+  return `${base} · ${jumps} jump${jumps === 1 ? "" : "s"} from ${currentSystem.name}`;
+}
+
+/** Colors the last-kill value like a threat band, but on recency rather
+ * than lifetime stats - a kill within the last hour is worth the same
+ * "High" red as danger_ratio uses, since "just killed something, right
+ * now" is exactly the signal that should jump out at a glance. */
+function lastKillUrgencyClass(entry: IntelEntry): string {
+  if (!entry.last_kill_time) return "";
+  const hoursAgo = (Date.now() - new Date(entry.last_kill_time).getTime()) / 3_600_000;
+  if (hoursAgo < 1) return "intel-check-danger-high";
+  if (hoursAgo < 24) return "intel-check-danger-medium";
+  return "";
+}
+
+/** Same recency coloring as lastKillUrgencyClass, but for the "In
+ * <your system>" line - a hit here at any age is worth flagging (this is
+ * literally the system you're sitting in), so anything within the last 30
+ * days still gets the medium/orange treatment even if not within 24h. */
+function inCurrentSystemUrgencyClass(entry: IntelEntry): string {
+  if (!entry.last_kill_in_current_system_time) return "";
+  const hoursAgo = (Date.now() - new Date(entry.last_kill_in_current_system_time).getTime()) / 3_600_000;
+  if (hoursAgo < 1) return "intel-check-danger-high";
+  if (hoursAgo < 24 * 30) return "intel-check-danger-medium";
+  return "";
+}
+
 function IntelPilotCard({
   entry,
   onSelectCharacter,
   onOpenZkillboard,
+  currentSystem,
+  jumpDistances,
 }: {
   entry: IntelEntry;
   onSelectCharacter: (characterId: number) => void;
   onOpenZkillboard: (characterId: number) => void;
+  currentSystem: CurrentSystem | null;
+  jumpDistances: Map<number, number>;
 }) {
   const band = threatBand(entry);
   return (
@@ -84,6 +130,31 @@ function IntelPilotCard({
           <span className="intel-check-card-score-label">{THREAT_LABEL[band]}</span>
         </div>
       </div>
+
+      <div className="intel-check-card-lastkill">
+        <span className="intel-check-stat-label">Last Kill</span>
+        <span className={`intel-check-stat-value ${lastKillUrgencyClass(entry)}`}>
+          {lastKillSummary(entry, currentSystem, jumpDistances)}
+        </span>
+      </div>
+
+      {currentSystem && (
+        <div className="intel-check-card-lastkill">
+          <span className="intel-check-stat-label">Last time they murdered someone in {currentSystem.name}</span>
+          <span className={`intel-check-stat-value ${inCurrentSystemUrgencyClass(entry)}`}>
+            {entry.last_kill_in_current_system_time ? formatRelativeTime(entry.last_kill_in_current_system_time) : "Never"}
+          </span>
+        </div>
+      )}
+
+      {currentSystem && (
+        <div className="intel-check-card-lastkill">
+          <span className="intel-check-stat-label">Last time they themselves were killed in {currentSystem.name}</span>
+          <span className="intel-check-stat-value">
+            {entry.last_death_in_current_system_time ? formatRelativeTime(entry.last_death_in_current_system_time) : "Never"}
+          </span>
+        </div>
+      )}
 
       <div className="intel-check-card-stats">
         <span className="intel-check-stat-label">Kills</span>
@@ -131,6 +202,7 @@ function LocalThreatCheck({ onSelectCharacter }: LocalThreatCheckProps) {
   const [unresolved, setUnresolved] = useState<string[]>([]);
   const [checking, setChecking] = useState(false);
   const reportError = useErrorReporter();
+  const { currentSystem, jumpDistances } = useLocationTracking();
 
   async function handleCheck() {
     // Newlines or commas both split into separate names - not spaces, since
@@ -143,7 +215,7 @@ function LocalThreatCheck({ onSelectCharacter }: LocalThreatCheckProps) {
 
     setChecking(true);
     try {
-      const result = await checkIntel(names);
+      const result = await checkIntel(names, currentSystem?.id ?? null);
       // Highest risk first, same as localthreat.xyz's default sort - anyone
       // with no killboard history at all sinks to the bottom rather than
       // competing with real danger_ratio values for the top spot.
@@ -161,6 +233,20 @@ function LocalThreatCheck({ onSelectCharacter }: LocalThreatCheckProps) {
       setChecking(false);
     }
   }
+
+  // The "Last time they murdered/were killed in <system>" lines are baked
+  // into each entry at check time, not recomputed live the way the jump
+  // distance is - so changing your tracked location after already running
+  // a check left those two lines pointing at wherever you were tracking
+  // when you clicked Analyze, silently disagreeing with the Last Kill
+  // line's own (live) jump count for the same system. Re-running the check
+  // whenever the tracked system changes keeps every location-relative field
+  // on a card consistent with each other.
+  useEffect(() => {
+    if (entries === null) return;
+    handleCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSystem?.id]);
 
   function handleClear() {
     setText("");
@@ -243,7 +329,14 @@ function LocalThreatCheck({ onSelectCharacter }: LocalThreatCheckProps) {
           ) : (
             <div className="intel-check-grid">
               {entries.map((e) => (
-                <IntelPilotCard key={e.character_id} entry={e} onSelectCharacter={onSelectCharacter} onOpenZkillboard={openZkillboard} />
+                <IntelPilotCard
+                  key={e.character_id}
+                  entry={e}
+                  onSelectCharacter={onSelectCharacter}
+                  onOpenZkillboard={openZkillboard}
+                  currentSystem={currentSystem}
+                  jumpDistances={jumpDistances}
+                />
               ))}
             </div>
           )}

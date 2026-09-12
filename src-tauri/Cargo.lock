@@ -4694,7 +4694,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-app"
-version = "1.7.8"
+version = "1.7.9"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

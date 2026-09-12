@@ -139,6 +139,19 @@ export function formatSecondsAgo(iso: string): string {
   return formatRelativeTime(iso);
 }
 
+/** Relative time ("11s ago", "5m ago", "2h ago") for anything from the last
+ * 24 hours, then switches to an absolute EVE-time date ("Fri 12 Sep 18:43
+ * EVE") once it's older than that. A growing day-count ("3d ago") stops
+ * being useful the moment you've genuinely been away for days - several
+ * stacked notifications all reading "2d ago" are indistinguishable, where
+ * the actual date/time each one happened isn't. Used by the notification
+ * bell specifically for this reason. */
+export function formatNotificationTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  if (diffMs < 24 * 60 * 60 * 1000) return formatSecondsAgo(iso);
+  return formatEveDateTime(iso);
+}
+
 /** EVE-time (UTC) calendar-day key for grouping a list of ISO timestamps by date - matches the day boundary EVE itself uses, not the viewer's local timezone. */
 export function dateKey(iso: string): string {
   const d = new Date(iso);

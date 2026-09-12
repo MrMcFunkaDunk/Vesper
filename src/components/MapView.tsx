@@ -42,6 +42,7 @@ import { RADIUS_OPTIONS, radiusTitle } from "./TopBar";
 import { getSystemKillHeat, type KillEntry, type SystemKillHeat } from "../lib/kills";
 import type { SystemSummary } from "./SystemKillboard";
 import { getCharacterLocation, type SessionCharacter } from "../lib/eve";
+import { resolveEntityNames } from "../lib/wars";
 import { THEME_CHANGE_EVENT, useTheme, isPremiumTheme } from "../hooks/useTheme";
 
 /** Which last-hour aggregate the background heat glow currently reads from
@@ -403,6 +404,40 @@ function portraitRadiusForZoom(zoomRatio: number): number {
   return 8 + progress * 22;
 }
 
+/** Sov ownership badge size at a given zoom level - the same growth curve
+ * as portraitRadiusForZoom, but capped much smaller since a sov-heavy
+ * region can have dozens of these on screen at once (unlike the handful
+ * of character pins), where a full-size portrait badge per system would
+ * be overwhelming. */
+function sovLogoRadiusForZoom(zoomRatio: number): number {
+  const progress = clamp((zoomRatio - LABEL_ZOOM_RATIO) / (LABEL_ZOOM_RATIO * 3), 0, 1);
+  return 6 + progress * 8;
+}
+
+function allianceLogoUrl(id: number): string {
+  return `https://images.evetech.net/alliances/${id}/logo?size=32`;
+}
+
+function corpLogoUrl(id: number): string {
+  return `https://images.evetech.net/corporations/${id}/logo?size=32`;
+}
+
+/** Lazily creates (and caches) the Image for a sov owner's logo - only
+ * fetched the first time that owner is actually drawn, and reused from
+ * then on for every other system it holds and every future frame.
+ * onLoad triggers a redraw so the badge appears the moment the image is
+ * actually ready instead of waiting for some other reason to repaint. */
+function getSovLogo(cache: Map<number, HTMLImageElement>, id: number, url: string, onLoad: () => void): HTMLImageElement {
+  let img = cache.get(id);
+  if (!img) {
+    img = new Image();
+    img.onload = onLoad;
+    img.src = url;
+    cache.set(id, img);
+  }
+  return img;
+}
+
 interface SystemHeat {
   /** Raw kill count within the rolling last hour - no cap. Each kill ages
    * out exactly 60 minutes after its own timestamp (a true rolling window,
@@ -600,6 +635,22 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const sovRef = useRef<Map<number, SovEntry>>(new Map());
   const sovStructuresRef = useRef<Map<number, SovStructureStatus>>(new Map());
   const trackedSovIdsRef = useRef<Set<number>>(new Set());
+  /** Alliance/corp logo images for the Sov filter's ownership badge, keyed
+   * by alliance or corp id (EVE ids are unique across every entity type, so
+   * one shared cache is safe) - loaded lazily the first time a given owner
+   * is actually drawn, and reused for every other system that same owner
+   * holds, rather than fetching the same logo once per system. */
+  const sovLogoCacheRef = useRef<Map<number, HTMLImageElement>>(new Map());
+  /** Resolved alliance/corp names for the Sov filter's hover tooltip, keyed
+   * the same way as sovLogoCacheRef - populated in bulk (one resolve_names
+   * call for every not-yet-cached owner) whenever the sovereignty map
+   * refreshes, rather than resolving one name per hover, so the tooltip
+   * appears instantly instead of waiting on a fetch. */
+  const sovNamesRef = useRef<Map<number, string>>(new Map());
+  /** Screen-space hit circles for every Sov ownership badge drawn on the
+   * current frame, rebuilt each draw pass - same pattern as
+   * renderedPinsRef, just for sov badges instead of character pins. */
+  const renderedSovBadgesRef = useRef<{ px: number; py: number; radius: number; ownerId: number; kind: "alliance" | "corporation" }[]>([]);
   const showIncursionsRef = useRef(false);
   const incursionsRef = useRef<Map<number, IncursionSystem>>(new Map());
   const heatModeRef = useRef<HeatMode>("kills");
@@ -648,6 +699,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * click. */
   const [pinHover, setPinHover] = useState<{ characterName: string; kind: "home" | "location"; clientX: number; clientY: number } | null>(null);
   const hoveredPinKeyRef = useRef<string | null>(null);
+  /** Same idea as pinHover, for a Sov ownership badge - just the resolved
+   * alliance/corp name and which kind it is, since that's the one thing
+   * the badge's logo alone can't tell you. */
+  const [sovHover, setSovHover] = useState<{ name: string; kind: "alliance" | "corporation"; clientX: number; clientY: number } | null>(null);
+  const hoveredSovKeyRef = useRef<number | null>(null);
   /** Premium-only "target lock" HUD - four bracket corners that snap onto
    * whatever system was just clicked, at the exact screen position of the
    * click (the same clientX/clientY the pinned tooltip above already
@@ -1053,6 +1109,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     }
 
     renderedPinsRef.current = [];
+    renderedSovBadgesRef.current = [];
 
     const visible: MapSystem[] = [];
     for (const system of data.systems) {
@@ -1167,6 +1224,26 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           ctx.lineWidth = 2.5;
           ctx.stroke();
           ctx.globalAlpha = 1;
+
+          // The owner's actual alliance/corp logo, not just the hashed
+          // ring color - "who" instead of just "someone consistent holds
+          // this". Only gated behind the same zoom threshold labels use
+          // (not the ring above, which stays visible at any zoom) since a
+          // sov-heavy region can have dozens of owners on screen at once,
+          // and fetching every one of their logos zoomed all the way out
+          // across New Eden would be pure waste. Offset to the dot's
+          // upper-left so it never collides with the home marker
+          // (upper-right) or live location portrait (lower-right).
+          if (zoomRatio >= LABEL_ZOOM_RATIO) {
+            const isAlliance = sov!.alliance_id != null;
+            const logoUrl = isAlliance ? allianceLogoUrl(sov!.alliance_id!) : corpLogoUrl(sov!.corporation_id!);
+            const logo = getSovLogo(sovLogoCacheRef.current, ownerId, logoUrl, requestDraw);
+            const logoRadius = sovLogoRadiusForZoom(zoomRatio);
+            const logoX = sx - dotRadius - logoRadius - 3;
+            const logoY = sy - dotRadius - logoRadius - 3;
+            drawPortrait(ctx, logoX, logoY, logoRadius, logo, sovColor);
+            renderedSovBadgesRef.current.push({ px: logoX, py: logoY, radius: logoRadius, ownerId, kind: isAlliance ? "alliance" : "corporation" });
+          }
 
           // A corp/alliance you're already tracking for kill alerts (see
           // Kills & Intel) gets called out with the app's own accent color
@@ -1502,6 +1579,29 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       .then((entries) => {
         sovRef.current = new Map(entries.map((e) => [e.system_id, e]));
         requestDraw();
+
+        // Bulk-resolve every not-yet-cached owner's name in one call, so
+        // the hover tooltip below has a name ready instantly instead of
+        // fetching one owner at a time as each badge gets hovered.
+        const idsToResolve = [
+          ...new Set(
+            entries
+              .map((e) => e.alliance_id ?? e.corporation_id)
+              .filter((id): id is number => id != null && !sovNamesRef.current.has(id)),
+          ),
+        ];
+        if (idsToResolve.length > 0) {
+          resolveEntityNames(idsToResolve)
+            .then((resolved) => {
+              for (const [idStr, name] of Object.entries(resolved)) {
+                sovNamesRef.current.set(Number(idStr), name);
+              }
+            })
+            .catch(() => {
+              // Best-effort - a badge with no resolved name yet just shows
+              // no tooltip on hover until the next sov refresh retries it.
+            });
+        }
       })
       .catch((err) => reportError(`Failed to load sovereignty map: ${String(err)}`));
     getSovStructures()
@@ -1645,6 +1745,20 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       return null;
     }
 
+    /** Same idea as pickPin, for a Sov ownership badge - checked alongside
+     * it (badges sit upper-left of the dot, pins sit upper/lower-right, so
+     * the two never actually compete for the same pixels). */
+    function pickSovBadge(clientX: number, clientY: number) {
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      for (const badge of renderedSovBadgesRef.current) {
+        if (Math.hypot(badge.px - px, badge.py - py) <= badge.radius) return badge;
+      }
+      return null;
+    }
+
     function pickSystem(clientX: number, clientY: number): MapSystem | null {
       const data = dataRef.current;
       if (!canvas || !data) return null;
@@ -1752,6 +1866,10 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         hoveredPinKeyRef.current = null;
         setPinHover(null);
       }
+      if (hoveredSovKeyRef.current !== null) {
+        hoveredSovKeyRef.current = null;
+        setSovHover(null);
+      }
       if (coordsHudRef.current) coordsHudRef.current.textContent = "";
     }
 
@@ -1805,10 +1923,27 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         setPinHover((prev) => (prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev));
       }
 
-      // A pin sitting right next to its system's dot shouldn't also pop the
-      // system's own killboard tooltip at the same time - whichever the
-      // cursor is actually over wins, rather than layering both.
-      const picked = pin ? null : pickSystem(e.clientX, e.clientY);
+      // A Sov badge sitting near a dot shouldn't compete with a character
+      // pin for the same hover - pins take priority since they're the
+      // rarer, more specific marker of the two.
+      const sovBadge = pin ? null : pickSovBadge(e.clientX, e.clientY);
+      const sovKey = sovBadge ? sovBadge.ownerId : null;
+      if (sovKey !== hoveredSovKeyRef.current) {
+        hoveredSovKeyRef.current = sovKey;
+        setSovHover(
+          sovBadge
+            ? { name: sovNamesRef.current.get(sovBadge.ownerId) ?? "Unknown", kind: sovBadge.kind, clientX: e.clientX, clientY: e.clientY }
+            : null,
+        );
+      } else if (sovBadge) {
+        setSovHover((prev) => (prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev));
+      }
+
+      // A pin or sov badge sitting right next to its system's dot shouldn't
+      // also pop the system's own killboard tooltip at the same time -
+      // whichever the cursor is actually over wins, rather than layering
+      // all three.
+      const picked = pin || sovBadge ? null : pickSystem(e.clientX, e.clientY);
       const pickedId = picked?.id ?? null;
       if (pickedId !== hoveredIdRef.current) {
         hoveredIdRef.current = pickedId;
@@ -2350,7 +2485,8 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                       <span>Structure vulnerable (can flip) right now</span>
                     </div>
                     <p className="map-legend-hint">
-                      Every other ring color is a hash of the owning alliance/corp - same owner, same color, every session
+                      Every other ring color is a hash of the owning alliance/corp - same owner, same color, every
+                      session. Zoom in on a system to see the actual alliance/corp logo badged next to its dot.
                     </p>
                   </>
                 )}
@@ -2393,6 +2529,13 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         <div className="map-hover-tooltip map-pin-tooltip" style={{ left: pinHover.clientX + 16, top: pinHover.clientY + 16 }}>
           <span className="map-hover-name">{pinHover.characterName}</span>
           <span className="map-hover-kills">{pinHover.kind === "home" ? "Home base" : "Currently here"}</span>
+        </div>
+      )}
+
+      {sovHover && (
+        <div className="map-hover-tooltip map-pin-tooltip" style={{ left: sovHover.clientX + 16, top: sovHover.clientY + 16 }}>
+          <span className="map-hover-name">{sovHover.name}</span>
+          <span className="map-hover-kills">{sovHover.kind === "alliance" ? "Alliance" : "Corporation"}</span>
         </div>
       )}
 

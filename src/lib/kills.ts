@@ -549,6 +549,20 @@ export interface IntelEntry {
   isk_lost: number;
   solo_kills: number;
   solo_ratio: number;
+  /** When/where this pilot's single most recent kill happened - null for
+   * anyone with zero kills. */
+  last_kill_time: string | null;
+  last_kill_system_id: number | null;
+  last_kill_system_name: string | null;
+  /** When this pilot most recently killed someone in the current-system id
+   * passed to checkIntel - null if they never have (at least within the
+   * same page last_kill_time is drawn from), or if no current system was
+   * passed. */
+  last_kill_in_current_system_time: string | null;
+  /** When this pilot was themselves most recently killed in the
+   * current-system id passed to checkIntel - the mirror of
+   * last_kill_in_current_system_time, but for their losses. */
+  last_death_in_current_system_time: string | null;
 }
 
 export interface IntelCheckResult {
@@ -557,9 +571,11 @@ export interface IntelCheckResult {
 }
 
 /** Resolves a pasted list of character names (e.g. copied straight from EVE's
- * Local chat member list) to their public affiliation + zKillboard danger stats. */
-export function checkIntel(names: string[]): Promise<IntelCheckResult> {
-  return invoke("check_intel", { names });
+ * Local chat member list) to their public affiliation + zKillboard danger
+ * stats. `currentSystemId`, if given, also flags anyone who's killed in that
+ * exact system within the last 30 days. */
+export function checkIntel(names: string[], currentSystemId?: number | null): Promise<IntelCheckResult> {
+  return invoke("check_intel", { names, currentSystemId: currentSystemId ?? null });
 }
 
 /** Cost/payout per insurance tier for a ship type - a calculator, not a policy

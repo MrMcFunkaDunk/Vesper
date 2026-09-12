@@ -10131,6 +10131,15 @@ body[data-reduce-motion="true"] .mineral-ticker-half-clone {
   row-gap: 2px;
 }
 
+.intel-check-card-lastkill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+}
+
 .intel-check-stat-label {
   font-family: var(--font-label);
   font-size: 11px;

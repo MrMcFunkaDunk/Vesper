@@ -638,8 +638,12 @@ pub async fn get_character_stats(state: State<'_, AppState>, character_id: i64) 
 }
 
 #[tauri::command]
-pub async fn check_intel(state: State<'_, AppState>, names: Vec<String>) -> Result<kills::IntelCheckResult, String> {
-    Ok(kills::check_intel(&state.http_client, names).await)
+pub async fn check_intel(
+    state: State<'_, AppState>,
+    names: Vec<String>,
+    current_system_id: Option<i64>,
+) -> Result<kills::IntelCheckResult, String> {
+    Ok(kills::check_intel(&state.http_client, names, current_system_id).await)
 }
 
 /// Cost/payout table for a ship type - a calculator, not a policy tracker.

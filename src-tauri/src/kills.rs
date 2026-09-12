@@ -1420,6 +1420,27 @@ pub struct IntelEntry {
     pub isk_lost: f64,
     pub solo_kills: i64,
     pub solo_ratio: f64,
+    /// When/where this pilot's single most recent kill happened - None for
+    /// anyone with zero kills, or if zKillboard's list for them came back
+    /// empty/errored. A fast "are they actually active right now" signal,
+    /// distinct from danger_ratio (a lifetime aggregate that says nothing
+    /// about whether this pilot has fired a shot recently).
+    pub last_kill_time: Option<String>,
+    pub last_kill_system_id: Option<i64>,
+    pub last_kill_system_name: Option<String>,
+    /// When this pilot most recently killed someone in the caller's current
+    /// system specifically - a much stronger "have they actually hunted
+    /// where I am, and how long ago" signal than last_kill_* alone, which
+    /// can point anywhere in New Eden. None if they've never killed there
+    /// (at least within the same up-to-200-kill page last_kill_time is
+    /// drawn from), or if no current system was passed in.
+    pub last_kill_in_current_system_time: Option<String>,
+    /// When this pilot was themselves most recently killed in the caller's
+    /// current system - the mirror of last_kill_in_current_system_time, but
+    /// for their losses instead of their kills. None if they've never died
+    /// there (within the same page-1 limit), or if no current system was
+    /// passed in.
+    pub last_death_in_current_system_time: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1435,7 +1456,10 @@ pub struct IntelCheckResult {
 /// EVE's Local chat member list, resolves every name, and pulls each
 /// pilot's public affiliation plus zKillboard's danger-ratio stats so the
 /// frontend can flag anyone worth worrying about before undocking into them.
-pub async fn check_intel(client: &reqwest::Client, names: Vec<String>) -> IntelCheckResult {
+/// `current_system_id` is the caller's own tracked map location, if any -
+/// used to flag anyone who's actually been killing in that same system
+/// recently, not just somewhere in New Eden.
+pub async fn check_intel(client: &reqwest::Client, names: Vec<String>, current_system_id: Option<i64>) -> IntelCheckResult {
     let mut unique: Vec<String> = names.iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect();
     unique.sort();
     unique.dedup();
@@ -1452,6 +1476,8 @@ pub async fn check_intel(client: &reqwest::Client, names: Vec<String>) -> IntelC
             async move {
                 let profile = fetch_character_profile(client, id).await.ok()?;
                 let stats = fetch_character_stats(client, id).await.unwrap_or_default();
+                let recent =
+                    fetch_recent_kill_info(client, id, current_system_id, stats.ships_destroyed > 0, stats.ships_lost > 0).await;
                 Some(IntelEntry {
                     character_id: id,
                     character_name: name,
@@ -1470,6 +1496,11 @@ pub async fn check_intel(client: &reqwest::Client, names: Vec<String>) -> IntelC
                     isk_lost: stats.isk_lost,
                     solo_kills: stats.solo_kills,
                     solo_ratio: stats.solo_ratio,
+                    last_kill_time: recent.last_kill_time,
+                    last_kill_system_id: recent.last_kill_system_id,
+                    last_kill_system_name: None,
+                    last_kill_in_current_system_time: recent.last_kill_in_current_system_time,
+                    last_death_in_current_system_time: recent.last_death_in_current_system_time,
                 })
             }
         }))
@@ -1477,7 +1508,85 @@ pub async fn check_intel(client: &reqwest::Client, names: Vec<String>) -> IntelC
         entries.extend(results.into_iter().flatten());
     }
 
+    // One bulk name resolve for every distinct "last kill" system across the
+    // whole batch, rather than resolving each pilot's system individually -
+    // the same batching esi::resolve_names is already built for.
+    let mut system_ids: Vec<i64> = entries.iter().filter_map(|e| e.last_kill_system_id).collect();
+    system_ids.sort_unstable();
+    system_ids.dedup();
+    if !system_ids.is_empty() {
+        let system_names = esi::resolve_names(client, system_ids).await;
+        for entry in &mut entries {
+            if let Some(system_id) = entry.last_kill_system_id {
+                entry.last_kill_system_name = system_names.get(&system_id).cloned();
+            }
+        }
+    }
+
     IntelCheckResult { entries, unresolved }
+}
+
+#[derive(Default)]
+struct RecentKillInfo {
+    last_kill_time: Option<String>,
+    last_kill_system_id: Option<i64>,
+    last_kill_in_current_system_time: Option<String>,
+    last_death_in_current_system_time: Option<String>,
+}
+
+/// The most recent killmail_time in an arbitrary subset of a raw zKillboard
+/// list - shared logic for finding both "their single most recent entry
+/// overall" and "their most recent entry in one specific system", just
+/// filtered differently before calling this. Takes an iterator rather than
+/// a slice so a system filter can chain straight in without collecting an
+/// intermediate Vec first.
+fn most_recent_time<'a>(kills: impl Iterator<Item = &'a ZkbKillmail>) -> Option<String> {
+    kills.max_by(|a, b| a.killmail_time.cmp(&b.killmail_time)).map(|k| k.killmail_time.clone())
+}
+
+/// A character's single most recent kill (time + system, no further
+/// enrichment - see enrich_kills for the full version), plus - if
+/// `current_system_id` is given - when they most recently killed someone in
+/// that exact system, and when they were themselves most recently killed
+/// there. Kills and losses are fetched concurrently (one page each, up to
+/// 200 entries), and each is skipped entirely when the caller already knows
+/// from zKillboard's stats that there's nothing to find (has_kills/
+/// has_losses) - only worth the round trip for a pilot who actually has
+/// history to search. A match further back than the fetched page reads as
+/// "never" here, same page-1-only limit last_kill_time already has.
+async fn fetch_recent_kill_info(
+    client: &reqwest::Client,
+    character_id: i64,
+    current_system_id: Option<i64>,
+    has_kills: bool,
+    has_losses: bool,
+) -> RecentKillInfo {
+    let kills_future = async {
+        if has_kills {
+            fetch_character_kills_raw(client, character_id, "kills", 1).await.unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    };
+    let losses_future = async {
+        if has_losses {
+            fetch_character_kills_raw(client, character_id, "losses", 1).await.unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    };
+    let (raw, losses_raw) = futures::join!(kills_future, losses_future);
+
+    let most_recent = raw.iter().max_by(|a, b| a.killmail_time.cmp(&b.killmail_time));
+    let last_kill_time = most_recent.map(|k| k.killmail_time.clone());
+    let last_kill_system_id = most_recent.map(|k| k.solar_system_id);
+
+    let last_kill_in_current_system_time =
+        current_system_id.and_then(|target| most_recent_time(raw.iter().filter(|k| k.solar_system_id == target)));
+    let last_death_in_current_system_time =
+        current_system_id.and_then(|target| most_recent_time(losses_raw.iter().filter(|k| k.solar_system_id == target)));
+
+    RecentKillInfo { last_kill_time, last_kill_system_id, last_kill_in_current_system_time, last_death_in_current_system_time }
 }
 
 const RECENT_ACTIVITY_CATEGORIES: [&str; 4] = ["highsec", "lowsec", "nullsec", "w-space"];
