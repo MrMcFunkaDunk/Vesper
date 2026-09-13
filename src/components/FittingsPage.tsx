@@ -7,6 +7,7 @@ import { formatIsk, typeIconUrl } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 import FitBuilder from "./FitBuilder";
+import PageTabBar from "./PageTabBar";
 import type { SessionCharacter } from "../lib/eve";
 
 interface FittingsPageProps {
@@ -15,9 +16,21 @@ interface FittingsPageProps {
    * Database's "Fit This Ship" button (now on the Wallet & Market page). */
   initialShipTypeId?: number | null;
   onConsumeInitialShipTypeId?: () => void;
+  /** A sub-tab favourite ("fittings-fleets.builder") clicked in the Sidebar -
+   * jumps straight to that tab, one-shot like initialShipTypeId above. */
+  initialTab?: string | null;
+  onConsumeInitialTab?: () => void;
+  /** Reports the active tab up to App.tsx so the TopBar star button knows
+   * which specific tab to favourite. */
+  onActiveTabChange?: (tab: string) => void;
 }
 
 type FitTab = "library" | "builder";
+const FIT_TABS: { id: FitTab; label: string }[] = [
+  { id: "library", label: "My Fits" },
+  { id: "builder", label: "New Fit" },
+];
+const FIT_TAB_IDS: FitTab[] = FIT_TABS.map((t) => t.id);
 
 const PURPOSES = ["PvP", "PvE", "Exploring", "Industry", "Mining", "Mission", "Other"];
 
@@ -46,8 +59,28 @@ function emptyFit(): Fit {
   };
 }
 
-function FittingsPage({ characters, initialShipTypeId, onConsumeInitialShipTypeId }: FittingsPageProps) {
+function FittingsPage({
+  characters,
+  initialShipTypeId,
+  onConsumeInitialShipTypeId,
+  initialTab,
+  onConsumeInitialTab,
+  onActiveTabChange,
+}: FittingsPageProps) {
   const [tab, setTab] = useState<FitTab>("library");
+
+  useEffect(() => {
+    if (initialTab && (FIT_TAB_IDS as string[]).includes(initialTab)) {
+      setTab(initialTab as FitTab);
+      onConsumeInitialTab?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
+
+  useEffect(() => {
+    onActiveTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [fits, setFits] = useState<Fit[] | null>(null);
   const [priceById, setPriceById] = useState<Map<number, number>>(new Map());
   const [names, setNames] = useState<Record<string, string>>({});
@@ -234,14 +267,12 @@ function FittingsPage({ characters, initialShipTypeId, onConsumeInitialShipTypeI
           </p>
         </div>
 
-        <div className="kills-tabs">
-          <button type="button" className={`kills-tab ${tab === "library" ? "kills-tab-active" : ""}`} onClick={() => setTab("library")}>
-            My Fits
-          </button>
-          <button type="button" className={`kills-tab ${tab === "builder" ? "kills-tab-active" : ""}`} onClick={newFit}>
-            New Fit
-          </button>
-        </div>
+        <PageTabBar
+          pageId="fittings-fleets"
+          tabs={FIT_TABS}
+          activeTab={tab}
+          onSelect={(id) => (id === "builder" ? newFit() : setTab(id as FitTab))}
+        />
 
         {tab === "library" ? (
           <>

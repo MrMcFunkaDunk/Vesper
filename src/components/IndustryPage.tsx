@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Copy, CornerDownRight, Factory, Star, X } from "lucide-react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Copy, CornerDownRight, Factory, MapPin, RefreshCw, Star, X } from "lucide-react";
 import { NumberStepperInput } from "./NumberStepperInput";
 import {
   searchBlueprints,
@@ -9,6 +9,7 @@ import {
   type TypeSearchMatch,
   type ReprocessingInfo,
   type BlueprintDetail,
+  type SystemCostIndices,
 } from "../lib/industry";
 import {
   getMarketPrices,
@@ -49,8 +50,9 @@ import { searchSystemsLive, TRADE_HUB_REGIONS, tradeHubName, type SystemSearchMa
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import { useIndustryDefaults } from "../hooks/useIndustryDefaults";
-import { useBlueprintFavourites, type BlueprintFavourite } from "../hooks/useBlueprintFavourites";
+import { useSystemPresets, type SystemPreset } from "../hooks/useSystemPresets";
 import HelpBadge from "./HelpBadge";
+import PageTabBar from "./PageTabBar";
 import { HELP_CONTENT } from "../lib/helpContent";
 
 // EVE's real "Asteroid" item category - confirmed against the local SDE
@@ -252,14 +254,14 @@ function collectAllTypeIds(node: BuildTreeNode, into: Set<number> = new Set()): 
 function flattenByTier(
   root: BuildTreeNode,
   rootPath: string,
-): [number, { node: BuildTreeNode; path: string; parentName: string; parentPath: string }[]][] {
-  const tiers = new Map<number, { node: BuildTreeNode; path: string; parentName: string; parentPath: string }[]>();
+): [number, { node: BuildTreeNode; path: string; parentName: string; parentPath: string; parentNode: BuildTreeNode }[]][] {
+  const tiers = new Map<number, { node: BuildTreeNode; path: string; parentName: string; parentPath: string; parentNode: BuildTreeNode }[]>();
   function walk(node: BuildTreeNode, path: string, depth: number) {
     const sorted = [...node.materials].sort((a, b) => Number(isBuildRow(b)) - Number(isBuildRow(a)));
     for (const child of sorted) {
       const childPath = rowPath(path, child.typeId);
       if (!tiers.has(depth)) tiers.set(depth, []);
-      tiers.get(depth)!.push({ node: child, path: childPath, parentName: node.name, parentPath: path });
+      tiers.get(depth)!.push({ node: child, path: childPath, parentName: node.name, parentPath: path, parentNode: node });
       walk(child, childPath, depth + 1);
     }
   }
@@ -353,6 +355,91 @@ function sumVisibleTickedCost(root: BuildTreeNode, rootPath: string, checked: Se
     if (checked.has(path)) sum += effectiveNodeCost(child, path, 1, collapsedTiers, checked);
   }
   return sum;
+}
+
+/** The job-cost mirror of effectiveNodeCost/tickedMaterialsRollup/
+ * sumVisibleTickedCost above - same "is this node actually being built
+ * right now" decision (tier open AND at least one of its own materials
+ * ticked), just accumulating each buildable node's own job cost (from
+ * subJobCosts, keyed by path - see collectSubJobCosts) instead of its
+ * material cost. A node being treated as bought (tier closed, or nothing
+ * ticked under it) contributes no job cost - you're not the one running
+ * that job. Kept as separate functions rather than folding job cost into
+ * the cost ones above: those are already relied on everywhere the tree
+ * renders its own Total column, and this is a comparatively rare rollup
+ * (only computed once per render for the sidebar's grand total), not
+ * worth the risk of touching well-exercised code for. If the tier/tick
+ * decision rule above ever changes, this needs the same change made to it. */
+function effectiveNodeJobCost(
+  node: BuildTreeNode,
+  path: string,
+  depth: number,
+  collapsedTiers: Set<number>,
+  checked: Set<string>,
+  subJobCosts: Map<string, number>,
+): number {
+  if (node.materials.length === 0) return 0;
+  const tierOpen = !collapsedTiers.has(depth + 1);
+  if (!tierOpen || !hasTickedMaterials(node, path, checked)) return 0;
+  const ownJobCost = subJobCosts.get(path) ?? 0;
+  const childrenJobCost = node.materials.reduce((sum, child) => {
+    const childPath = rowPath(path, child.typeId);
+    if (!checked.has(childPath)) return sum;
+    return sum + effectiveNodeJobCost(child, childPath, depth + 1, collapsedTiers, checked, subJobCosts);
+  }, 0);
+  return ownJobCost + childrenJobCost;
+}
+
+function sumVisibleTickedJobCost(
+  root: BuildTreeNode,
+  rootPath: string,
+  checked: Set<string>,
+  collapsedTiers: Set<number>,
+  subJobCosts: Map<string, number>,
+): number {
+  let sum = 0;
+  for (const child of root.materials) {
+    const path = rowPath(rootPath, child.typeId);
+    if (checked.has(path)) sum += effectiveNodeJobCost(child, path, 1, collapsedTiers, checked, subJobCosts);
+  }
+  return sum;
+}
+
+/** Walks the whole tree computing every buildable node's own job cost
+ * (keyed by path, so two different items needing different quantities of
+ * the same component never collide) - real EIV needs each node's own raw,
+ * pre-ME per-run material list (rawMaterialsPerRun) scaled by its own
+ * runs, not the already-ME-adjusted quantities `materials` holds, the same
+ * reason the root's own job cost above can't just reuse pricedTree's
+ * numbers either. Uses the same galaxy-wide adjusted-price map the root's
+ * own EIV uses (not hub-repriced) - that's the real EVE mechanic (Job Cost
+ * is based on ESI's adjusted_price, not a live sell order), not a
+ * limitation. Skips (and skips recursing past) anything bought outright -
+ * no blueprint of its own means no job to cost out. */
+function collectSubJobCosts(
+  node: BuildTreeNode,
+  path: string,
+  costIndices: SystemCostIndices[],
+  systemId: number,
+  priceByTypeId: Map<number, number>,
+  facilityTax: number,
+  structureRoleBonusPct: number,
+  isAlphaClone: boolean,
+  into: Map<string, number>,
+) {
+  if (node.activity == null || node.rawMaterialsPerRun == null) return;
+  const systemIndex = costIndices.find((c) => c.solar_system_id === systemId);
+  const activityKey = node.activity === "manufacturing" ? "manufacturing" : "reaction";
+  const costIndex = systemIndex?.indices[activityKey] ?? 0.05;
+  const eiv = estimatedItemValue(
+    node.rawMaterialsPerRun.map((m) => ({ typeId: m.type_id, quantity: m.quantity * node.runs })),
+    priceByTypeId,
+  );
+  const breakdown = computeJobCostBreakdown(eiv, costIndex, node.activity, facilityTax, structureRoleBonusPct, isAlphaClone);
+  into.set(path, breakdown.totalJobCost);
+  for (const child of node.materials) {
+    collectSubJobCosts(child, rowPath(path, child.typeId), costIndices, systemId, priceByTypeId, facilityTax, structureRoleBonusPct, isAlphaClone, into);
+  }
 }
 
 /** Every real, still-wanted item's name + quantity, for the Multibuy
@@ -520,6 +607,16 @@ function BuildTreeRow({
           <span className="industry-build-qty-col" title="Total Quantity: the total number of units required for this stage of the build.">
             x{node.quantityNeeded.toLocaleString()}
           </span>
+          {/* Blank for anything bought outright (no blueprint of its own,
+              so "runs" is meaningless) rather than showing 0 - only a
+              buildable row (node.activity set) actually has a job count to
+              show here. */}
+          <span
+            className="industry-build-runs-col"
+            title="Runs: how many times this item's own blueprint needs to run to produce the quantity above."
+          >
+            {node.activity != null ? node.runs.toLocaleString() : ""}
+          </span>
           {/* Total always shows a number - a buildable row starts out
               showing its own Buy Cost here (grey/muted: an estimate, not
               yet the real breakdown) and this same slot is replaced by the
@@ -604,6 +701,13 @@ function BuildTreeFlatList({
   itemGroupNames,
   collapsedTiers,
   onToggleTier,
+  subJobCosts,
+  perBlueprintEfficiency,
+  materialEfficiency,
+  timeEfficiency,
+  onBlueprintEfficiencyChange,
+  onRefreshTree,
+  calculating,
 }: {
   root: BuildTreeNode;
   rootPath: string;
@@ -619,6 +723,26 @@ function BuildTreeFlatList({
    * every row's own Total already does. */
   collapsedTiers: Set<number>;
   onToggleTier: (tierDepth: number) => void;
+  /** Every sub-assembly's own job cost, keyed by path - see
+   * collectSubJobCosts. Empty when no system is picked. */
+  subJobCosts: Map<string, number>;
+  /** Per-item ME/TE overrides, keyed by type id - see
+   * perBlueprintEfficiency's own comment on ProductionCalculator. */
+  perBlueprintEfficiency: Map<number, { materialEfficiency: number; timeEfficiency: number }>;
+  /** The top-level ME/TE, used as each "For X" header's own box's
+   * displayed value until that item gets its own override entry above. */
+  materialEfficiency: number;
+  timeEfficiency: number;
+  onBlueprintEfficiencyChange: (typeId: number, field: "materialEfficiency" | "timeEfficiency", value: number) => void;
+  /** Recalculates the whole build in place (tree stays expanded/ticked
+   * exactly as it is) - each tier's own Refresh button calls this once
+   * you're done adjusting that tier's ME/TE, rather than rebuilding the
+   * whole BOM after every keystroke. */
+  onRefreshTree: () => void;
+  /** Disables every tier's Refresh button while a recalculation (from any
+   * source - this button, another tier's, or the main Calculate button)
+   * is already in flight. */
+  calculating: boolean;
 }) {
   const tiers = useMemo(() => flattenByTier(root, rootPath), [root, rootPath]);
 
@@ -666,7 +790,7 @@ function BuildTreeFlatList({
                 // comment), so this subtotal can never disagree with what's
                 // sitting directly above it.
                 let groupSum = 0;
-                return rows.map(({ node, path, parentName, parentPath }, rowIndex) => {
+                return rows.map(({ node, path, parentName, parentPath, parentNode }, rowIndex) => {
                   const isGroupStart = rowIndex === 0 || rows[rowIndex - 1].parentPath !== parentPath;
                   const isGroupEnd = rowIndex === rows.length - 1 || rows[rowIndex + 1].parentPath !== parentPath;
                   if (isGroupStart) groupSum = 0;
@@ -701,6 +825,75 @@ function BuildTreeFlatList({
                             label={`Select all materials for ${parentName}`}
                           />
                           For {parentName}
+                          {/* The economics of running parentName's own
+                              blueprint once - separate from quantityNeeded/
+                              runs above it, which are about the full amount
+                              actually needed, not a single job. null for
+                              anything bought outright (no blueprint of its
+                              own, so there's no "one run" to cost out). */}
+                          {parentNode.outputPerRun != null && parentNode.buildCostPerUnit != null && (
+                            <span className="industry-build-parent-header-meta">
+                              {parentNode.outputPerRun.toLocaleString()} per run · {formatIsk((parentNode.buildCostPerUnit * parentNode.quantityNeeded) / parentNode.runs)} per run
+                            </span>
+                          )}
+                          {/* This tier's own ME/TE, independent of the
+                              top-level boxes above (which are really just
+                              for the root item's own blueprint) - a
+                              researched sub-assembly rarely sits at the
+                              same level as whatever the root is at.
+                              Reactions never get ME/TE at all (see
+                              industryBuildTree.ts), so there's nothing to
+                              show or edit for one. */}
+                          {parentNode.activity === "manufacturing" && (
+                            <span className="industry-build-parent-header-efficiency">
+                              <label className="industry-build-parent-header-efficiency-field">
+                                ME
+                                <NumberStepperInput
+                                  value={perBlueprintEfficiency.get(parentNode.typeId)?.materialEfficiency ?? materialEfficiency}
+                                  onChange={(v) => onBlueprintEfficiencyChange(parentNode.typeId, "materialEfficiency", v)}
+                                  min={0}
+                                  max={10}
+                                  className="industry-field-input"
+                                />
+                              </label>
+                              <label className="industry-build-parent-header-efficiency-field">
+                                TE
+                                <NumberStepperInput
+                                  value={perBlueprintEfficiency.get(parentNode.typeId)?.timeEfficiency ?? timeEfficiency}
+                                  onChange={(v) => onBlueprintEfficiencyChange(parentNode.typeId, "timeEfficiency", v)}
+                                  min={0}
+                                  max={20}
+                                  step={2}
+                                  className="industry-field-input"
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="industry-build-parent-header-refresh"
+                                onClick={onRefreshTree}
+                                disabled={calculating}
+                                title="Recalculate the whole build using this tier's ME/TE (and any others you've set) - the tree stays open exactly as it is now."
+                                aria-label={`Recalculate using ${parentName}'s ME/TE`}
+                              >
+                                <RefreshCw size={12} strokeWidth={2} />
+                              </button>
+                            </span>
+                          )}
+                          {/* Not a missing feature - reactions always run at
+                              0% ME/TE with no way to research them higher
+                              (real mechanic, same one industryBuildTree.ts's
+                              expand() already forces to 0 for), so there's
+                              genuinely nothing to set here. Shown explicitly
+                              rather than just leaving the row looking like
+                              every other tier's boxes were forgotten. */}
+                          {parentNode.activity === "reaction" && (
+                            <span
+                              className="industry-build-parent-header-efficiency-na"
+                              title="Reactions always run at 0% ME/TE - there's no research level to set, so this tier has no boxes of its own."
+                            >
+                              Reaction - no ME/TE
+                            </span>
+                          )}
                         </p>
                       )}
                       <BuildTreeRow
@@ -716,15 +909,49 @@ function BuildTreeFlatList({
                           plain-language "does this batch add up to roughly
                           what I'd expect" check, right under the same
                           numbers it's summing. */}
-                      {tierIndex > 0 && isGroupEnd && (
-                        <div className="industry-build-parent-subtotal" style={{ paddingLeft: 10 + tierDepth * 18 }}>
-                          <span />
-                          <span className="industry-build-parent-subtotal-label">Materials Total</span>
-                          <span />
-                          <span className="industry-build-parent-subtotal-value">{formatIsk(groupSum)}</span>
-                          <span />
-                        </div>
-                      )}
+                      {tierIndex > 0 &&
+                        isGroupEnd &&
+                        (() => {
+                          const parentJobCost = subJobCosts.get(parentPath);
+                          return (
+                            <>
+                              <div className="industry-build-parent-subtotal" style={{ paddingLeft: 10 + tierDepth * 18 }}>
+                                <span />
+                                <span className="industry-build-parent-subtotal-label">Materials Total</span>
+                                <span />
+                                <span />
+                                <span className="industry-build-parent-subtotal-value">{formatIsk(groupSum)}</span>
+                                <span />
+                              </div>
+                              {/* Only shown once a system is picked (job cost
+                                  needs a real System Cost Index) - the same
+                                  gate jobCost/subJobCosts already sit behind. */}
+                              {parentJobCost != null && (
+                                <>
+                                  <div className="industry-build-parent-subtotal" style={{ paddingLeft: 10 + tierDepth * 18 }}>
+                                    <span />
+                                    <span className="industry-build-parent-subtotal-label">Job Cost</span>
+                                    <span />
+                                    <span />
+                                    <span className="industry-build-parent-subtotal-value">{formatIsk(parentJobCost)}</span>
+                                    <span />
+                                  </div>
+                                  <div
+                                    className="industry-build-parent-subtotal industry-build-parent-subtotal-grand"
+                                    style={{ paddingLeft: 10 + tierDepth * 18 }}
+                                  >
+                                    <span />
+                                    <span className="industry-build-parent-subtotal-label">Group Total</span>
+                                    <span />
+                                    <span />
+                                    <span className="industry-build-parent-subtotal-value">{formatIsk(groupSum + parentJobCost)}</span>
+                                    <span />
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          );
+                        })()}
                     </Fragment>
                   );
                 });
@@ -736,22 +963,41 @@ function BuildTreeFlatList({
   );
 }
 
+/** Strips everything except digits and (at most) one decimal point, so
+ * pasting or typing something like "1,234,567.89" still yields a clean
+ * numeric string - commas are exactly what formatWithThousands below adds
+ * back for display, they're never part of the stored value itself. */
+function sanitizeBlueprintCostInput(raw: string): string {
+  const digitsAndDots = raw.replace(/[^\d.]/g, "");
+  const [intPart, ...rest] = digitsAndDots.split(".");
+  return rest.length > 0 ? `${intPart}.${rest.join("")}` : intPart;
+}
+
+/** Comma-groups the integer part only, leaving whatever decimal precision
+ * was actually typed untouched - unlike toLocaleString, which drops
+ * trailing zeros and would fight a user still mid-typing "1234.50". */
+function formatWithThousands(raw: string): string {
+  const dotIndex = raw.indexOf(".");
+  const intPart = dotIndex === -1 ? raw : raw.slice(0, dotIndex);
+  const decimalPart = dotIndex === -1 ? "" : raw.slice(dotIndex);
+  return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + decimalPart;
+}
+
 function ProductionCalculator() {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selected, setSelected] = useState<TypeSearchMatch | null>(null);
-  /** Set right before loadFavourite assigns query/systemQuery directly -
-   * lets the two debounced search effects below tell "the user is typing"
-   * apart from "a favourite just restored an already-known selection", so
-   * loading one doesn't pop a suggestions dropdown back open over a
-   * blueprint/system that's already correctly selected. */
-  const skipBlueprintSearch = useRef(false);
+  /** Set right before loadSystemPreset assigns systemQuery directly - lets
+   * the debounced system-search effect below tell "the user is typing"
+   * apart from "a system preset just restored an already-known selection",
+   * so loading one doesn't pop a suggestions dropdown back open over a
+   * system that's already correctly selected. */
   const skipSystemSearch = useRef(false);
 
   const [defaultTradeHub] = useDefaultTradeHub();
   const { defaults: industryDefaults } = useIndustryDefaults();
-  const { favourites, isFavourite, saveFavourite, removeFavourite } = useBlueprintFavourites();
+  const { presets: systemPresets, isSystemPreset, saveSystemPreset, removeSystemPreset } = useSystemPresets();
   const [favouritesOpen, setFavouritesOpen] = useState(false);
   const [justFavourited, setJustFavourited] = useState(false);
   const [justCopied, setJustCopied] = useState(false);
@@ -759,6 +1005,15 @@ function ProductionCalculator() {
   const [runs, setRuns] = useState(1);
   const [materialEfficiency, setMaterialEfficiency] = useState(industryDefaults.production.materialEfficiency);
   const [timeEfficiency, setTimeEfficiency] = useState(industryDefaults.production.timeEfficiency);
+  /** Per-sub-assembly ME/TE overrides, keyed by that item's own type id -
+   * the boxes on each "For X" tier header below write here. A researched
+   * component (Life Support Backup Unit at ME9, say) rarely matches
+   * whatever the top-level ME/TE above is set to for the root item, so
+   * this lets each one carry its own real numbers instead of every tier
+   * inheriting the root's blueprint level uniformly. */
+  const [perBlueprintEfficiency, setPerBlueprintEfficiency] = useState<Map<number, { materialEfficiency: number; timeEfficiency: number }>>(
+    new Map(),
+  );
   const [structure, setStructure] = useState<StructureTier>(
     industryDefaults.production.structure === "npc_station" ? "npc_station" : "engineering_complex",
   );
@@ -785,6 +1040,12 @@ function ProductionCalculator() {
    * system was picked (job cost needs a real System Cost Index); null
    * otherwise, which the footer treats as "nothing to add". */
   const [jobCost, setJobCost] = useState<JobCostBreakdown | null>(null);
+  /** Every sub-assembly's own job cost (see collectSubJobCosts), keyed by
+   * its path in the tree - same reasoning as jobCost above for why this
+   * isn't folded into the tree itself, just one map instead of one number
+   * since every buildable node in the BOM has its own. Empty whenever
+   * jobCost is null (no system picked). */
+  const [subJobCosts, setSubJobCosts] = useState<Map<string, number>>(new Map());
   /** The blueprint/reaction-formula item itself - a one-time acquisition
    * cost separate from the per-unit material tree above (buildCostTree
    * starts from what the blueprint OUTPUTS, so the blueprint's own cost
@@ -800,6 +1061,45 @@ function ProductionCalculator() {
    * real figure in: look the price up on contracts yourself and type it
    * in. */
   const [blueprintManualCost, setBlueprintManualCost] = useState("");
+  const blueprintCostInputRef = useRef<HTMLInputElement>(null);
+  /** How many significant (non-comma) characters sat before the cursor at
+   * the moment of the keystroke that just landed - set in the field's own
+   * onChange, consumed by the layout effect below once the newly
+   * comma-formatted value has actually rendered, so the cursor lands back
+   * in the same logical spot instead of the browser's default "controlled
+   * input reset the caret to the end" behavior. null between edits. */
+  const blueprintCostCursorRef = useRef<number | null>(null);
+
+  /** Sanitizes what was just typed/pasted into the Blueprint Cost field and
+   * records where the cursor logically sits (counted in real digits, not
+   * raw character position, since that position shifts as commas get
+   * inserted/removed) - the actual reformatting and cursor restoration
+   * happens in the layout effect below, once React has actually rendered
+   * the new comma-grouped value. */
+  function handleBlueprintCostChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const input = e.target;
+    const cursorPos = input.selectionStart ?? input.value.length;
+    blueprintCostCursorRef.current = input.value.slice(0, cursorPos).replace(/,/g, "").length;
+    setBlueprintManualCost(sanitizeBlueprintCostInput(input.value));
+  }
+
+  useLayoutEffect(() => {
+    if (blueprintCostCursorRef.current == null || !blueprintCostInputRef.current) return;
+    const target = blueprintCostCursorRef.current;
+    blueprintCostCursorRef.current = null;
+    const formatted = formatWithThousands(blueprintManualCost);
+    let pos = target > 0 ? formatted.length : 0;
+    let count = 0;
+    for (let i = 0; i < formatted.length && target > 0; i++) {
+      if (formatted[i] === ",") continue;
+      count++;
+      if (count === target) {
+        pos = i + 1;
+        break;
+      }
+    }
+    blueprintCostInputRef.current.setSelectionRange(pos, pos);
+  }, [blueprintManualCost]);
   /** Which Build Steps rows are ticked, keyed by rowPath (see BuildTreeRow) -
    * lets someone check off just the handful of items they still need
    * (already have the rest in a hangar, only buying part of the list this
@@ -822,77 +1122,56 @@ function ProductionCalculator() {
   const [itemGroupNames, setItemGroupNames] = useState<Map<number, string>>(new Map());
   const reportError = useErrorReporter();
 
-  /** Saves (or updates) the currently-selected blueprint's whole setup -
-   * runs/ME/TE/structure/tax/trade hub/system - as a favourite, so it can
-   * be picked from the list later with everything restored instead of
-   * retyping it. Always overwrites rather than toggling off, so tweaking
-   * an already-favourited setup and clicking again just updates it. */
-  function handleFavouriteSetup() {
-    if (!selected) return;
-    saveFavourite({
-      typeId: selected.id,
-      name: selected.name,
-      runs,
-      materialEfficiency,
-      timeEfficiency,
+  /** Saves (or updates) the currently-selected system's whole facility
+   * setup - trade hub/structure/tax/role bonus/Alpha status - as a preset,
+   * so it can be picked from the list later with everything restored
+   * instead of retyping it every time you're building from the same place.
+   * Deliberately leaves out anything blueprint-specific (runs/ME/TE, the
+   * blueprint itself): a system preset is about where you build, not what
+   * you're building, so it never disturbs whatever's currently selected in
+   * the Blueprint field. Always overwrites rather than toggling off, so
+   * tweaking an already-saved system's setup and clicking again just
+   * updates it. */
+  function handleSaveSystemPreset() {
+    if (!system) return;
+    saveSystemPreset({
+      systemId: system.id,
+      systemName: system.name,
+      hubRegionId,
       structure,
       facilityTax,
       structureRoleBonusPct,
       isAlphaClone,
-      hubRegionId,
-      systemId: system?.id ?? null,
-      systemName: system?.name ?? null,
-      blueprintCost: blueprintManualCost,
     });
     setJustFavourited(true);
     window.setTimeout(() => setJustFavourited(false), 1500);
   }
 
-  /** Loads a saved favourite's whole setup back in - just the inputs, not
-   * an automatic recalculation, so this stays a simple, safe state
-   * assignment rather than needing handleCalculate to read values that
-   * haven't actually landed in state yet by the time it'd run. The
-   * blueprint/system are restored as real selections, not just text in
-   * their fields - skipBlueprintSearch/skipSystemSearch stop the normal
-   * debounced-search effects from popping their suggestions dropdowns
-   * back open over a selection that's already correct, which otherwise
-   * looked like the blueprint/system hadn't actually been picked yet. */
-  function loadFavourite(fav: BlueprintFavourite) {
-    skipBlueprintSearch.current = true;
-    setQuery(fav.name);
-    setSuggestionsOpen(false);
-    setSelected({ id: fav.typeId, name: fav.name, market_group_id: null, volume: 0 });
-    setRuns(fav.runs);
-    setMaterialEfficiency(fav.materialEfficiency);
-    setTimeEfficiency(fav.timeEfficiency);
-    setStructure(fav.structure === "npc_station" ? "npc_station" : "engineering_complex");
-    setFacilityTax(fav.facilityTax);
-    // ?? fallbacks: a favourite saved before these fields existed won't
-    // have them in its stored JSON at all, not just at their zero-value
-    // or empty-string default.
-    setStructureRoleBonusPct(fav.structureRoleBonusPct ?? 0);
-    setIsAlphaClone(fav.isAlphaClone ?? false);
-    setHubRegionId(fav.hubRegionId);
-    setBlueprintManualCost(fav.blueprintCost ?? "");
+  /** Loads a saved system preset's facility setup back in - just the
+   * inputs, not an automatic recalculation, same reasoning as the old
+   * per-blueprint favourite this replaces. Only touches the system/hub/
+   * structure/tax fields - whatever blueprint, runs, ME, or TE you already
+   * have selected are left exactly as they were, so switching which
+   * system you're building in doesn't lose your place on the current
+   * blueprint. skipSystemSearch stops the normal debounced-search effect
+   * from popping its suggestions dropdown back open over a selection
+   * that's already correct. */
+  function loadSystemPreset(preset: SystemPreset) {
+    setStructure(preset.structure === "npc_station" ? "npc_station" : "engineering_complex");
+    setFacilityTax(preset.facilityTax);
+    setStructureRoleBonusPct(preset.structureRoleBonusPct);
+    setIsAlphaClone(preset.isAlphaClone);
+    setHubRegionId(preset.hubRegionId);
     skipSystemSearch.current = true;
     setSystemSuggestionsOpen(false);
-    if (fav.systemId != null && fav.systemName != null) {
-      setSystem({ id: fav.systemId, name: fav.systemName, security: 0 });
-      setSystemQuery(fav.systemName);
-    } else {
-      setSystem(null);
-      setSystemQuery("");
-    }
+    setSystem({ id: preset.systemId, name: preset.systemName, security: 0 });
+    setSystemQuery(preset.systemName);
     setTree(null);
     setJobCost(null);
     setFavouritesOpen(false);
   }
 
   useEffect(() => {
-    if (skipBlueprintSearch.current) {
-      skipBlueprintSearch.current = false;
-      return;
-    }
     const trimmed = query.trim();
     if (trimmed.length < 2) {
       setSuggestions([]);
@@ -1012,14 +1291,28 @@ function ProductionCalculator() {
     };
   }, [tree]);
 
-  async function handleCalculate() {
+  /** The shared core of both a manual Calculate click and the per-tier
+   * Refresh button below - both need the exact same tree/job-cost rebuild,
+   * they just disagree on whether the user's current view should reset
+   * back to a clean slate. resetViewState is true only for an explicit
+   * Calculate: a fresh blueprint/quantity really is a new calculation
+   * worth resetting ticked/expanded state for, where refreshing after
+   * tweaking one tier's own ME/TE (which still touches every field below
+   * it via the very same buildCostTree call) should instead update in
+   * place, preserving whatever tiers the user already has open so they
+   * can actually see the number they just changed move without losing
+   * their spot. */
+  async function computeTreeAndCosts(resetViewState: boolean) {
     if (!selected) return;
     setCalculating(true);
-    setTree(null);
-    setJobCost(null);
-    setBlueprintCost(null);
-    setCheckedPaths(new Set());
-    setExpandedPaths(new Set());
+    if (resetViewState) {
+      setTree(null);
+      setJobCost(null);
+      setSubJobCosts(new Map());
+      setBlueprintCost(null);
+      setCheckedPaths(new Set());
+      setExpandedPaths(new Set());
+    }
     try {
       const detail = await getBlueprintDetail(selected.id);
       const activityInfo = detail.manufacturing ?? detail.reaction;
@@ -1031,7 +1324,7 @@ function ProductionCalculator() {
 
       const prices = await getMarketPrices();
       const priceByTypeId = new Map(prices.map((p) => [p.type_id, p.adjusted_price ?? p.average_price ?? 0]));
-      setBlueprintCost({ typeId: selected.id, name: selected.name, cost: priceByTypeId.get(selected.id) ?? 0 });
+      if (resetViewState) setBlueprintCost({ typeId: selected.id, name: selected.name, cost: priceByTypeId.get(selected.id) ?? 0 });
 
       // The blueprint/reaction-formula item itself is never a manufacturable
       // product (nothing produces "Orca Blueprint" - it's the SHIP that gets
@@ -1049,19 +1342,22 @@ function ProductionCalculator() {
         timeEfficiency,
         structureMaterialBonus: structure === "engineering_complex" ? 0.01 : 0,
         structureTimeBonus: structure === "engineering_complex" ? 0.15 : 0,
+        perBlueprintEfficiency,
       }, priceByTypeId);
       setTree(result);
-      // Opt-out by default: every material row starts ticked (the
-      // blueprint row deliberately doesn't - see its own comment) so
-      // "Selected total" reads as the real total until something's
-      // unticked, rather than looking like nothing's selected yet.
-      setCheckedPaths(collectPaths(result, rowPath("root", result.typeId), new Set()));
-      // Tier 1 is always visible the moment the root's own row is
-      // expanded - every tier past it starts closed, so a deep BOM
-      // doesn't dump every raw material on screen unprompted; drilling
-      // further in is an explicit choice made one tier at a time.
-      const tierDepths = flattenByTier(result, rowPath("root", result.typeId)).map(([depth]) => depth);
-      setCollapsedTiers(new Set(tierDepths.filter((depth) => depth !== 1)));
+      if (resetViewState) {
+        // Opt-out by default: every material row starts ticked (the
+        // blueprint row deliberately doesn't - see its own comment) so
+        // "Selected total" reads as the real total until something's
+        // unticked, rather than looking like nothing's selected yet.
+        setCheckedPaths(collectPaths(result, rowPath("root", result.typeId), new Set()));
+        // Tier 1 is always visible the moment the root's own row is
+        // expanded - every tier past it starts closed, so a deep BOM
+        // doesn't dump every raw material on screen unprompted; drilling
+        // further in is an explicit choice made one tier at a time.
+        const tierDepths = flattenByTier(result, rowPath("root", result.typeId)).map(([depth]) => depth);
+        setCollapsedTiers(new Set(tierDepths.filter((depth) => depth !== 1)));
+      }
 
       if (system) {
         const costIndices = await getIndustrySystemCostIndices();
@@ -1073,7 +1369,29 @@ function ProductionCalculator() {
           priceByTypeId,
         );
         setJobCost(computeJobCostBreakdown(eiv, costIndex, activity, facilityTax, structureRoleBonusPct, isAlphaClone));
-      } else if (systemQuery.trim().length > 0) {
+
+        // Every sub-assembly gets the same treatment as the root just
+        // above - its own job cost, from its own raw per-run materials and
+        // its own runs, using this same system/facility/tax setup (there's
+        // only the one System field on this page, so every job in the plan
+        // is assumed to run in the same place).
+        const subCosts = new Map<string, number>();
+        const resultRootPath = rowPath("root", result.typeId);
+        for (const child of result.materials) {
+          collectSubJobCosts(
+            child,
+            rowPath(resultRootPath, child.typeId),
+            costIndices,
+            system.id,
+            priceByTypeId,
+            facilityTax,
+            structureRoleBonusPct,
+            isAlphaClone,
+            subCosts,
+          );
+        }
+        setSubJobCosts(subCosts);
+      } else if (resetViewState && systemQuery.trim().length > 0) {
         // Typing a name into the System field doesn't select it on its own -
         // system only gets set by clicking a suggestion (see the input's
         // onChange, which clears it on every keystroke). Without this, a
@@ -1087,6 +1405,34 @@ function ProductionCalculator() {
     } finally {
       setCalculating(false);
     }
+  }
+
+  function handleCalculate() {
+    computeTreeAndCosts(true);
+  }
+
+  /** Sets one tier's own ME or TE override - see perBlueprintEfficiency's
+   * own comment. Only queues the state update; doesn't recalculate on its
+   * own, so typing a multi-digit value doesn't rebuild the whole BOM once
+   * per keystroke - that's what the tier's own Refresh button is for (see
+   * handleRefreshTree). */
+  function handleBlueprintEfficiencyChange(typeId: number, field: "materialEfficiency" | "timeEfficiency", value: number) {
+    setPerBlueprintEfficiency((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(typeId) ?? { materialEfficiency, timeEfficiency };
+      next.set(typeId, { ...existing, [field]: value });
+      return next;
+    });
+  }
+
+  /** Recalculates in place (resetViewState: false, so the tree stays
+   * however it's currently expanded/ticked instead of collapsing back to
+   * just Tier 1 the way a fresh Calculate does) - the per-tier refresh
+   * button below calls this once you're done changing that tier's own
+   * ME/TE, rather than recalculating the whole BOM after every single
+   * keystroke while you're still typing a number. */
+  function handleRefreshTree() {
+    computeTreeAndCosts(false);
   }
 
   /** Toggles a single tree row - no cascade into its subtree needed. A
@@ -1195,6 +1541,15 @@ function ProductionCalculator() {
     () => (pricedTree ? sumVisibleTickedCost(pricedTree, rootPath, checkedPaths, collapsedTiers) : 0),
     [pricedTree, rootPath, checkedPaths, collapsedTiers],
   );
+  /** Every currently-visible-and-ticked sub-assembly's own job cost, on top
+   * of jobCost above (the root's own job only) - a multi-tier build where
+   * you're manufacturing several of the tiers yourself, not just the final
+   * item, really does pay for that many separate jobs. Zero whenever
+   * jobCost is null (subJobCosts is empty in that case too). */
+  const tickedSubJobCost = useMemo(
+    () => (pricedTree ? sumVisibleTickedJobCost(pricedTree, rootPath, checkedPaths, collapsedTiers, subJobCosts) : 0),
+    [pricedTree, rootPath, checkedPaths, collapsedTiers, subJobCosts],
+  );
 
   // A manual entry always wins once typed, even "0" - only a genuinely
   // empty field falls back to the (usually unhelpful, market-order-based)
@@ -1251,28 +1606,28 @@ function ProductionCalculator() {
             onClick={() => setFavouritesOpen((v) => !v)}
           >
             <Star size={14} strokeWidth={2} fill={favouritesOpen ? "currentColor" : "none"} />
-            My Favourites
-            {favourites.length > 0 && <span className="market-browser-favourites-count">{favourites.length}</span>}
+            System Presets
+            {systemPresets.length > 0 && <span className="market-browser-favourites-count">{systemPresets.length}</span>}
           </button>
           {favouritesOpen &&
-            (favourites.length === 0 ? (
+            (systemPresets.length === 0 ? (
               <p className="market-browser-favourites-empty">
-                No favourites yet - pick a blueprint below, set it up how you like, then click "Favourite This Setup".
+                No saved systems yet - pick a system below, set its Trade Hub/facility up how you like, then click "Save This System".
               </p>
             ) : (
               <div className="market-browser-favourites-list">
-                {favourites.map((f) => (
-                  <div key={f.typeId} className="industry-blueprint-favourite-row">
-                    <button type="button" onClick={() => loadFavourite(f)}>
-                      <img src={typeIconUrl(f.typeId, 32, f.name)} alt="" className="market-browser-row-icon" />
-                      <span className="industry-blueprint-favourite-name">{f.name}</span>
+                {systemPresets.map((p) => (
+                  <div key={p.systemId} className="industry-system-preset-row">
+                    <button type="button" onClick={() => loadSystemPreset(p)}>
+                      <MapPin size={16} strokeWidth={2} className="market-browser-row-icon" />
+                      <span className="industry-system-preset-name">{p.systemName}</span>
                     </button>
                     <button
                       type="button"
-                      className="industry-blueprint-favourite-remove"
-                      onClick={() => removeFavourite(f.typeId)}
-                      aria-label={`Remove ${f.name} from favourites`}
-                      title="Remove from favourites"
+                      className="industry-system-preset-remove"
+                      onClick={() => removeSystemPreset(p.systemId)}
+                      aria-label={`Remove ${p.systemName} from saved systems`}
+                      title="Remove from saved systems"
                     >
                       <X size={12} strokeWidth={2.5} />
                     </button>
@@ -1325,13 +1680,13 @@ function ProductionCalculator() {
             <label className="wh-field-label industry-blueprint-cost-inline">
               Blueprint Cost
               <input
-                type="number"
-                min={0}
-                step="any"
+                ref={blueprintCostInputRef}
+                type="text"
+                inputMode="decimal"
                 className="industry-field-input"
                 placeholder="0.00"
-                value={blueprintManualCost}
-                onChange={(e) => setBlueprintManualCost(e.target.value)}
+                value={formatWithThousands(blueprintManualCost)}
+                onChange={handleBlueprintCostChange}
                 title="What buying this blueprint/BPC cost you - most real prices come from contracts, not the market, so this is manual. Set it before or after calculating; it's added into Build Cost either way."
               />
             </label>
@@ -1342,7 +1697,13 @@ function ProductionCalculator() {
           <div className="industry-input-grid">
             <label className="wh-field-label">
               Runs
-              <NumberStepperInput value={runs} onChange={setRuns} min={1} className="industry-field-input" />
+              <NumberStepperInput
+                value={runs}
+                onChange={setRuns}
+                min={1}
+                className="industry-field-input"
+                title="How many times to run this job, not how many items you'll get - some blueprints (ammo, charges) produce more than one unit per run. See the costs panel's 'X Runs (Y items)' line for the real item count this many runs actually produces."
+              />
             </label>
             <label className="wh-field-label">
               Material Efficiency
@@ -1441,13 +1802,24 @@ function ProductionCalculator() {
                   ))}
                 </div>
               )}
+              {system && (
+                <button
+                  type="button"
+                  className={`kills-sync-btn industry-save-system-btn${isSystemPreset(system.id) ? " industry-favourite-setup-active" : ""}`}
+                  onClick={handleSaveSystemPreset}
+                  title="Save this Trade Hub/structure/facility tax/role bonus/clone type setup against this system, so picking it from System Presets restores them exactly - whatever blueprint you're calculating is left untouched."
+                >
+                  <Star size={13} strokeWidth={2} fill={isSystemPreset(system.id) ? "currentColor" : "none"} />
+                  {justFavourited ? "Saved!" : isSystemPreset(system.id) ? "Update System Preset" : "Save This System"}
+                </button>
+              )}
             </div>
             {pricedTree && (
               <div
                 className="market-stat-card industry-ship-cost-card"
                 title="What buying this outright, brand new, would cost at the Trade Hub right now - the real market price of the finished item itself, not its component materials. Scales with the same quantity Build Cost does, so the two are directly comparable."
               >
-                <span className="market-stat-label">Brand New Ship Cost from Market</span>
+                <span className="market-stat-label">Brand New Item Cost from Market</span>
                 <span className="market-stat-value market-stat-value-isk">
                   {formatIsk(pricedTree.buyCostPerUnit * pricedTree.quantityNeeded)}
                 </span>
@@ -1460,15 +1832,6 @@ function ProductionCalculator() {
           <div className="settings-section-row">
             <button type="button" className="kills-sync-btn" onClick={handleCalculate} disabled={calculating}>
               {calculating ? "Calculating..." : "Calculate Build Cost"}
-            </button>
-            <button
-              type="button"
-              className={`kills-sync-btn${isFavourite(selected.id) ? " industry-favourite-setup-active" : ""}`}
-              onClick={handleFavouriteSetup}
-              title="Save these runs/ME/TE/structure/tax/trade hub/system settings against this blueprint, so picking it from My Favourites restores them exactly"
-            >
-              <Star size={13} strokeWidth={2} fill={isFavourite(selected.id) ? "currentColor" : "none"} />
-              {justFavourited ? "Saved!" : isFavourite(selected.id) ? "Update Favourite" : "Favourite This Setup"}
             </button>
           </div>
         )}
@@ -1490,6 +1853,9 @@ function ProductionCalculator() {
               <span />
               <span className="industry-build-header-label-left">Material</span>
               <span title="Total Quantity: the total number of units required for this stage of the build.">Qty</span>
+              <span title="Runs: how many times this item's own blueprint needs to run to produce the quantity above - blank for anything with no blueprint of its own.">
+                Runs
+              </span>
               <span title="Total: the Trade Hub cost of buying the full quantity needed outright, until the tier below is open - then it's replaced by the real combined cost of that tier's materials instead.">
                 Total
               </span>
@@ -1518,6 +1884,13 @@ function ProductionCalculator() {
                 itemGroupNames={itemGroupNames}
                 collapsedTiers={collapsedTiers}
                 onToggleTier={toggleTier}
+                subJobCosts={subJobCosts}
+                perBlueprintEfficiency={perBlueprintEfficiency}
+                materialEfficiency={materialEfficiency}
+                timeEfficiency={timeEfficiency}
+                onBlueprintEfficiencyChange={handleBlueprintEfficiencyChange}
+                onRefreshTree={handleRefreshTree}
+                calculating={calculating}
               />
             )}
           </div>
@@ -1557,10 +1930,16 @@ function ProductionCalculator() {
                 <span className="industry-job-cost-value">{formatIsk(jobCost.totalJobCost / pricedTree.quantityNeeded)}</span>
               </div>
             )}
+            {tickedSubJobCost > 0 && (
+              <div className="industry-job-cost-row" title="The job cost of every sub-assembly tier you're actually building yourself (ticked, tier open), not just the final item's own job.">
+                <span>Sub-Assembly Job Costs</span>
+                <span className="industry-job-cost-value">{formatIsk(tickedSubJobCost / pricedTree.quantityNeeded)}</span>
+              </div>
+            )}
             <div className="industry-job-cost-row industry-job-cost-subtotal">
               <span>Total Job Run Cost</span>
               <span className="industry-job-cost-value industry-job-cost-value-total">
-                {formatIsk((tickedBuildCost + blueprintCostIncluded + (jobCost?.totalJobCost ?? 0)) / pricedTree.quantityNeeded)}
+                {formatIsk((tickedBuildCost + blueprintCostIncluded + (jobCost?.totalJobCost ?? 0) + tickedSubJobCost) / pricedTree.quantityNeeded)}
               </span>
             </div>
             {pricedTree.timeSeconds != null && (
@@ -1596,10 +1975,16 @@ function ProductionCalculator() {
                 <span className="industry-job-cost-value">{formatIsk(jobCost.totalJobCost)}</span>
               </div>
             )}
+            {tickedSubJobCost > 0 && (
+              <div className="industry-job-cost-row" title="The job cost of every sub-assembly tier you're actually building yourself (ticked, tier open), not just the final item's own job.">
+                <span>Sub-Assembly Job Costs</span>
+                <span className="industry-job-cost-value">{formatIsk(tickedSubJobCost)}</span>
+              </div>
+            )}
             <div className="industry-job-cost-row industry-job-cost-subtotal">
               <span>Total Job Run Cost</span>
               <span className="industry-job-cost-value industry-job-cost-value-total">
-                {formatIsk(tickedBuildCost + blueprintCostIncluded + (jobCost?.totalJobCost ?? 0))}
+                {formatIsk(tickedBuildCost + blueprintCostIncluded + (jobCost?.totalJobCost ?? 0) + tickedSubJobCost)}
               </span>
             </div>
             {pricedTree.timeSeconds != null && (
@@ -2606,8 +2991,40 @@ function ResearchCalculator() {
 
 /** Character-only, per D5's scoping - corp mining observer data (refinery
  * -level tracking of a whole team) is skipped for this pass. */
-function IndustryPage() {
+interface IndustryPageProps {
+  /** A sub-tab favourite ("industry.reprocessing") clicked in the Sidebar -
+   * jumps straight to that calculator, one-shot like WalletMarketPage's
+   * initialMarketItem. */
+  initialTab?: string | null;
+  onConsumeInitialTab?: () => void;
+  /** Reports the active calculator up to App.tsx so the TopBar star button
+   * knows which specific tab to favourite. */
+  onActiveTabChange?: (tab: string) => void;
+}
+
+const INDUSTRY_TABS: { id: IndustryTab; label: string }[] = [
+  { id: "production", label: "Production" },
+  { id: "reprocessing", label: "Reprocessing" },
+  { id: "invention", label: "Invention" },
+  { id: "research", label: "Research" },
+];
+const INDUSTRY_TAB_IDS: IndustryTab[] = INDUSTRY_TABS.map((t) => t.id);
+
+function IndustryPage({ initialTab, onConsumeInitialTab, onActiveTabChange }: IndustryPageProps) {
   const [tab, setTab] = useState<IndustryTab>("production");
+
+  useEffect(() => {
+    if (initialTab && (INDUSTRY_TAB_IDS as string[]).includes(initialTab)) {
+      setTab(initialTab as IndustryTab);
+      onConsumeInitialTab?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
+
+  useEffect(() => {
+    onActiveTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   return (
     <main className="main main-dashboard">
@@ -2622,21 +3039,13 @@ function IndustryPage() {
           </p>
         </div>
 
-        <div className="character-tabs">
-          <button type="button" className={`character-tab${tab === "production" ? " character-tab-active" : ""}`} onClick={() => setTab("production")}>
-            Production
-          </button>
-          <button type="button" className={`character-tab${tab === "reprocessing" ? " character-tab-active" : ""}`} onClick={() => setTab("reprocessing")}>
-            Reprocessing
-          </button>
-          <button type="button" className={`character-tab${tab === "invention" ? " character-tab-active" : ""}`} onClick={() => setTab("invention")}>
-            Invention
-          </button>
-          <button type="button" className={`character-tab${tab === "research" ? " character-tab-active" : ""}`} onClick={() => setTab("research")}>
-            Research
-          </button>
-          <HelpBadge content={HELP_CONTENT[`industry.${tab}`] ?? HELP_CONTENT.industry} />
-        </div>
+        <PageTabBar
+          pageId="industry"
+          tabs={INDUSTRY_TABS}
+          activeTab={tab}
+          onSelect={(id) => setTab(id as IndustryTab)}
+          trailing={<HelpBadge content={HELP_CONTENT[`industry.${tab}`] ?? HELP_CONTENT.industry} />}
+        />
 
         {tab === "production" ? (
           <ProductionCalculator />

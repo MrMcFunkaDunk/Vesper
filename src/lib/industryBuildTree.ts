@@ -4,7 +4,7 @@
 // algorithm eve-tools-suite-main's buildtree.ts uses (verified this
 // session), reimplemented against VESPER's own backend/data layer.
 
-import { getBlueprintDetail, findBlueprintForProduct, type BlueprintDetail, type ActivityInfo } from "./industry";
+import { getBlueprintDetail, findBlueprintForProduct, type BlueprintDetail, type ActivityInfo, type MaterialLine } from "./industry";
 import { adjustedMaterialQuantity, jobMaterialQuantity, jobTimeSeconds, type ActivityType } from "./industryMath";
 
 export interface BuildTreeOptions {
@@ -17,6 +17,15 @@ export interface BuildTreeOptions {
   maxDepth?: number;
   /** Safety cap on total node count across the whole tree. */
   maxNodes?: number;
+  /** Per-blueprint ME/TE overrides, keyed by the item's own type id (not
+   * its position in the tree - the same physical blueprint has the same
+   * real ME/TE wherever it's needed across the whole BOM). Falls back to
+   * the top-level materialEfficiency/timeEfficiency above for any item
+   * without its own entry here - the top-level fields are really "what the
+   * root item's own blueprint is researched to", and every sub-assembly
+   * inherits that same level until told otherwise. Ignored for reactions,
+   * which never get ME/TE regardless (see the real-mechanic note below). */
+  perBlueprintEfficiency?: Map<number, { materialEfficiency: number; timeEfficiency: number }>;
 }
 
 // Raised from the original 6/400: those were tight enough that a wide,
@@ -45,6 +54,21 @@ export interface BuildTreeNode {
   totalCost: number;
   timeSeconds: number | null;
   materials: BuildTreeNode[];
+  /** How many units one single run of this item's own blueprint produces
+   * (null for a bought-outright leaf, which has no blueprint of its own) -
+   * distinct from `runs`, which is how many runs the quantity actually
+   * needed calls for. Lets a caller answer "what does running this job
+   * once actually cost/yield" rather than only "what does the full amount
+   * I need cost". */
+  outputPerRun: number | null;
+  /** This item's own blueprint material list, one run's worth, before ME
+   * reduction - null for a bought-outright leaf. Real EIV (Estimated Item
+   * Value, what a job's System Cost Index tax is based on) is defined off
+   * these raw per-run quantities, not the ME-adjusted totalQty each child
+   * node actually needs - see estimatedItemValue's own callers for why
+   * `materials` (already ME-adjusted and multiplied by runs) can't be
+   * reused for that calculation. */
+  rawMaterialsPerRun: MaterialLine[] | null;
 }
 
 interface BuildContext {
@@ -90,6 +114,8 @@ function buyOnlyLeaf(typeId: number, name: string, quantityNeeded: number, buyCo
     totalCost: buyCostPerUnit * quantityNeeded,
     timeSeconds: null,
     materials: [],
+    outputPerRun: null,
+    rawMaterialsPerRun: null,
   };
 }
 
@@ -118,8 +144,9 @@ async function expand(ctx: BuildContext, typeId: number, name: string, quantityN
 
   // Reactions never get ME - real mechanic confirmed by both reference
   // tools independently (see industryMath.ts's provenance notes).
-  const me = activity === "reaction" ? 0 : ctx.options.materialEfficiency;
-  const te = activity === "reaction" ? 0 : ctx.options.timeEfficiency;
+  const override = ctx.options.perBlueprintEfficiency.get(typeId);
+  const me = activity === "reaction" ? 0 : (override?.materialEfficiency ?? ctx.options.materialEfficiency);
+  const te = activity === "reaction" ? 0 : (override?.timeEfficiency ?? ctx.options.timeEfficiency);
   const structureMaterialBonus = activity === "reaction" ? 0 : ctx.options.structureMaterialBonus;
 
   const materials: BuildTreeNode[] = [];
@@ -155,6 +182,8 @@ async function expand(ctx: BuildContext, typeId: number, name: string, quantityN
     // "should-buy" item anyway. flattenRawMaterials still short-circuits on
     // !shouldBuild first, so the shopping list is unaffected by this.
     materials,
+    outputPerRun,
+    rawMaterialsPerRun: activityInfo.materials,
   };
 }
 
@@ -176,6 +205,7 @@ export async function buildCostTree(productTypeId: number, name: string, quantit
       structureTimeBonus: options.structureTimeBonus ?? 0,
       maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
       maxNodes: options.maxNodes ?? DEFAULT_MAX_NODES,
+      perBlueprintEfficiency: options.perBlueprintEfficiency ?? new Map(),
     },
     prices,
     blueprintCache: new Map(),

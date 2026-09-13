@@ -743,10 +743,22 @@
   gap: 2px;
 }
 
+:root[data-tier="premium"] .page-tab-row {
+  background: var(--deck-cavity);
+  border: 1px solid var(--deck-frame);
+  padding: 8px;
+  gap: 10px 12px;
+}
+
 :root[data-tier="premium"] .kills-tab,
 :root[data-tier="premium"] .character-tab {
   border: 1px solid transparent;
   font-size: 12px;
+}
+
+:root[data-tier="premium"] .page-tab-favourite {
+  background: var(--deck-plate);
+  border: 1px solid var(--deck-frame);
 }
 
 /* ---------------------------------------------------------------------------

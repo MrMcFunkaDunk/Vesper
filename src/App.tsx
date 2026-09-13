@@ -41,6 +41,7 @@ import ToastStack from "./components/ToastStack";
 import { useDefaultLandingTab } from "./hooks/useDefaultLandingTab";
 import { useReduceMotion } from "./hooks/useReduceMotion";
 import { useTheme } from "./hooks/useTheme";
+import { splitFavouriteId } from "./lib/subTabs";
 import "./App.css";
 // Premium deck themes (Bulkhead/Cold Ballast/Command Deck/Amber Exchange) live entirely
 // outside App.css, in their own small stylesheet architecture - never
@@ -78,6 +79,15 @@ function App() {
   const [pendingGate, setPendingGate] = useState<GateSummary | null>(null);
   const [pendingMarketItem, setPendingMarketItem] = useState<MarketItemRef | null>(null);
   const [pendingFitShipTypeId, setPendingFitShipTypeId] = useState<number | null>(null);
+  // Which internal tab is showing on whichever multi-tab page is active, so
+  // the TopBar star can favourite that specific tab ("wallet.lpstore") - kept
+  // up to date by each multi-tab page's own onActiveTabChange callback, and
+  // reset whenever the active page itself changes (see the effect below).
+  const [activeSubTab, setActiveSubTab] = useState<string | null>(null);
+  // A sub-tab favourite clicked in the Sidebar's Favourites view - handed to
+  // whichever page component owns that tab so it can jump straight there,
+  // the same one-shot prop pattern initialMarketItem already uses.
+  const [pendingSubTab, setPendingSubTab] = useState<string | null>(null);
   const reportError = useErrorReporter();
   // Mounted here (not inside MultiboxPage, which is lazy-loaded and
   // unmounts the moment you leave that tab) so 2+ running EVE clients gets
@@ -95,6 +105,14 @@ function App() {
   const [mapVisited, setMapVisited] = useState(false);
   useEffect(() => {
     if (activeId === "map") setMapVisited(true);
+  }, [activeId]);
+
+  // Whichever sub-tab was active belongs to the PREVIOUS page - clear it the
+  // moment the active page itself changes so the TopBar star doesn't briefly
+  // favourite the wrong page's tab. If the new page has its own tabs, its
+  // onActiveTabChange callback corrects this again immediately.
+  useEffect(() => {
+    setActiveSubTab(null);
   }, [activeId]);
 
   useEffect(() => {
@@ -138,8 +156,13 @@ function App() {
   }
 
   function handleSelectNav(id: string) {
-    setActiveId(id);
-    if (id !== "dashboard") {
+    // A Sidebar Favourites row can be a plain page id ("industry") or a
+    // composite sub-tab favourite ("industry.production") - split it so a
+    // sub-tab favourite lands on the right page AND jumps to the right tab.
+    const { pageId, subTabId } = splitFavouriteId(id);
+    setActiveId(pageId);
+    setPendingSubTab(subTabId);
+    if (pageId !== "dashboard") {
       setDetailCharacterId(null);
     }
   }
@@ -198,6 +221,10 @@ function App() {
     setActiveId("fittings-fleets");
   }
 
+  function handleConsumePendingSubTab() {
+    setPendingSubTab(null);
+  }
+
   async function handleAdd() {
     await startLogin(DASHBOARD_SCOPES);
     refreshSession();
@@ -221,7 +248,7 @@ function App() {
         <ProximityFlashOverlay />
         <UpdateBanner />
         <ToastStack />
-        <Sidebar activeId={activeId} onSelect={handleSelectNav} />
+        <Sidebar activeId={activeId} activeSubTab={activeSubTab} onSelect={handleSelectNav} />
         <TopBar
           title={active.label}
           activeId={activeId}
@@ -266,6 +293,9 @@ function App() {
             onConsumeInitialGate={() => setPendingGate(null)}
             onGoToMap={handleGoToMap}
             onSelectItem={handleOpenMarketItem}
+            initialTab={pendingSubTab}
+            onConsumeInitialTab={handleConsumePendingSubTab}
+            onActiveTabChange={setActiveSubTab}
           />
         ) : activeId === "map" ? null : activeId === "mail" ? (
           <MailPage characters={session.characters} initialCharacterId={session.active_character_id} />
@@ -276,9 +306,17 @@ function App() {
             initialMarketItem={pendingMarketItem}
             onConsumeInitialMarketItem={() => setPendingMarketItem(null)}
             onFitShip={handleFitShip}
+            initialTab={pendingSubTab}
+            onConsumeInitialTab={handleConsumePendingSubTab}
+            onActiveTabChange={setActiveSubTab}
           />
         ) : activeId === "planetary" ? (
-          <PlanetaryIndustry characters={session.characters} />
+          <PlanetaryIndustry
+            characters={session.characters}
+            initialTab={pendingSubTab}
+            onConsumeInitialTab={handleConsumePendingSubTab}
+            onActiveTabChange={setActiveSubTab}
+          />
         ) : activeId === "settings" ? (
           <SettingsPage session={session} onAdd={handleAdd} onLogout={handleLogout} />
         ) : activeId === "calendar" ? (
@@ -288,6 +326,9 @@ function App() {
             characters={session.characters}
             initialShipTypeId={pendingFitShipTypeId}
             onConsumeInitialShipTypeId={() => setPendingFitShipTypeId(null)}
+            initialTab={pendingSubTab}
+            onConsumeInitialTab={handleConsumePendingSubTab}
+            onActiveTabChange={setActiveSubTab}
           />
         ) : activeId === "path-wormhole-finder" ? (
           <PathWormholeFinderPage
@@ -297,9 +338,18 @@ function App() {
             onSelectSystem={handleOpenSystemKills}
           />
         ) : activeId === "industry" ? (
-          <IndustryPage />
+          <IndustryPage
+            initialTab={pendingSubTab}
+            onConsumeInitialTab={handleConsumePendingSubTab}
+            onActiveTabChange={setActiveSubTab}
+          />
         ) : activeId === "mining" ? (
-          <MiningPage characters={session.characters} />
+          <MiningPage
+            characters={session.characters}
+            initialTab={pendingSubTab}
+            onConsumeInitialTab={handleConsumePendingSubTab}
+            onActiveTabChange={setActiveSubTab}
+          />
         ) : activeId === "multiboxing" ? (
           <MultiboxPage autoDetect={multiboxAutoDetect} onAutoDetectChange={setMultiboxAutoDetect} />
         ) : (
@@ -315,6 +365,10 @@ function App() {
                 onSelectGate={handleOpenGateKillboard}
                 onSelectCharacter={handleOpenCharacterKillboard}
                 characters={session.characters}
+                visible={activeId === "map"}
+                initialTab={activeId === "map" ? pendingSubTab : null}
+                onConsumeInitialTab={handleConsumePendingSubTab}
+                onActiveTabChange={setActiveSubTab}
               />
             </Suspense>
           </div>

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { MapPin, X } from "lucide-react";
+import { MapPin, Star, X } from "lucide-react";
 import { getServerStatus, type Session } from "../lib/eve";
 import { searchSystemsLive, type SystemSearchMatch } from "../lib/map";
 import { useLocationTracking, type ProximityRadius } from "../hooks/useLocationTracking";
 import { useRecentActivity } from "../hooks/useRecentActivity";
+import { useFavouritePages } from "../hooks/useFavouritePages";
+import { SUB_TABS } from "../lib/subTabs";
 import StatusChip from "./StatusChip";
 import HelpBadge from "./HelpBadge";
 import NotificationBell from "./NotificationBell";
@@ -320,11 +322,30 @@ function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout, onOpenKil
     session.characters.find((c) => c.id === session.active_character_id) ??
     session.characters[0];
   const helpContent = HELP_CONTENT[activeId];
+  const { isFavouritePage, toggleFavouritePage } = useFavouritePages();
+  // Multi-tab pages favourite a specific tab ("wallet.lpstore"), not the page
+  // as a whole - that star lives right on the page's own tab bar/header
+  // (FavouriteTabButton) instead of up here, since this button has no idea
+  // which internal tab is currently open. Single-tab pages still favourite
+  // themselves from here, same as always.
+  const hasSubTabs = SUB_TABS[activeId] != null;
+  const favourited = isFavouritePage(activeId);
 
   return (
     <header className="topbar">
       <div className="topbar-title-group">
         <h1 className="topbar-title">{title}</h1>
+        {!hasSubTabs && (
+          <button
+            type="button"
+            className={`topbar-favourite-toggle${favourited ? " topbar-favourite-toggle-active" : ""}`}
+            onClick={() => toggleFavouritePage(activeId)}
+            aria-label={favourited ? `Remove ${title} from Favourites` : `Add ${title} to Favourites`}
+            title={favourited ? "Remove from Favourites" : "Add to Favourites - starred pages show in the Sidebar's Favourites view"}
+          >
+            <Star size={16} strokeWidth={2} fill={favourited ? "currentColor" : "none"} />
+          </button>
+        )}
         {helpContent && <HelpBadge content={helpContent} />}
       </div>
       <div className="topbar-right">

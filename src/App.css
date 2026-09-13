@@ -809,6 +809,55 @@ select.wh-roller-select,
   opacity: 0.6;
 }
 
+.sidebar-favourites-bar {
+  margin: 0 0 var(--space-sm);
+}
+
+.sidebar-favourites-toggle,
+.sidebar-favourites-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text-secondary);
+  font-family: var(--font-label);
+  font-weight: 500;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-favourites-toggle:hover,
+.sidebar-favourites-back:hover {
+  background: var(--bg-elevated);
+  color: var(--accent);
+}
+
+.sidebar-favourites-count {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-family: var(--font-body);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.sidebar-favourites-empty {
+  margin: 0 2px var(--space-sm);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 .nav {
   display: flex;
   flex-direction: column;
@@ -867,6 +916,13 @@ select.wh-roller-select,
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
 }
 
+.sidebar-settings-anchor {
+  flex-shrink: 0;
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
 .sidebar-footer {
   padding: var(--space-sm) var(--space-sm) 0;
   font-family: var(--font-label);
@@ -918,6 +974,29 @@ select.wh-roller-select,
   font-size: 17px;
   margin: 0;
   letter-spacing: 0.02em;
+}
+
+.topbar-favourite-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.topbar-favourite-toggle:hover {
+  background: var(--bg-elevated-2);
+  color: var(--warning);
+}
+
+.topbar-favourite-toggle-active {
+  color: var(--warning);
 }
 
 /* Status chip: LABEL // VALUE telemetry pattern */
@@ -3577,13 +3656,13 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
    Browser's own favourites feature - only the per-row layout needs its own
    rules here, since a blueprint favourite also carries a remove button
    next to it (the Market Browser's own rows don't). */
-.industry-blueprint-favourite-row {
+.industry-system-preset-row {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.industry-blueprint-favourite-row button:first-child {
+.industry-system-preset-row button:first-child {
   flex: 1;
   min-width: 0;
   display: flex;
@@ -3600,7 +3679,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   cursor: pointer;
 }
 
-.industry-blueprint-favourite-name {
+.industry-system-preset-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -3608,7 +3687,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   white-space: nowrap;
 }
 
-.industry-blueprint-favourite-row button:first-child:hover {
+.industry-system-preset-row button:first-child:hover {
   background: var(--bg-elevated-2);
 }
 
@@ -3616,8 +3695,8 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
    .market-browser-favourites-list button (a class+element selector, since
    this row's buttons sit nested a level deeper than that rule expects)
    otherwise wins the width/padding cascade over a bare .industry-
-   blueprint-favourite-remove class selector alone. */
-.industry-blueprint-favourite-row .industry-blueprint-favourite-remove {
+   system-preset-remove class selector alone. */
+.industry-system-preset-row .industry-system-preset-remove {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -3632,7 +3711,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.industry-blueprint-favourite-row .industry-blueprint-favourite-remove:hover {
+.industry-system-preset-row .industry-system-preset-remove:hover {
   background: var(--bg-elevated-2);
   color: var(--danger);
 }
@@ -3715,13 +3794,6 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   width: auto;
   border-radius: 0;
   text-align: center;
-  -moz-appearance: textfield;
-}
-
-.industry-number-stepper .industry-field-input::-webkit-inner-spin-button,
-.industry-number-stepper .industry-field-input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
 }
 
 .industry-number-stepper-btn {
@@ -3918,7 +3990,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
      spot all the way down the tree. Must stay identical to
      .industry-build-row-body's template or the header stops lining up
      with the columns beneath it. */
-  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 20px;
+  grid-template-columns: 28px minmax(0, 1fr) 100px 70px 190px 20px;
   align-items: center;
   gap: 10px;
   flex: 1;
@@ -4008,6 +4080,67 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   opacity: 0.85;
 }
 
+.industry-build-parent-header-meta {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.industry-build-parent-header-efficiency {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.industry-build-parent-header-efficiency-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.industry-build-parent-header-efficiency-field .industry-number-stepper {
+  width: 100px;
+}
+
+.industry-build-parent-header-efficiency-field .industry-field-input {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.industry-build-parent-header-refresh {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.industry-build-parent-header-refresh:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--accent);
+}
+
+.industry-build-parent-header-refresh:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.industry-build-parent-header-efficiency-na {
+  font-style: italic;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
 .industry-build-parent-header:first-child {
   margin-top: 0;
 }
@@ -4020,7 +4153,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
    grid does (see its own comment). */
 .industry-build-parent-subtotal {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 20px;
+  grid-template-columns: 28px minmax(0, 1fr) 100px 70px 190px 20px;
   align-items: center;
   gap: 10px;
   padding: 2px 4px 2px 0;
@@ -4042,6 +4175,13 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   font-weight: 700;
   font-size: 13px;
   color: var(--warning);
+}
+
+/* The combined Materials + Job Cost row - same accent treatment as the
+   sidebar's own Total Job Run Cost line, so both "this is the real number
+   to look at" totals read the same way. */
+.industry-build-parent-subtotal-grand .industry-build-parent-subtotal-value {
+  color: color-mix(in srgb, white 25%, var(--accent));
 }
 
 /* Wraps the per-tier GroupCheckbox and the collapse/expand button as
@@ -4121,7 +4261,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
    no separate Self Build Cost or Cost from Trade Hub column anymore. */
 .industry-build-row-body {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 100px 190px 20px;
+  grid-template-columns: 28px minmax(0, 1fr) 100px 70px 190px 20px;
   align-items: center;
   gap: 10px;
   /* This element is itself a flex child of .industry-build-row (the
@@ -4148,6 +4288,13 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 }
 
 .industry-build-qty-col {
+  text-align: right;
+  color: var(--text-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.industry-build-runs-col {
   text-align: right;
   color: var(--text-muted);
   font-weight: 400;
@@ -4277,6 +4424,10 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 .industry-hub-prices-loading {
   font-size: 12.5px;
   color: var(--text-muted);
+}
+
+.industry-save-system-btn {
+  margin-top: 8px;
 }
 
 .industry-shopping-list-name {
@@ -5076,12 +5227,13 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 
 .kills-tabs {
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 8px 4px;
   border-bottom: 1px solid var(--border);
 }
 
 .kills-tab {
-  padding: 9px 4px;
+  padding: 10px 16px;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -5091,6 +5243,7 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   font-weight: 600;
   letter-spacing: 0.03em;
   cursor: pointer;
+  white-space: nowrap;
   transition: color var(--transition-fast), border-color var(--transition-fast);
 }
 
@@ -5105,6 +5258,62 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 .kills-tab-active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+   PAGE TAB BAR - the one shared tab-switcher row for every multi-tab
+   top-level page (see PageTabBar.tsx). Each tab is its own [button, star]
+   pair so every tab's favourited state shows at a glance, spaced evenly
+   regardless of how many tabs a given page has - the row wraps to a second
+   line rather than squeezing tabs smaller when there isn't room for all of
+   them on one.
+   --------------------------------------------------------------------------- */
+
+.page-tab-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-sm);
+}
+
+.page-tab-row .kills-tab + .kills-tab {
+  margin-left: 0;
+}
+
+.page-tab-pair {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.page-tab-favourite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.page-tab-favourite:hover {
+  background: var(--bg-elevated);
+  color: var(--warning);
+}
+
+.page-tab-favourite-active {
+  color: var(--warning);
+}
+
+.page-tab-trailing {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
 }
 
 .kills-feed-section-title {

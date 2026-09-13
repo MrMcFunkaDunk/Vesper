@@ -4,8 +4,14 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { typeIconUrl } from "../lib/format";
 import type { SessionCharacter } from "../lib/eve";
 import PlanetaryColonies from "./PlanetaryColonies";
+import PageTabBar from "./PageTabBar";
 
 type PiTab = "colonies" | "reference";
+const PI_TABS: { id: PiTab; label: string }[] = [
+  { id: "colonies", label: "Colonies" },
+  { id: "reference", label: "Materials Reference" },
+];
+const PI_TAB_IDS: PiTab[] = PI_TABS.map((t) => t.id);
 
 const TIERS = ["P0", "P1", "P2", "P3", "P4"] as const;
 const TIER_LABELS: Record<(typeof TIERS)[number], string> = {
@@ -112,10 +118,30 @@ function RecipeNode({ typeId, materialById, schematicByOutput, planetsForP0 }: R
 
 interface PlanetaryIndustryProps {
   characters: SessionCharacter[];
+  /** A sub-tab favourite ("planetary.reference") clicked in the Sidebar -
+   * jumps straight to that tab, one-shot like WalletMarketPage's initialMarketItem. */
+  initialTab?: string | null;
+  onConsumeInitialTab?: () => void;
+  /** Reports the active tab up to App.tsx so the TopBar star button knows
+   * which specific tab to favourite. */
+  onActiveTabChange?: (tab: string) => void;
 }
 
-function PlanetaryIndustry({ characters }: PlanetaryIndustryProps) {
+function PlanetaryIndustry({ characters, initialTab, onConsumeInitialTab, onActiveTabChange }: PlanetaryIndustryProps) {
   const [tab, setTab] = useState<PiTab>("colonies");
+
+  useEffect(() => {
+    if (initialTab && (PI_TAB_IDS as string[]).includes(initialTab)) {
+      setTab(initialTab as PiTab);
+      onConsumeInitialTab?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
+
+  useEffect(() => {
+    onActiveTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [data, setData] = useState<PiData | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [planTarget, setPlanTarget] = useState<number | null>(null);
@@ -316,14 +342,7 @@ function PlanetaryIndustry({ characters }: PlanetaryIndustryProps) {
           </p>
         </div>
 
-        <div className="kills-tabs">
-          <button type="button" className={`kills-tab ${tab === "colonies" ? "kills-tab-active" : ""}`} onClick={() => setTab("colonies")}>
-            Colonies
-          </button>
-          <button type="button" className={`kills-tab ${tab === "reference" ? "kills-tab-active" : ""}`} onClick={() => setTab("reference")}>
-            Materials Reference
-          </button>
-        </div>
+        <PageTabBar pageId="planetary" tabs={PI_TABS} activeTab={tab} onSelect={(id) => setTab(id as PiTab)} />
 
         {tab === "colonies" ? (
           <PlanetaryColonies characters={characters} />

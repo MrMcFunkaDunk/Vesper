@@ -17,6 +17,7 @@ import GateKillboard, { type GateSummary } from "./GateKillboard";
 import CorporationKillboard, { type CorporationSummary } from "./CorporationKillboard";
 import AllianceKillboard, { type AllianceSummary } from "./AllianceKillboard";
 import BackToMapButton from "./BackToMapButton";
+import PageTabBar from "./PageTabBar";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { searchCharacter, searchCharactersLive, searchEntitiesLive, type CharacterMatch, type EntityMatch } from "../lib/kills";
 import type { MarketItemRef } from "./MarketBrowser";
@@ -72,6 +73,13 @@ interface KillsIntelProps {
   onConsumeInitialGate?: () => void;
   onGoToMap: () => void;
   onSelectItem: (item: MarketItemRef) => void;
+  /** A sub-tab favourite ("kills.recent") clicked in the Sidebar - jumps
+   * straight to that tab, same one-shot pattern as the initial* props above. */
+  initialTab?: string | null;
+  onConsumeInitialTab?: () => void;
+  /** Reports the active tab up to App.tsx so the TopBar star button knows
+   * which specific tab to favourite. */
+  onActiveTabChange?: (tab: string) => void;
 }
 
 function KillsIntel({
@@ -90,8 +98,24 @@ function KillsIntel({
   onConsumeInitialGate,
   onGoToMap,
   onSelectItem,
+  initialTab,
+  onConsumeInitialTab,
+  onActiveTabChange,
 }: KillsIntelProps) {
   const [tab, setTab] = useState<KillsTab>("tracked");
+
+  useEffect(() => {
+    if (initialTab && TABS.some((t) => t.id === initialTab)) {
+      setTab(initialTab as KillsTab);
+      onConsumeInitialTab?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
+
+  useEffect(() => {
+    onActiveTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [characterQuery, setCharacterQuery] = useState("");
   const [searchingCharacter, setSearchingCharacter] = useState(false);
   const [characterSuggestions, setCharacterSuggestions] = useState<SearchSuggestion[]>([]);
@@ -546,18 +570,7 @@ function KillsIntel({
         </form>
         )}
 
-        <div className="kills-tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`kills-tab ${tab === t.id ? "kills-tab-active" : ""}`}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <PageTabBar pageId="kills" tabs={TABS} activeTab={tab} onSelect={(id) => setTab(id as KillsTab)} />
 
         {tab === "tracked" ? (
           <TrackedSystemsFeed

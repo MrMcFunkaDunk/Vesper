@@ -10,6 +10,7 @@ import TelemetryRail from "./premium/TelemetryRail";
 import { SortableTh } from "./SortableTh";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 import HelpBadge from "./HelpBadge";
+import PageTabBar from "./PageTabBar";
 import OreTableTab from "./OreTableTab";
 import MarketHistoryTab from "./MarketHistoryTab";
 import { HELP_CONTENT } from "../lib/helpContent";
@@ -136,8 +137,39 @@ function MiningLedgerTab({ characters }: { characters: SessionCharacter[] }) {
   );
 }
 
-function MiningPage({ characters }: { characters: SessionCharacter[] }) {
+const MINING_TABS: { id: MiningTab; label: string }[] = [
+  { id: "oretable", label: "Ore Table" },
+  { id: "ledger", label: "Mining Ledger" },
+  { id: "markethistory", label: "Market History" },
+];
+const MINING_TAB_IDS: MiningTab[] = MINING_TABS.map((t) => t.id);
+
+interface MiningPageProps {
+  characters: SessionCharacter[];
+  /** A sub-tab favourite ("mining.ledger") clicked in the Sidebar - jumps
+   * straight to that tab, one-shot like WalletMarketPage's initialMarketItem. */
+  initialTab?: string | null;
+  onConsumeInitialTab?: () => void;
+  /** Reports the active tab up to App.tsx so the TopBar star button knows
+   * which specific tab to favourite. */
+  onActiveTabChange?: (tab: string) => void;
+}
+
+function MiningPage({ characters, initialTab, onConsumeInitialTab, onActiveTabChange }: MiningPageProps) {
   const [tab, setTab] = useState<MiningTab>("oretable");
+
+  useEffect(() => {
+    if (initialTab && (MINING_TAB_IDS as string[]).includes(initialTab)) {
+      setTab(initialTab as MiningTab);
+      onConsumeInitialTab?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
+
+  useEffect(() => {
+    onActiveTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   return (
     <main className="main main-dashboard">
@@ -152,22 +184,13 @@ function MiningPage({ characters }: { characters: SessionCharacter[] }) {
           </p>
         </div>
 
-        <div className="character-tabs">
-          <button type="button" className={`character-tab${tab === "oretable" ? " character-tab-active" : ""}`} onClick={() => setTab("oretable")}>
-            Ore Table
-          </button>
-          <button type="button" className={`character-tab${tab === "ledger" ? " character-tab-active" : ""}`} onClick={() => setTab("ledger")}>
-            Mining Ledger
-          </button>
-          <button
-            type="button"
-            className={`character-tab${tab === "markethistory" ? " character-tab-active" : ""}`}
-            onClick={() => setTab("markethistory")}
-          >
-            Market History
-          </button>
-          <HelpBadge content={HELP_CONTENT[`mining.${tab}`] ?? HELP_CONTENT.mining} />
-        </div>
+        <PageTabBar
+          pageId="mining"
+          tabs={MINING_TABS}
+          activeTab={tab}
+          onSelect={(id) => setTab(id as MiningTab)}
+          trailing={<HelpBadge content={HELP_CONTENT[`mining.${tab}`] ?? HELP_CONTENT.mining} />}
+        />
 
         {tab === "oretable" ? (
           <OreTableTab />

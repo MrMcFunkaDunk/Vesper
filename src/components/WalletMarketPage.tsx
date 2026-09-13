@@ -25,6 +25,7 @@ import LpStorePanel from "./LpStorePanel";
 import InsuranceCalculator from "./InsuranceCalculator";
 import MineralTicker from "./MineralTicker";
 import HelpBadge from "./HelpBadge";
+import PageTabBar from "./PageTabBar";
 import { HELP_CONTENT } from "../lib/helpContent";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
@@ -83,6 +84,13 @@ interface WalletMarketPageProps {
    * builder with this ship pre-selected - a cross-page hop, so it's a
    * callback up to App.tsx rather than local state. */
   onFitShip: (shipTypeId: number) => void;
+  /** A sub-tab favourite ("wallet.lpstore") clicked in the Sidebar - jumps
+   * straight to that tab, same one-shot pattern as initialMarketItem above. */
+  initialTab?: string | null;
+  onConsumeInitialTab?: () => void;
+  /** Reports the active tab up to App.tsx so the TopBar star button knows
+   * which specific tab to favourite. */
+  onActiveTabChange?: (tab: string) => void;
 }
 
 function fmtDate(value: string | null): string {
@@ -163,6 +171,9 @@ function WalletMarketPage({
   initialMarketItem,
   onConsumeInitialMarketItem,
   onFitShip,
+  initialTab,
+  onConsumeInitialTab,
+  onActiveTabChange,
 }: WalletMarketPageProps) {
   const [tab, setTab] = useState<WalletMarketTab>("browser");
   const [selectedId, setSelectedId] = useState<number | null>(initialCharacterId ?? characters[0]?.id ?? null);
@@ -170,6 +181,19 @@ function WalletMarketPage({
   useEffect(() => {
     if (initialMarketItem) setTab("browser");
   }, [initialMarketItem]);
+
+  useEffect(() => {
+    if (initialTab && TABS.some((t) => t.id === initialTab)) {
+      setTab(initialTab as WalletMarketTab);
+      onConsumeInitialTab?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab]);
+
+  useEffect(() => {
+    onActiveTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   const [overview, setOverview] = useState<CharacterOverview | null>(null);
   const [marketOrders, setMarketOrders] = useState<CharacterMarketOrders | null>(null);
   const [transactions, setTransactions] = useState<CharacterTransactions | null>(null);
@@ -269,24 +293,18 @@ function WalletMarketPage({
           <p className="eyebrow">Wallet & Market</p>
           <div className="dashboard-header-title-row">
             <h2>{TABS.find((t) => t.id === tab)!.label}</h2>
-            <HelpBadge content={HELP_CONTENT[`wallet.${tab}`] ?? HELP_CONTENT.wallet} />
           </div>
         </div>
 
         <MineralTicker />
 
-        <div className="kills-tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`kills-tab ${tab === t.id ? "kills-tab-active" : ""}`}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <PageTabBar
+          pageId="wallet"
+          tabs={TABS}
+          activeTab={tab}
+          onSelect={(id) => setTab(id as WalletMarketTab)}
+          trailing={<HelpBadge content={HELP_CONTENT[`wallet.${tab}`] ?? HELP_CONTENT.wallet} />}
+        />
 
         {showCharacterStrip && (
           <CharacterSelectorStrip characters={characters} selectedId={selectedId} onSelect={setSelectedId} />

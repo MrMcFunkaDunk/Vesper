@@ -15,6 +15,8 @@ import {
   Waypoints,
   Users,
   Pickaxe,
+  Star,
+  ArrowLeft,
 } from "lucide-react";
 import Wordmark from "./Wordmark";
 import ColorPickerMenu from "./ColorPickerMenu";
@@ -24,6 +26,8 @@ import { SIDEBAR_PALETTE } from "../lib/palettes";
 import { useColorOverrides } from "../hooks/useColorOverrides";
 import { useNavOrder } from "../hooks/useNavOrder";
 import { useDragReorder } from "../hooks/useDragReorder";
+import { useFavouritePages } from "../hooks/useFavouritePages";
+import { splitFavouriteId, subTabLabel } from "../lib/subTabs";
 import dashboardIcon from "../assets/sidebar-icons/dashboard.png";
 import killsIntelIcon from "../assets/sidebar-icons/kills-intel.png";
 import walletMarketIcon from "../assets/sidebar-icons/wallet-market.png";
@@ -175,6 +179,10 @@ const NAV_CHANNEL_CODE: Record<string, string> = {
 
 interface SidebarProps {
   activeId: string;
+  /** Which internal tab is showing on whichever multi-tab page is active -
+   * used only to highlight the right row in the Favourites view when a
+   * sub-tab (rather than a whole page) is the current one. */
+  activeSubTab?: string | null;
   onSelect: (id: string) => void;
 }
 
@@ -184,12 +192,18 @@ interface ContextMenuState {
   y: number;
 }
 
-function Sidebar({ activeId, onSelect }: SidebarProps) {
+function Sidebar({ activeId, activeSubTab, onSelect }: SidebarProps) {
   const { colors, setColor, resetColor } = useColorOverrides("vesper.colors.sidebar");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [version, setVersion] = useState("");
   const [theme] = useTheme();
   const premium = isPremiumTheme(theme);
+  const { favouriteIds, reorderFavourites } = useFavouritePages();
+  /** Not persisted (unlike favouriteIds itself) - this is a transient view
+   * toggle, always starting back on "show everything" the next time the
+   * app opens, the same way a filter/search box wouldn't stay applied
+   * across a restart either. */
+  const [showingFavourites, setShowingFavourites] = useState(false);
 
   useEffect(() => {
     getVersion()
@@ -201,10 +215,59 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
   const { order, setOrder } = useNavOrder(defaultIds);
   const { draggingId, setItemRef, handlePointerDown, handlePointerMove, handlePointerUp, consumeJustDragged } =
     useDragReorder(order, setOrder);
+  /** A second, independent drag-reorder instance for the Favourites view -
+   * it reorders favouriteIds itself rather than the main nav order, so
+   * dragging a starred page/tab around only changes where it sits in the
+   * Favourites list, never the pilot's main All Pages order. */
+  const {
+    draggingId: favDraggingId,
+    setItemRef: setFavItemRef,
+    handlePointerDown: handleFavPointerDown,
+    handlePointerMove: handleFavPointerMove,
+    handlePointerUp: handleFavPointerUp,
+    consumeJustDragged: consumeFavJustDragged,
+  } = useDragReorder(favouriteIds, reorderFavourites);
 
   const orderedItems = order
     .map((id) => NAV_ITEMS.find((item) => item.id === id))
     .filter((item): item is NavItem => Boolean(item));
+  /** Settings always anchors the very bottom of the nav list, right above
+   * the version footer, and never takes part in drag-reordering - it's the
+   * one page you always need a reliable way back to (turning Favourites off
+   * again, managing characters, etc.), so it can't end up buried in the
+   * middle of the list. Rendered as its own fixed row below, not through
+   * this array. */
+  const draggableItems = orderedItems.filter((item) => item.id !== "settings");
+  const settingsItem = orderedItems.find((item) => item.id === "settings");
+
+  interface FavouriteRow {
+    id: string;
+    pageId: string;
+    subTabId: string | null;
+    label: string;
+    icon: LucideIcon;
+    image?: string;
+  }
+
+  /** One combined, drag-reorderable list for the Favourites view - whole
+   * pages and sub-tab favourites ("wallet.lpstore") side by side, in
+   * whatever order the pilot starred or dragged them into, rather than two
+   * separately-rendered, unreorderable groups. */
+  const favouriteRows: FavouriteRow[] = favouriteIds
+    .map((id): FavouriteRow | null => {
+      const { pageId, subTabId } = splitFavouriteId(id);
+      const parent = NAV_ITEMS.find((item) => item.id === pageId);
+      if (!parent) return null;
+      return {
+        id,
+        pageId,
+        subTabId,
+        label: subTabId ? subTabLabel(pageId, subTabId) ?? subTabId : parent.label,
+        icon: parent.icon,
+        image: parent.image,
+      };
+    })
+    .filter((row): row is FavouriteRow => row !== null);
 
   return (
     <aside className="sidebar">
@@ -214,55 +277,153 @@ function Sidebar({ activeId, onSelect }: SidebarProps) {
         <TechnicalLabel>SUBSYS.RACK / DECK 01</TechnicalLabel>
       </div>
       <div className="brand-divider" />
+      <div className="sidebar-favourites-bar">
+        {showingFavourites ? (
+          <button type="button" className="sidebar-favourites-back" onClick={() => setShowingFavourites(false)}>
+            <ArrowLeft size={14} strokeWidth={2} />
+            All Pages
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="sidebar-favourites-toggle"
+            onClick={() => setShowingFavourites(true)}
+            title="Show just the pages you've starred from their own header"
+          >
+            <Star size={14} strokeWidth={2} />
+            Favourites
+            {favouriteIds.length > 0 && <span className="sidebar-favourites-count">{favouriteIds.length}</span>}
+          </button>
+        )}
+      </div>
+      {showingFavourites && favouriteIds.length === 0 && (
+        <p className="sidebar-favourites-empty">No favourites yet - star a page from its own header (next to the title) to add it here.</p>
+      )}
       <nav className="nav">
-        {orderedItems.map((item, index) => {
-          const Icon = item.icon;
-          const isActive = item.id === activeId;
-          const customColor = colors[item.id];
-          const isDragging = draggingId === item.id;
-          return (
-            <button
-              key={item.id}
-              ref={setItemRef(item.id)}
-              type="button"
-              className={`nav-item${isActive ? " nav-item-active" : ""}${isDragging ? " nav-item-dragging" : ""}`}
-              style={customColor ? { color: customColor } : undefined}
-              onClick={() => {
-                if (consumeJustDragged()) return;
-                onSelect(item.id);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setContextMenu({ navId: item.id, x: e.clientX, y: e.clientY });
-              }}
-              onPointerDown={handlePointerDown(item.id)}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-            >
-              {/* Channel number (live position, always correct no matter how
-                  the list gets dragged around) + a fixed subsystem code -
-                  the "numbered equipment channel" identity from the premium
-                  nav-rack brief, without restructuring the actual
-                  drag-to-reorder list into fixed sections (see
-                  NAV_CHANNEL_CODE's own comment for why). Premium-only:
-                  standard themes keep the exact nav item markup they
-                  always had. */}
-              {premium && (
-                <span className="nav-item-channel">
-                  {String(index + 1).padStart(2, "0")}
-                  <span className="nav-item-channel-code">{NAV_CHANNEL_CODE[item.id] ?? "GEN"}</span>
-                </span>
-              )}
-              {item.image ? (
-                <img src={item.image} alt="" className="nav-item-icon-img" />
-              ) : (
-                <Icon size={18} strokeWidth={1.75} />
-              )}
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
+        {showingFavourites
+          ? favouriteRows.map((row, index) => {
+              const Icon = row.icon;
+              const isActive = row.subTabId != null ? row.pageId === activeId && row.subTabId === activeSubTab : row.pageId === activeId;
+              const customColor = row.subTabId == null ? colors[row.pageId] : undefined;
+              const isDragging = favDraggingId === row.id;
+              return (
+                <button
+                  key={row.id}
+                  ref={setFavItemRef(row.id)}
+                  type="button"
+                  className={`nav-item${isActive ? " nav-item-active" : ""}${isDragging ? " nav-item-dragging" : ""}`}
+                  style={customColor ? { color: customColor } : undefined}
+                  onClick={() => {
+                    if (consumeFavJustDragged()) return;
+                    onSelect(row.id);
+                  }}
+                  onContextMenu={
+                    row.subTabId == null
+                      ? (e) => {
+                          e.preventDefault();
+                          setContextMenu({ navId: row.pageId, x: e.clientX, y: e.clientY });
+                        }
+                      : undefined
+                  }
+                  onPointerDown={handleFavPointerDown(row.id)}
+                  onPointerMove={handleFavPointerMove}
+                  onPointerUp={handleFavPointerUp}
+                >
+                  {premium && (
+                    <span className="nav-item-channel">
+                      {String(index + 1).padStart(2, "0")}
+                      <span className="nav-item-channel-code">{NAV_CHANNEL_CODE[row.pageId] ?? "GEN"}</span>
+                    </span>
+                  )}
+                  {row.image ? (
+                    <img src={row.image} alt="" className="nav-item-icon-img" />
+                  ) : (
+                    <Icon size={18} strokeWidth={1.75} />
+                  )}
+                  <span>{row.label}</span>
+                </button>
+              );
+            })
+          : draggableItems.map((item, index) => {
+              const Icon = item.icon;
+              const isActive = item.id === activeId;
+              const customColor = colors[item.id];
+              const isDragging = draggingId === item.id;
+              return (
+                <button
+                  key={item.id}
+                  ref={setItemRef(item.id)}
+                  type="button"
+                  className={`nav-item${isActive ? " nav-item-active" : ""}${isDragging ? " nav-item-dragging" : ""}`}
+                  style={customColor ? { color: customColor } : undefined}
+                  onClick={() => {
+                    if (consumeJustDragged()) return;
+                    onSelect(item.id);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setContextMenu({ navId: item.id, x: e.clientX, y: e.clientY });
+                  }}
+                  onPointerDown={handlePointerDown(item.id)}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                >
+                  {/* Channel number (live position, always correct no matter how
+                      the list gets dragged around) + a fixed subsystem code -
+                      the "numbered equipment channel" identity from the premium
+                      nav-rack brief, without restructuring the actual
+                      drag-to-reorder list into fixed sections (see
+                      NAV_CHANNEL_CODE's own comment for why). Premium-only:
+                      standard themes keep the exact nav item markup they
+                      always had. */}
+                  {premium && (
+                    <span className="nav-item-channel">
+                      {String(index + 1).padStart(2, "0")}
+                      <span className="nav-item-channel-code">{NAV_CHANNEL_CODE[item.id] ?? "GEN"}</span>
+                    </span>
+                  )}
+                  {item.image ? (
+                    <img src={item.image} alt="" className="nav-item-icon-img" />
+                  ) : (
+                    <Icon size={18} strokeWidth={1.75} />
+                  )}
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
       </nav>
+      {/* Settings sits in its own fixed zone below the scrollable nav list,
+         never mixed in among the draggable/favouritable rows above it -
+         same spot in both the all-pages and Favourites views, since it's
+         rendered here rather than inside either of those lists. */}
+      {settingsItem && (
+        <div className="sidebar-settings-anchor">
+          <button
+            key={settingsItem.id}
+            type="button"
+            className={`nav-item${settingsItem.id === activeId ? " nav-item-active" : ""}`}
+            style={colors[settingsItem.id] ? { color: colors[settingsItem.id] } : undefined}
+            onClick={() => onSelect(settingsItem.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenu({ navId: settingsItem.id, x: e.clientX, y: e.clientY });
+            }}
+          >
+            {premium && (
+              <span className="nav-item-channel">
+                {String(NAV_ITEMS.length).padStart(2, "0")}
+                <span className="nav-item-channel-code">{NAV_CHANNEL_CODE[settingsItem.id] ?? "GEN"}</span>
+              </span>
+            )}
+            {settingsItem.image ? (
+              <img src={settingsItem.image} alt="" className="nav-item-icon-img" />
+            ) : (
+              <settingsItem.icon size={18} strokeWidth={1.75} />
+            )}
+            <span>{settingsItem.label}</span>
+          </button>
+        </div>
+      )}
       <div className="sidebar-footer">
         <TechnicalLabel>VES//NAV-02</TechnicalLabel>
         {version && `v${version}`}
