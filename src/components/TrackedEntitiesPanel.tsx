@@ -3,8 +3,10 @@ import { Search, X } from "lucide-react";
 import { searchCharactersLive, searchEntitiesLive, type CharacterMatch, type EntityMatch } from "../lib/kills";
 import { useTrackedEntities } from "../hooks/useTrackedEntities";
 import type { TrackedEntityKind } from "../lib/trackedEntities";
+import type { SystemSummary } from "./SystemKillboard";
 import type { CorporationSummary } from "./CorporationKillboard";
 import type { AllianceSummary } from "./AllianceKillboard";
+import TrackedEntityActivityFeed from "./TrackedEntityActivityFeed";
 
 interface Suggestion {
   id: number;
@@ -25,17 +27,26 @@ function thumbnailUrl(kind: TrackedEntityKind, id: number): string {
 }
 
 interface TrackedEntitiesPanelProps {
-  /** All three are optional and travel together - Kills & Intel's own
-   * "Tracked Players" tab passes all three to make a card open that
-   * entity's killboard; the Settings page's copy of this same panel
-   * (just for managing the tracked list, not for browsing kills) passes
-   * none, so its cards stay plain and non-clickable. */
+  /** All five are optional and travel together - Kills & Intel's own
+   * "Tracked Players" tab passes all of them, both to make a card open that
+   * entity's killboard and to power the kills/losses feed below the grid;
+   * the Settings page's copy of this same panel (just for managing the
+   * tracked list, not for browsing kills) passes none, so its cards stay
+   * plain and non-clickable and the feed doesn't render at all. */
   onSelectCharacter?: (characterId: number) => void;
   onSelectCorporation?: (corporation: CorporationSummary) => void;
   onSelectAlliance?: (alliance: AllianceSummary) => void;
+  onSelectKill?: (killmailId: number) => void;
+  onSelectSystem?: (system: SystemSummary) => void;
 }
 
-function TrackedEntitiesPanel({ onSelectCharacter, onSelectCorporation, onSelectAlliance }: TrackedEntitiesPanelProps) {
+function TrackedEntitiesPanel({
+  onSelectCharacter,
+  onSelectCorporation,
+  onSelectAlliance,
+  onSelectKill,
+  onSelectSystem,
+}: TrackedEntitiesPanelProps) {
   const { entities, loading, toggle } = useTrackedEntities();
   const clickable = Boolean(onSelectCharacter || onSelectCorporation || onSelectAlliance);
   const [query, setQuery] = useState("");
@@ -164,6 +175,17 @@ function TrackedEntitiesPanel({ onSelectCharacter, onSelectCorporation, onSelect
             </div>
           ))}
         </div>
+      )}
+
+      {clickable && onSelectKill && onSelectSystem && !loading && entities.length > 0 && (
+        <TrackedEntityActivityFeed
+          entities={entities}
+          onSelectKill={onSelectKill}
+          onSelectCharacter={onSelectCharacter!}
+          onSelectSystem={onSelectSystem}
+          onSelectCorporation={onSelectCorporation!}
+          onSelectAlliance={onSelectAlliance!}
+        />
       )}
     </div>
   );

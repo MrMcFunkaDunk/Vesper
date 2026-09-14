@@ -613,7 +613,13 @@ function KillsIntel({
             <TopKillStatsFeed onSelectCharacter={pushCharacter} onSelectCorporation={pushCorporation} onSelectAlliance={pushAlliance} />
           </>
         ) : tab === "trackedplayers" ? (
-          <TrackedEntitiesPanel onSelectCharacter={pushCharacter} onSelectCorporation={pushCorporation} onSelectAlliance={pushAlliance} />
+          <TrackedEntitiesPanel
+            onSelectCharacter={pushCharacter}
+            onSelectCorporation={pushCorporation}
+            onSelectAlliance={pushAlliance}
+            onSelectKill={pushKillDetail}
+            onSelectSystem={pushSystem}
+          />
         ) : (
           <ContactsDirectory
             characters={characters}
