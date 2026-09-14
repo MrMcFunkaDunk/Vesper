@@ -568,7 +568,7 @@ function KillDetailView({
 
             <div className="detail-panel">
               <p className="eyebrow">Fit</p>
-              <FitWheel shipTypeId={detail.ship_type_id} shipTypeName={detail.ship_type_name} items={detail.items} />
+              <FitWheel shipTypeId={detail.ship_type_id} shipTypeName={detail.ship_type_name} items={detail.items} onSelectItem={onSelectItem} />
             </div>
 
             {itemsByGroup.length > 0 && (

@@ -1,9 +1,15 @@
 import type { KillItemEntry, SlotGroup } from "../lib/kills";
+import type { MarketItemRef } from "./MarketBrowser";
 
 interface FitWheelProps {
   shipTypeId: number;
   shipTypeName: string;
   items: KillItemEntry[];
+  /** Every icon in the wheel (the ship itself, each fitted module, each
+   * loaded charge) opens that item on the Market Browser - same navigation
+   * KillDetailView already wires up for the ship name/attacker ship links
+   * elsewhere on this page. */
+  onSelectItem: (item: MarketItemRef) => void;
 }
 
 interface WheelSlot {
@@ -39,7 +45,7 @@ function pickModuleAndAmmo(entries: KillItemEntry[]): { module: KillItemEntry; a
   return { module: sorted[0], ammo: sorted[1] ?? null };
 }
 
-function FitWheel({ shipTypeId, shipTypeName, items }: FitWheelProps) {
+function FitWheel({ shipTypeId, shipTypeName, items, onSelectItem }: FitWheelProps) {
   const byFlag = new Map<number, KillItemEntry[]>();
   for (const item of items) {
     if (!WHEEL_GROUPS.includes(item.slot_group)) continue;
@@ -93,9 +99,19 @@ function FitWheel({ shipTypeId, shipTypeName, items }: FitWheelProps) {
   return (
     <div className="fit-wheel" style={{ width: wheelSize, height: wheelSize }}>
       <img
-        className="fit-wheel-ship"
+        className="fit-wheel-ship fit-wheel-clickable"
         src={`https://images.evetech.net/types/${shipTypeId}/render?size=256`}
         alt={shipTypeName}
+        role="button"
+        tabIndex={0}
+        title={shipTypeName}
+        onClick={() => onSelectItem({ id: shipTypeId, name: shipTypeName })}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelectItem({ id: shipTypeId, name: shipTypeName });
+          }
+        }}
       />
       {slots.length === 0 && <p className="fit-wheel-empty">No fitted modules recorded.</p>}
       {slots.map(({ slot, outer, inner }) => {
@@ -107,18 +123,36 @@ function FitWheel({ shipTypeId, shipTypeName, items }: FitWheelProps) {
         return (
           <div key={slot.flag}>
             <div
-              className={`fit-wheel-slot fit-wheel-slot-${group} ${state && `fit-wheel-slot-${state}`}`}
+              className={`fit-wheel-slot fit-wheel-slot-${group} fit-wheel-clickable ${state && `fit-wheel-slot-${state}`}`}
               style={{ left: `calc(50% + ${outer.x}px)`, top: `calc(50% + ${outer.y}px)` }}
               title={`${module.item_type_name}${moduleQty > 1 ? ` x${moduleQty}` : ""}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelectItem({ id: module.item_type_id, name: module.item_type_name })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelectItem({ id: module.item_type_id, name: module.item_type_name });
+                }
+              }}
             >
               <img src={`https://images.evetech.net/types/${module.item_type_id}/icon?size=64`} alt="" />
               {moduleQty > 1 && <span className="fit-wheel-slot-qty">{moduleQty}</span>}
             </div>
             {ammo && (
               <div
-                className="fit-wheel-ammo-slot"
+                className="fit-wheel-ammo-slot fit-wheel-clickable"
                 style={{ left: `calc(50% + ${inner.x}px)`, top: `calc(50% + ${inner.y}px)` }}
                 title={`${ammo.item_type_name} x${ammo.quantity_destroyed + ammo.quantity_dropped}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectItem({ id: ammo.item_type_id, name: ammo.item_type_name })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectItem({ id: ammo.item_type_id, name: ammo.item_type_name });
+                  }
+                }}
               >
                 <img src={`https://images.evetech.net/types/${ammo.item_type_id}/icon?size=32`} alt="" />
               </div>

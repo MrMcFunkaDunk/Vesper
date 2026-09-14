@@ -7563,6 +7563,30 @@ body[data-reduce-motion="true"] .skeleton-row {
   object-fit: cover;
 }
 
+/* Every icon in the wheel (ship, module, ammo) opens that item on the
+   Market Browser - same hover/focus affordance regardless of which of the
+   three very differently-styled elements above it's applied to. */
+.fit-wheel-clickable {
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), filter var(--transition-fast);
+}
+
+.fit-wheel-clickable:hover {
+  transform: translate(-50%, -50%) scale(1.12);
+  border-color: var(--accent);
+  z-index: 1;
+}
+
+.fit-wheel-clickable:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+img.fit-wheel-clickable:hover {
+  transform: translate(-50%, -50%) scale(1.06);
+  filter: drop-shadow(0 0 18px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 10px var(--accent-soft));
+}
+
 /* Map */
 
 .main-map {
