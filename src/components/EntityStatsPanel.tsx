@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { CharacterStats } from "../lib/kills";
+import type { CharacterStats, RankMetrics } from "../lib/kills";
 import { formatIsk, formatPercent } from "../lib/format";
 import { fmtRank } from "./killboardShared";
 import { useTheme, isPremiumTheme } from "../hooks/useTheme";
@@ -27,7 +27,29 @@ const WINDOW_LABELS: Record<TimeWindow, string> = {
 function EntityStatsPanel({ stats }: EntityStatsPanelProps) {
   const [theme] = useTheme();
   const [window, setWindow] = useState<TimeWindow>("alltime");
-  const { metrics, ranks } = stats.rankings[window].all;
+  const { metrics: rankedMetrics, ranks } = stats.rankings[window].all;
+  // zKillboard's rankings.alltime block is a leaderboard-ranking cache, not
+  // a straight totals readout - it can sit at zero for a low-activity
+  // character even when they clearly have real kills/losses, because
+  // ranking only gets (re)computed once an entity earns a spot on the
+  // board. The top-level fields (ships_destroyed, isk_lost, etc.) are
+  // zKillboard's real, always-current all-time totals regardless of
+  // ranking status, so Alltime specifically reads from those instead - only
+  // its rank NUMBERS still come from the (possibly "—") ranking cache.
+  // Recent/Weekly have no top-level equivalent (the top-level fields are
+  // only ever all-time), so they still read straight from the ranking
+  // metrics as before.
+  const metrics: RankMetrics =
+    window === "alltime"
+      ? {
+          ships_destroyed: stats.ships_destroyed,
+          ships_lost: stats.ships_lost,
+          points_destroyed: stats.points_destroyed,
+          points_lost: stats.points_lost,
+          isk_destroyed: stats.isk_destroyed,
+          isk_lost: stats.isk_lost,
+        }
+      : rankedMetrics;
   const snuggly = 100 - stats.danger_ratio;
   const premium = isPremiumTheme(theme);
 
