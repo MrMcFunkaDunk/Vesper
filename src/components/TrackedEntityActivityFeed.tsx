@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { RefreshCw, Skull } from "lucide-react";
 import KillFeedTable from "./KillFeedTable";
+import { SecurityBandFilterBar } from "./killboardShared";
 import {
   getCharacterKills,
   getCharacterLosses,
@@ -11,6 +13,9 @@ import {
 } from "../lib/kills";
 import type { TrackedEntity } from "../lib/trackedEntities";
 import { useErrorReporter } from "../hooks/useErrorReporter";
+import { useShowNpcKills } from "../hooks/useShowNpcKills";
+import { useSecurityBandFilters } from "../hooks/useSecurityBandFilters";
+import { killSecurityBand } from "../lib/format";
 import type { SystemSummary } from "./SystemKillboard";
 import type { CorporationSummary } from "./CorporationKillboard";
 import type { AllianceSummary } from "./AllianceKillboard";
@@ -78,7 +83,11 @@ function TrackedEntityActivityFeed({
   onSelectAlliance,
 }: TrackedEntityActivityFeedProps) {
   const [feed, setFeed] = useState<OutcomeEntry[] | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncToken, setSyncToken] = useState(0);
   const reportError = useErrorReporter();
+  const [showNpcKills, setShowNpcKills] = useShowNpcKills();
+  const [securityFilters, toggleSecurityFilter] = useSecurityBandFilters();
 
   useEffect(() => {
     if (entities.length === 0) {
@@ -86,7 +95,11 @@ function TrackedEntityActivityFeed({
       return;
     }
     let cancelled = false;
-    setFeed(null);
+    // A manual re-sync (syncToken bump) keeps whatever's already on screen
+    // and just shows the spinner, rather than blanking the table back to
+    // "Loading..." the way switching the tracked list itself does.
+    if (syncToken === 0) setFeed(null);
+    setSyncing(true);
     const cutoff = Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 
     Promise.all(
@@ -114,24 +127,51 @@ function TrackedEntityActivityFeed({
       })
       .catch((err) => {
         if (!cancelled) reportError(`Failed to load tracked-list activity: ${String(err)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setSyncing(false);
       });
 
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entities]);
+  }, [entities, syncToken]);
+
+  const visibleFeed = (feed ?? [])
+    .filter((k) => showNpcKills || !k.npc)
+    .filter((k) => securityFilters[killSecurityBand(k.system_security, k.system_name)]);
 
   return (
     <div className="tracked-activity-feed">
       <p className="kills-feed-section-title">Kills &amp; Losses - Last {LOOKBACK_DAYS} Days</p>
+      <div className="kills-watchlist-actions">
+        <button type="button" className="kills-sync-btn" onClick={() => setSyncToken((n) => n + 1)} disabled={syncing || entities.length === 0}>
+          <RefreshCw size={13} strokeWidth={2} className={syncing ? "kills-sync-spinning" : ""} />
+          {syncing ? "Syncing..." : "Sync"}
+        </button>
+        <button
+          type="button"
+          className={`kills-sync-btn${showNpcKills ? "" : " kills-npc-toggle-off"}`}
+          onClick={() => setShowNpcKills(!showNpcKills)}
+          title={showNpcKills ? "Hide NPC-only kills" : "Show NPC-only kills"}
+        >
+          <Skull size={13} strokeWidth={2} />
+          NPC Kills: {showNpcKills ? "On" : "Off"}
+        </button>
+        <SecurityBandFilterBar filters={securityFilters} onToggle={toggleSecurityFilter} />
+      </div>
       {feed === null ? (
         <p className="detail-empty">Loading activity for your tracked list...</p>
-      ) : feed.length === 0 ? (
-        <p className="detail-empty">No kills or losses for your tracked list in the last {LOOKBACK_DAYS} days.</p>
+      ) : visibleFeed.length === 0 ? (
+        <p className="detail-empty">
+          {feed.length === 0
+            ? `No kills or losses for your tracked list in the last ${LOOKBACK_DAYS} days.`
+            : "Nothing matches the current filters."}
+        </p>
       ) : (
         <KillFeedTable
-          kills={feed}
+          kills={visibleFeed}
           onSelectKill={onSelectKill}
           onSelectCharacter={onSelectCharacter}
           onSelectSystem={onSelectSystem}
