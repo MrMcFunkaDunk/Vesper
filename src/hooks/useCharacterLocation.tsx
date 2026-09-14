@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { getCharacterLocation } from "../lib/eve";
 import { listChains } from "../lib/wormholes";
 import { useErrorReporter } from "./useErrorReporter";
+import { isTransientServerError } from "../lib/overviewCache";
 
 const POLL_INTERVAL_MS = 10_000;
 /** How often to check whether this poll is even needed yet, while idle -
@@ -122,7 +123,13 @@ export function CharacterLocationProvider({ characterId, children }: CharacterLo
           });
         } catch (err) {
           if (!active) break;
-          reportError(`Failed to poll character location: ${String(err)}`);
+          // Same "don't alarm the user over a self-resolving hiccup"
+          // treatment as Dashboard.tsx's own overview poll - a 429 or
+          // gateway timeout here just means the next tick, 10s away, tries
+          // again, not something worth a System Error modal every poll.
+          if (!isTransientServerError(String(err))) {
+            reportError(`Failed to poll character location: ${String(err)}`);
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       }

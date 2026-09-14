@@ -8,7 +8,7 @@ const STORAGE_KEY = "vesper-last-known-overviews";
  * not something the user can act on, so they shouldn't pop an error modal
  * the way a real bug or an auth failure should. */
 export function isTransientServerError(message: string): boolean {
-  return /\b50[234]\b|gateway timeout|timeout contacting tranquility/i.test(message);
+  return /\b50[234]\b|\b429\b|too many requests|rate limit exceeded|gateway timeout|timeout contacting tranquility/i.test(message);
 }
 
 function readCache(): Record<number, CharacterOverview> {

@@ -5,6 +5,7 @@ import { useRecentActivity } from "./useRecentActivity";
 import { useErrorReporter } from "./useErrorReporter";
 import { readNotificationPreferences } from "./useNotificationPreferences";
 import { notify } from "../lib/notifications";
+import { isTransientServerError } from "../lib/overviewCache";
 
 /** 0 means "just this system, no neighbors" - systemsWithinJumps below
  * already handles it correctly (its BFS loop simply never runs), so it's a
@@ -376,7 +377,14 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
           }
         } catch (err) {
           if (!active) break;
-          reportError(`Failed to poll live-tracked character's location: ${String(err)}`);
+          // A 429 from ESI here is expected and self-resolving (the next
+          // tick 10s later just tries again) - the same "don't alarm the
+          // user over something that isn't their problem" treatment
+          // Dashboard.tsx already gives a transient gateway timeout, not
+          // something worth a System Error modal every single poll.
+          if (!isTransientServerError(String(err))) {
+            reportError(`Failed to poll live-tracked character's location: ${String(err)}`);
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, LIVE_TRACKING_POLL_MS));
       }
