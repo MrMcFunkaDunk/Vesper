@@ -6483,6 +6483,49 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   opacity: 0.6;
 }
 
+.tracked-outcome-filter {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.tracked-outcome-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.tracked-outcome-btn:hover {
+  color: var(--text);
+}
+
+.tracked-outcome-btn-active {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tracked-outcome-btn-kill.tracked-outcome-btn-active {
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.tracked-outcome-btn-loss.tracked-outcome-btn-active {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .kills-npc-toggle-off {
   border-color: var(--danger);
   background: var(--danger-soft);

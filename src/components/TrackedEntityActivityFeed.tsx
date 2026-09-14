@@ -34,6 +34,8 @@ const MAX_PAGES_PER_FEED = 5;
 
 type OutcomeEntry = KillEntry & { outcome: "kill" | "loss" };
 
+type OutcomeFilter = "all" | "kill" | "loss";
+
 /** Pages through one entity's kills or losses until either the feed runs
  * out or a whole page's entries are already older than the cutoff -
  * zKillboard returns newest-first, so once the last (oldest) row on a page
@@ -88,6 +90,7 @@ function TrackedEntityActivityFeed({
   const reportError = useErrorReporter();
   const [showNpcKills, setShowNpcKills] = useShowNpcKills();
   const [securityFilters, toggleSecurityFilter] = useSecurityBandFilters();
+  const [outcomeFilter, setOutcomeFilter] = useState<OutcomeFilter>("all");
 
   useEffect(() => {
     if (entities.length === 0) {
@@ -139,6 +142,7 @@ function TrackedEntityActivityFeed({
   }, [entities, syncToken]);
 
   const visibleFeed = (feed ?? [])
+    .filter((k) => outcomeFilter === "all" || k.outcome === outcomeFilter)
     .filter((k) => showNpcKills || !k.npc)
     .filter((k) => securityFilters[killSecurityBand(k.system_security, k.system_name)]);
 
@@ -160,6 +164,31 @@ function TrackedEntityActivityFeed({
           NPC Kills: {showNpcKills ? "On" : "Off"}
         </button>
         <SecurityBandFilterBar filters={securityFilters} onToggle={toggleSecurityFilter} />
+        <div className="tracked-outcome-filter">
+          <button
+            type="button"
+            className={`tracked-outcome-btn${outcomeFilter === "all" ? " tracked-outcome-btn-active" : ""}`}
+            onClick={() => setOutcomeFilter("all")}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className={`tracked-outcome-btn tracked-outcome-btn-kill${outcomeFilter === "kill" ? " tracked-outcome-btn-active" : ""}`}
+            onClick={() => setOutcomeFilter("kill")}
+            title="Only show kills"
+          >
+            Kills
+          </button>
+          <button
+            type="button"
+            className={`tracked-outcome-btn tracked-outcome-btn-loss${outcomeFilter === "loss" ? " tracked-outcome-btn-active" : ""}`}
+            onClick={() => setOutcomeFilter("loss")}
+            title="Only show deaths"
+          >
+            Deaths
+          </button>
+        </div>
       </div>
       {feed === null ? (
         <p className="detail-empty">Loading activity for your tracked list...</p>
