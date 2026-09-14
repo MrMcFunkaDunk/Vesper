@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { MapPin, Star, X } from "lucide-react";
-import { getServerStatus, type Session } from "../lib/eve";
+import { MapPin, Satellite, Star, X } from "lucide-react";
+import { getServerStatus, type Session, type SessionCharacter } from "../lib/eve";
 import { searchSystemsLive, type SystemSearchMatch } from "../lib/map";
 import { useLocationTracking, type ProximityRadius } from "../hooks/useLocationTracking";
 import { useRecentActivity } from "../hooks/useRecentActivity";
@@ -175,20 +175,32 @@ export function radiusTitle(value: ProximityRadius): string {
   return `Track ${value} jumps out`;
 }
 
-/** Lets the pilot say "I'm here" - a manually-set current system that drives
- * the proximity kill scan (Map ticker highlight + app-wide flash). Sits next
- * to the server status badge so it's always visible/settable regardless of
+/** Lets the pilot say "I'm here" - either a manually-set current system, or
+ * (via the satellite toggle) one that follows a chosen character's real
+ * in-game location automatically as they move - both drive the same
+ * proximity kill scan (Map ticker highlight + app-wide flash). Sits next to
+ * the server status badge so it's always visible/settable regardless of
  * which page is open. */
-function LocationTracker() {
-  const { currentSystem, setCurrentSystem, radius, setRadius } = useLocationTracking();
+function LocationTracker({ characters }: { characters: SessionCharacter[] }) {
+  const {
+    currentSystem,
+    setCurrentSystem,
+    liveTrackingCharacterId,
+    setLiveTrackingCharacterId,
+    liveTrackingNeedsReauth,
+    radius,
+    setRadius,
+  } = useLocationTracking();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SystemSearchMatch[]>([]);
+  const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setResults([]);
+        setCharacterPickerOpen(false);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -220,12 +232,21 @@ function LocationTracker() {
     setResults([]);
   }
 
+  const trackedCharacter = liveTrackingCharacterId != null ? characters.find((c) => c.id === liveTrackingCharacterId) ?? null : null;
+
   return (
     <div className="location-tracker" ref={containerRef}>
       {currentSystem ? (
         <div className="location-tracker-current">
-          <MapPin size={13} strokeWidth={2} />
-          <span>{currentSystem.name}</span>
+          {trackedCharacter ? (
+            <span className="location-tracker-live-dot" title={`Following ${trackedCharacter.name}'s live location`} />
+          ) : (
+            <MapPin size={13} strokeWidth={2} />
+          )}
+          <span>
+            {currentSystem.name}
+            {trackedCharacter && <span className="location-tracker-live-label"> · {trackedCharacter.name}</span>}
+          </span>
           <button
             type="button"
             className="location-tracker-clear"
@@ -269,6 +290,55 @@ function LocationTracker() {
             </div>
           )}
         </div>
+      )}
+
+      {characters.length > 0 && (
+        <div className="location-tracker-live-wrap">
+          <button
+            type="button"
+            className={`location-tracker-live-toggle${trackedCharacter ? " location-tracker-live-toggle-active" : ""}`}
+            onClick={() => setCharacterPickerOpen((open) => !open)}
+            aria-label="Track live based on a character's location"
+            title={trackedCharacter ? `Tracking ${trackedCharacter.name} live - click to change` : "Track live based on a character's real in-game location"}
+          >
+            <Satellite size={13} strokeWidth={2} />
+          </button>
+          {characterPickerOpen && (
+            <div className="location-tracker-results location-tracker-character-picker">
+              {characters.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={c.id === liveTrackingCharacterId ? "location-tracker-character-active" : ""}
+                  onClick={() => {
+                    setLiveTrackingCharacterId(c.id);
+                    setCharacterPickerOpen(false);
+                  }}
+                >
+                  {c.name}
+                </button>
+              ))}
+              {trackedCharacter && (
+                <button
+                  type="button"
+                  className="location-tracker-character-stop"
+                  onClick={() => {
+                    setLiveTrackingCharacterId(null);
+                    setCharacterPickerOpen(false);
+                  }}
+                >
+                  Stop live tracking
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {liveTrackingNeedsReauth && trackedCharacter && (
+        <span className="location-tracker-reauth-note" title="Sign in again to grant this character's location access">
+          {trackedCharacter.name} needs reauth
+        </span>
       )}
     </div>
   );
@@ -333,82 +403,90 @@ function TopBar({ title, activeId, session, onSwitch, onAdd, onLogout, onOpenKil
 
   return (
     <header className="topbar">
-      <div className="topbar-title-group">
-        <h1 className="topbar-title">{title}</h1>
-        {!hasSubTabs && (
-          <button
-            type="button"
-            className={`topbar-favourite-toggle${favourited ? " topbar-favourite-toggle-active" : ""}`}
-            onClick={() => toggleFavouritePage(activeId)}
-            aria-label={favourited ? `Remove ${title} from Favourites` : `Add ${title} to Favourites`}
-            title={favourited ? "Remove from Favourites" : "Add to Favourites - starred pages show in the Sidebar's Favourites view"}
-          >
-            <Star size={16} strokeWidth={2} fill={favourited ? "currentColor" : "none"} />
-          </button>
-        )}
-        {helpContent && <HelpBadge content={helpContent} />}
-      </div>
-      <div className="topbar-right">
-        <LocationTracker />
-        <ServerStatusBadge />
-        <CapsuleersOnlineBadge />
-        <KillSyncIndicator />
-        <div className="account-menu">
-          <button
-            type="button"
-            className="account-trigger"
-            onClick={() => setMenuOpen((open) => !open)}
-          >
-            {active ? (
-              <>
-                <img className="account-portrait" src={active.portrait_url} alt="" />
-                <StatusChip label={active.name} value="Connected" tone="online" />
-              </>
-            ) : (
-              <StatusChip label="Session" value="Offline" tone="neutral" />
-            )}
-          </button>
-          {menuOpen && (
-            <div className="account-panel">
-              {session.characters.map((character) => (
-                <div key={character.id} className="account-row">
-                  <button
-                    type="button"
-                    className={`account-row-select${
-                      character.id === session.active_character_id ? " account-row-active" : ""
-                    }`}
-                    onClick={() => {
-                      onSwitch(character.id);
-                      setMenuOpen(false);
-                    }}
-                  >
-                    <img className="account-portrait" src={character.portrait_url} alt="" />
-                    <span>{character.name}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="account-row-logout"
-                    onClick={() => onLogout(character.id)}
-                  >
-                    Log out
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                className="account-add"
-                onClick={() => {
-                  onAdd();
-                  setMenuOpen(false);
-                }}
-              >
-                + Add character
-              </button>
-            </div>
+      <div className="topbar-row topbar-row-primary">
+        <div className="topbar-title-group">
+          <h1 className="topbar-title">{title}</h1>
+          {!hasSubTabs && (
+            <button
+              type="button"
+              className={`topbar-favourite-toggle${favourited ? " topbar-favourite-toggle-active" : ""}`}
+              onClick={() => toggleFavouritePage(activeId)}
+              aria-label={favourited ? `Remove ${title} from Favourites` : `Add ${title} to Favourites`}
+              title={favourited ? "Remove from Favourites" : "Add to Favourites - starred pages show in the Sidebar's Favourites view"}
+            >
+              <Star size={16} strokeWidth={2} fill={favourited ? "currentColor" : "none"} />
+            </button>
           )}
+          {helpContent && <HelpBadge content={helpContent} />}
         </div>
-        <EveTimeClock />
-        <NotificationBell onOpenKillmail={onOpenKillmail} />
+        <div className="topbar-account-group">
+          <div className="account-menu">
+            <button
+              type="button"
+              className="account-trigger"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              {active ? (
+                <>
+                  <img className="account-portrait" src={active.portrait_url} alt="" />
+                  <StatusChip label={active.name} value="Connected" tone="online" />
+                </>
+              ) : (
+                <StatusChip label="Session" value="Offline" tone="neutral" />
+              )}
+            </button>
+            {menuOpen && (
+              <div className="account-panel">
+                {session.characters.map((character) => (
+                  <div key={character.id} className="account-row">
+                    <button
+                      type="button"
+                      className={`account-row-select${
+                        character.id === session.active_character_id ? " account-row-active" : ""
+                      }`}
+                      onClick={() => {
+                        onSwitch(character.id);
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <img className="account-portrait" src={character.portrait_url} alt="" />
+                      <span>{character.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="account-row-logout"
+                      onClick={() => onLogout(character.id)}
+                    >
+                      Log out
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="account-add"
+                  onClick={() => {
+                    onAdd();
+                    setMenuOpen(false);
+                  }}
+                >
+                  + Add character
+                </button>
+              </div>
+            )}
+          </div>
+          <EveTimeClock />
+          <NotificationBell onOpenKillmail={onOpenKillmail} />
+        </div>
+      </div>
+      <div className="topbar-row topbar-row-status">
+        <div className="topbar-status-group">
+          <LocationTracker characters={session.characters} />
+          <KillSyncIndicator />
+        </div>
+        <div className="topbar-status-group">
+          <ServerStatusBadge />
+          <CapsuleersOnlineBadge />
+        </div>
       </div>
     </header>
   );

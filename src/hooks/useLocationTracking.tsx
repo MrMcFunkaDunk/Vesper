@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getMapData, type MapData } from "../lib/map";
+import { getCharacterLocation } from "../lib/eve";
 import { useRecentActivity } from "./useRecentActivity";
 import { useErrorReporter } from "./useErrorReporter";
 import { readNotificationPreferences } from "./useNotificationPreferences";
@@ -12,6 +13,12 @@ export type ProximityRadius = 0 | 1 | 2 | 3 | 5 | 7 | 9 | "region";
 
 const CURRENT_SYSTEM_KEY = "vesper.location.currentSystem";
 const RADIUS_KEY = "vesper.location.radius";
+const LIVE_TRACKING_CHARACTER_KEY = "vesper.location.liveTrackingCharacterId";
+/** Same cadence useCharacterLocation.tsx's own ESI poll already uses for
+ * the active character's live position - no reason for this one (a
+ * possibly-different, explicitly chosen character) to check any more or
+ * less often. */
+const LIVE_TRACKING_POLL_MS = 10_000;
 /** Caps how many past alerted kills stay flagged in the ticker - well above
  * the ticker's own display limit, just enough to avoid the set growing
  * forever over a long session. */
@@ -26,6 +33,15 @@ function readCurrentSystem(): CurrentSystem | null {
   try {
     const raw = localStorage.getItem(CURRENT_SYSTEM_KEY);
     return raw ? (JSON.parse(raw) as CurrentSystem) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLiveTrackingCharacterId(): number | null {
+  try {
+    const raw = localStorage.getItem(LIVE_TRACKING_CHARACTER_KEY);
+    return raw ? Number(raw) : null;
   } catch {
     return null;
   }
@@ -48,9 +64,25 @@ function readRadius(): ProximityRadius {
 }
 
 interface LocationTrackingState {
-  /** The character's manually-set current system, or null if location tracking is off. */
+  /** The tracked current system - either set by hand, or (while
+   * liveTrackingCharacterId is set) kept in sync automatically with that
+   * character's real in-game location. */
   currentSystem: CurrentSystem | null;
+  /** Sets currentSystem by hand and stops live tracking, if it was on - a
+   * manual pick is always treated as "I want to drive this myself now". */
   setCurrentSystem: (system: CurrentSystem | null) => void;
+  /** Which logged-in character's live ESI location currentSystem is
+   * following, or null while in plain manual mode. Switching this (e.g.
+   * from one character to another, or to null to stop) is the "track live"
+   * feature - currentSystem then follows that character automatically as
+   * they move, jump to jump, until switched back to manual or cleared. */
+  liveTrackingCharacterId: number | null;
+  setLiveTrackingCharacterId: (characterId: number | null) => void;
+  /** True once a live-tracked character's location poll comes back needing
+   * a fresh EVE SSO login (the scope was never granted, or the token's
+   * gone stale) - lets the picker surface that instead of just silently
+   * never updating. */
+  liveTrackingNeedsReauth: boolean;
   radius: ProximityRadius;
   setRadius: (radius: ProximityRadius) => void;
   /** Every system id within `radius` gate-jumps of currentSystem (or the whole region), including currentSystem itself. Empty when no location is set. */
@@ -127,6 +159,8 @@ function systemsWithinJumps(originId: number, maxJumps: number, adjacency: Map<n
 
 export function LocationTrackingProvider({ children }: LocationTrackingProviderProps) {
   const [currentSystem, setCurrentSystemState] = useState<CurrentSystem | null>(() => readCurrentSystem());
+  const [liveTrackingCharacterId, setLiveTrackingCharacterIdState] = useState<number | null>(() => readLiveTrackingCharacterId());
+  const [liveTrackingNeedsReauth, setLiveTrackingNeedsReauth] = useState(false);
   const [radius, setRadius] = useState<ProximityRadius>(() => readRadius());
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [alertKillIds, setAlertKillIds] = useState<Set<number>>(new Set());
@@ -143,6 +177,12 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
   // often even though nothing consumers actually care about changed.
   const killsRef = useRef(kills);
   killsRef.current = kills;
+  // Lets the live-tracking poll loop below (whose effect only depends on
+  // liveTrackingCharacterId, so it doesn't restart every time the system
+  // changes) always compare against the latest currentSystem without being
+  // torn down and recreated on every jump.
+  const currentSystemRef = useRef(currentSystem);
+  currentSystemRef.current = currentSystem;
 
   useEffect(() => {
     getMapData()
@@ -172,6 +212,16 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
     }
     localStorage.setItem(RADIUS_KEY, String(radius));
   }, [radius]);
+
+  const liveTrackingHydrated = useRef(false);
+  useEffect(() => {
+    if (!liveTrackingHydrated.current) {
+      liveTrackingHydrated.current = true;
+      return;
+    }
+    if (liveTrackingCharacterId != null) localStorage.setItem(LIVE_TRACKING_CHARACTER_KEY, String(liveTrackingCharacterId));
+    else localStorage.removeItem(LIVE_TRACKING_CHARACTER_KEY);
+  }, [liveTrackingCharacterId]);
 
   const adjacency = useMemo(() => {
     const map = new Map<number, number[]>();
@@ -277,14 +327,67 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
     setPulseToken((n) => n + 1);
   }, [kills, radiusSystemIds]);
 
-  const setCurrentSystem = useCallback((system: CurrentSystem | null) => {
+  /** Shared by both the manual setter below and the live-tracking poll -
+   * applies a new currentSystem and resets the proximity-alert "already
+   * seen" bookkeeping, since a genuine location change means kills already
+   * in the feed shouldn't retroactively count as "just happened near me". */
+  const applyCurrentSystem = useCallback((system: CurrentSystem | null) => {
     setCurrentSystemState(system);
-    // A newly-set location shouldn't retroactively flag kills already
-    // sitting in the feed as "just happened near me" - only kills arriving
-    // from here on should trigger an alert.
     seenKillIdsRef.current = new Set(killsRef.current.map((k) => k.killmail_id));
     setAlertKillIds(new Set());
   }, []);
+
+  const setCurrentSystem = useCallback(
+    (system: CurrentSystem | null) => {
+      // A manual pick always means "I want to drive this myself now" - stop
+      // following whichever character's live location was driving it before.
+      setLiveTrackingCharacterIdState(null);
+      applyCurrentSystem(system);
+    },
+    [applyCurrentSystem],
+  );
+
+  const setLiveTrackingCharacterId = useCallback((characterId: number | null) => {
+    setLiveTrackingNeedsReauth(false);
+    setLiveTrackingCharacterIdState(characterId);
+  }, []);
+
+  // While a character is selected for live tracking, poll their real ESI
+  // location and keep currentSystem following it - runs independently of
+  // useCharacterLocation.tsx's own poll (which only ever follows whichever
+  // character is the app's "active" one), since the pilot picking who to
+  // follow here is deliberately not tied to that.
+  useEffect(() => {
+    if (liveTrackingCharacterId == null) return;
+    let active = true;
+
+    async function pollLoop() {
+      while (active) {
+        try {
+          const loc = await getCharacterLocation(liveTrackingCharacterId!);
+          if (!active) break;
+          if (loc.needs_reauth) {
+            setLiveTrackingNeedsReauth(true);
+          } else if (loc.solar_system_id != null && loc.solar_system_name != null) {
+            setLiveTrackingNeedsReauth(false);
+            if (currentSystemRef.current?.id !== loc.solar_system_id) {
+              applyCurrentSystem({ id: loc.solar_system_id, name: loc.solar_system_name });
+            }
+          }
+        } catch (err) {
+          if (!active) break;
+          reportError(`Failed to poll live-tracked character's location: ${String(err)}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, LIVE_TRACKING_POLL_MS));
+      }
+    }
+
+    pollLoop();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveTrackingCharacterId, applyCurrentSystem]);
 
   // Without this, the provider re-renders on every kills poll tick (kills
   // isn't even part of the context value, just used internally) and handed
@@ -294,6 +397,9 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
     () => ({
       currentSystem,
       setCurrentSystem,
+      liveTrackingCharacterId,
+      setLiveTrackingCharacterId,
+      liveTrackingNeedsReauth,
       radius,
       setRadius,
       radiusSystemIds,
@@ -303,7 +409,21 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
       soundToken,
       jumpDistances,
     }),
-    [currentSystem, setCurrentSystem, radius, setRadius, radiusSystemIds, alertKillIds, pulseToken, pulseSeverity, soundToken, jumpDistances],
+    [
+      currentSystem,
+      setCurrentSystem,
+      liveTrackingCharacterId,
+      setLiveTrackingCharacterId,
+      liveTrackingNeedsReauth,
+      radius,
+      setRadius,
+      radiusSystemIds,
+      alertKillIds,
+      pulseToken,
+      pulseSeverity,
+      soundToken,
+      jumpDistances,
+    ],
   );
 
   return (

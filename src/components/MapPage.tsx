@@ -5,11 +5,12 @@ import GateCheck from "./GateCheck";
 import LikelyGateCamps from "./LikelyGateCamps";
 import LocalThreatCheck from "./LocalThreatCheck";
 import DScanCheck from "./DScanCheck";
+import RegionMapTab from "./RegionMapTab";
 import type { SystemSummary } from "./SystemKillboard";
 import type { GateSummary } from "./GateKillboard";
 import type { SessionCharacter } from "../lib/eve";
 
-type MapTab = "map" | "gatecheck" | "likelycamps" | "localthreat" | "dscan";
+type MapTab = "map" | "gatecheck" | "likelycamps" | "localthreat" | "dscan" | "regionmap";
 
 const TABS: { id: MapTab; label: string }[] = [
   { id: "map", label: "Map" },
@@ -17,6 +18,7 @@ const TABS: { id: MapTab; label: string }[] = [
   { id: "likelycamps", label: "Likely Gate Camps" },
   { id: "localthreat", label: "Local Threat" },
   { id: "dscan", label: "D-Scan" },
+  { id: "regionmap", label: "Region Map" },
 ];
 
 interface MapPageProps {
@@ -80,8 +82,10 @@ function MapPage({
           <LikelyGateCamps onSelectGate={onSelectGate} />
         ) : tab === "localthreat" ? (
           <LocalThreatCheck onSelectCharacter={onSelectCharacter} />
-        ) : (
+        ) : tab === "dscan" ? (
           <DScanCheck />
+        ) : (
+          <RegionMapTab />
         )}
       </div>
     </main>

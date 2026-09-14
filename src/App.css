@@ -137,7 +137,10 @@
   --glow-accent: 0 0 0 1px var(--border-active), 0 0 16px rgba(111, 195, 217, 0.15);
 
   --sidebar-width: 248px;
-  --topbar-height: 56px;
+  /* Two rows now - page identity/account controls on top, live status
+     telemetry (location, server, capsuleers online, kill sync) below -
+     rather than everything squeezed onto one line. */
+  --topbar-height: 92px;
 }
 
 /* Alternate color themes - each block redefines the same semantic variables
@@ -955,11 +958,35 @@ select.wh-roller-select,
 .topbar {
   grid-area: topbar;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--space-lg);
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px var(--space-lg);
   border-bottom: 1px solid var(--border);
   background: var(--bg-elevated);
+}
+
+/* Two stacked rows instead of one line: topbar-row-primary (title/account,
+   the "who and where" row) on top, topbar-row-status (location/server/
+   capsuleers/kill-sync telemetry) below - there was simply too much live
+   status trying to fit beside the title on one line as those badges grew. */
+.topbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.topbar-row-status {
+  flex-wrap: wrap;
+}
+
+.topbar-account-group,
+.topbar-status-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
 .topbar-title-group {
@@ -1090,16 +1117,11 @@ select.wh-roller-select,
 
 /* Account menu */
 
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-/* Every box in .topbar-right (location, server, capsuleers-online, connected,
-   eve time, bell) shares this same height and resting fill - a darker,
-   sunken tone against the topbar's own --bg-elevated surface so each reads
-   as a distinct panel instead of just an outline sitting on the bar. */
+/* Every box in the topbar's status row (location, server, capsuleers-online)
+   and account row (connected, eve time, bell) shares this same height and
+   resting fill - a darker, sunken tone against the topbar's own
+   --bg-elevated surface so each reads as a distinct panel instead of just
+   an outline sitting on the bar. */
 .server-status-badge {
   display: flex;
   flex-direction: row;
@@ -1321,6 +1343,85 @@ select.wh-roller-select,
   color: var(--accent);
 }
 
+.location-tracker-live-wrap {
+  position: relative;
+}
+
+.location-tracker-live-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.location-tracker-live-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-active);
+}
+
+.location-tracker-live-toggle-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.location-tracker-character-picker {
+  left: auto;
+  right: 0;
+  width: 180px;
+}
+
+.location-tracker-character-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.location-tracker-character-stop {
+  border-top: 1px solid var(--border);
+  color: var(--danger);
+}
+
+.location-tracker-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  flex-shrink: 0;
+  animation: location-tracker-live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes location-tracker-live-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+body[data-reduce-motion="true"] .location-tracker-live-dot {
+  animation: none;
+}
+
+.location-tracker-live-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.location-tracker-reauth-note {
+  font-size: 11px;
+  color: var(--danger);
+  white-space: nowrap;
+}
+
 .update-banner {
   position: fixed;
   right: 20px;
@@ -1388,7 +1489,7 @@ select.wh-roller-select,
 
 .toast-stack {
   position: fixed;
-  top: 70px;
+  top: calc(var(--topbar-height) + 14px);
   right: 20px;
   z-index: 9997;
   display: flex;
@@ -2146,6 +2247,12 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 .character-card:hover {
   border-color: var(--border-active);
   background: var(--bg-elevated-2);
+}
+
+.character-card-dragging {
+  cursor: grabbing;
+  opacity: 0.6;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
 }
 
 .character-card:focus-visible {
@@ -6050,6 +6157,25 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   flex: 1;
 }
 
+.industry-opportunities-search {
+  max-width: 420px;
+  margin: 12px 0;
+}
+
+.industry-opportunities-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.industry-opportunities-header-label {
+  font-family: var(--font-label);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
 
 .kills-add-form input,
 .kills-character-search-form input,
@@ -7408,6 +7534,72 @@ body[data-reduce-motion="true"] .skeleton-row {
   flex-direction: column;
   gap: var(--space-md);
   min-height: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   REGION MAP - a region-level sovereignty overview, node positions from
+   real universe coordinates. See RegionMapTab.tsx.
+   --------------------------------------------------------------------------- */
+
+.region-map-tab {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.region-map-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.region-map-svg {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.region-map-edges line {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+
+.region-map-node circle {
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.region-map-node-label {
+  fill: var(--text);
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg-elevated);
+  stroke-width: 3px;
+}
+
+.region-map-legend {
+  width: 240px;
+  flex-shrink: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  overflow-y: auto;
+}
+
+.region-map-legend-note {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .map-page-tabs {
@@ -9813,6 +10005,23 @@ body[data-reduce-motion="true"] .skeleton-row {
   gap: 10px;
 }
 
+.wallet-pnl-breakdown-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.wallet-pnl-breakdown-panel {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.wallet-pnl-breakdown-panel .kills-feed-section-title {
+  margin-bottom: 10px;
+}
+
 .market-stat-card {
   display: flex;
   flex-direction: column;
@@ -10097,6 +10306,213 @@ body[data-reduce-motion="true"] .mineral-ticker-half-clone {
   font-family: var(--font-label);
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   MARKET HISTORY CHART - Avg/High/Low on a left ISK axis over a Volume bar
+   series on a right secondary axis, plus a Chart/Grid toggle. See
+   MarketHistoryChart.tsx.
+   --------------------------------------------------------------------------- */
+
+.market-history-chart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.market-history-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.market-history-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.market-history-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.market-history-swatch-volume {
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+
+.market-history-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.market-history-mode-toggle button {
+  padding: 4px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-label);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.market-history-mode-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.market-history-mode-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.market-history-svg {
+  width: 100%;
+  height: 240px;
+  display: block;
+}
+
+.market-history-gridline {
+  stroke: var(--grid-line, var(--border));
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.market-history-axis-label {
+  fill: var(--text-muted);
+  font-family: var(--font-label);
+  font-size: 10px;
+}
+
+.market-history-axis-label-volume {
+  fill: var(--text-muted);
+  opacity: 0.7;
+}
+
+.market-history-volume-bar {
+  fill: var(--text-muted);
+  opacity: 0.28;
+}
+
+.market-history-line-avg {
+  stroke: var(--accent);
+}
+
+.market-history-line-high {
+  stroke: var(--success);
+  stroke-width: 1.5;
+  opacity: 0.85;
+}
+
+.market-history-line-low {
+  stroke: var(--danger);
+  stroke-width: 1.5;
+  opacity: 0.85;
+}
+
+.market-history-scanline {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.market-history-hover-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-label);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.market-history-hover-readout strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.market-history-hover-readout-muted {
+  color: var(--text-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   PIE CHART WITH SIDE LEGEND - see PieChartWithLegend.tsx. The legend lists
+   beside the pie rather than as slice labels, same layout EveConsole's own
+   Market Overview uses.
+   --------------------------------------------------------------------------- */
+
+.pie-chart-with-legend {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.pie-chart-svg {
+  width: 120px;
+  height: 120px;
+  flex-shrink: 0;
+}
+
+.pie-chart-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pie-chart-legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.pie-chart-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pie-chart-legend-label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.pie-chart-legend-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.pie-chart-legend-pct {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  width: 42px;
+  text-align: right;
 }
 
 .market-browser-books {

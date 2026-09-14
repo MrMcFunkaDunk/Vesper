@@ -4,6 +4,7 @@ import { getMapData, regionHubColor, regionLabelWithHub, TRADE_HUB_REGIONS, type
 import { isPriceWidgetOpen, openPriceWidget, closePriceWidget } from "../lib/priceWidget";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { toCsv, downloadCsv } from "../lib/csvExport";
+import MarketHistoryChart from "./MarketHistoryChart";
 import {
   searchMarketTypes,
   getMarketGroups,
@@ -41,40 +42,6 @@ export const CATEGORY_ICON_BY_ICON_ID: Record<number, string> = {};
 for (const [path, url] of Object.entries(iconModules)) {
   const match = path.match(/icon-(\d+)\.png$/);
   if (match) CATEGORY_ICON_BY_ICON_ID[Number(match[1])] = url;
-}
-
-function PriceHistoryChart({ points }: { points: MarketHistoryPoint[] }) {
-  const recent = points.slice(-90);
-  if (recent.length < 2) {
-    return <p className="detail-empty">Not enough history to chart yet.</p>;
-  }
-  const width = 760;
-  const height = 220;
-  const padding = 8;
-  const values = recent.map((p) => p.average);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const stepX = (width - padding * 2) / (recent.length - 1);
-  const toY = (v: number) => height - padding - ((v - min) / range) * (height - padding * 2);
-  const linePoints = recent.map((p, i) => `${padding + i * stepX},${toY(p.average)}`).join(" ");
-  const areaPoints = `${padding},${height - padding} ${linePoints} ${padding + (recent.length - 1) * stepX},${height - padding}`;
-
-  return (
-    <div className="market-history-chart">
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        <polygon points={areaPoints} className="market-history-area" />
-        <polyline points={linePoints} className="market-history-line" />
-      </svg>
-      <div className="market-history-range">
-        <span>{recent[0].date}</span>
-        <span className="isk" title={`Average price ranged from ${formatIsk(min)} to ${formatIsk(max)} over this period`}>
-          {formatIsk(min)} – {formatIsk(max)} avg
-        </span>
-        <span>{recent[recent.length - 1].date}</span>
-      </div>
-    </div>
-  );
 }
 
 /** Walks parent_id up to the root, returning root-to-leaf order, so the
@@ -651,7 +618,7 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
               </div>
 
               {itemTab === "history" ? (
-                history && <PriceHistoryChart points={history} />
+                history && <MarketHistoryChart points={history} />
               ) : (
                 <div className="market-browser-books">
                   <div className="data-table-wrap market-browser-book">

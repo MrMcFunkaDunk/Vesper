@@ -26,6 +26,7 @@ import InsuranceCalculator from "./InsuranceCalculator";
 import MineralTicker from "./MineralTicker";
 import HelpBadge from "./HelpBadge";
 import PageTabBar from "./PageTabBar";
+import PieChartWithLegend from "./PieChartWithLegend";
 import { HELP_CONTENT } from "../lib/helpContent";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
@@ -115,6 +116,14 @@ interface RealizedPnl {
    * real cost basis is unknown. */
   unmatchedSellQuantity: number;
   unmatchedSellValue: number;
+  /** Realized profit broken down by item, highest first - powers the
+   * "Profit by Item" panel above the transaction table. */
+  profitByItem: { typeId: number; typeName: string; profit: number }[];
+  /** Sell revenue broken down by buyer, highest first - "Top Trading
+   * Partners", the direct analog of a market tool's usual "Top Buyers"
+   * list. Revenue rather than profit, since cost basis isn't tied to which
+   * counterparty bought a given unit. */
+  revenueByPartner: { name: string; revenue: number }[];
 }
 
 /** FIFO-matches every buy against later sells of the same item, oldest
@@ -135,20 +144,26 @@ function computeRealizedPnl(entries: TransactionEntry[]): RealizedPnl {
   let matchedSellRevenue = 0;
   let unmatchedSellQuantity = 0;
   let unmatchedSellValue = 0;
+  const profitByType = new Map<number, { typeName: string; profit: number }>();
+  const revenueByPartner = new Map<string, number>();
 
   for (const list of byType.values()) {
     const sorted = [...list].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     const lots: { qty: number; price: number }[] = [];
+    let itemProfit = 0;
     for (const t of sorted) {
       if (t.is_buy) {
         lots.push({ qty: t.quantity, price: t.unit_price });
         continue;
       }
+      revenueByPartner.set(t.client_name, (revenueByPartner.get(t.client_name) ?? 0) + t.unit_price * t.quantity);
       let remaining = t.quantity;
       while (remaining > 0 && lots.length > 0) {
         const lot = lots[0];
         const consumed = Math.min(lot.qty, remaining);
-        realizedProfit += (t.unit_price - lot.price) * consumed;
+        const profit = (t.unit_price - lot.price) * consumed;
+        realizedProfit += profit;
+        itemProfit += profit;
         matchedBuyCost += lot.price * consumed;
         matchedSellRevenue += t.unit_price * consumed;
         lot.qty -= consumed;
@@ -160,9 +175,38 @@ function computeRealizedPnl(entries: TransactionEntry[]): RealizedPnl {
         unmatchedSellValue += remaining * t.unit_price;
       }
     }
+    if (itemProfit !== 0) {
+      profitByType.set(list[0].type_id, { typeName: list[0].type_name, profit: itemProfit });
+    }
   }
 
-  return { realizedProfit, matchedBuyCost, matchedSellRevenue, unmatchedSellQuantity, unmatchedSellValue };
+  const profitByItem = [...profitByType.entries()]
+    .map(([typeId, v]) => ({ typeId, typeName: v.typeName, profit: v.profit }))
+    .sort((a, b) => b.profit - a.profit);
+  const revenueByPartnerList = [...revenueByPartner.entries()]
+    .map(([name, revenue]) => ({ name, revenue }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  return {
+    realizedProfit,
+    matchedBuyCost,
+    matchedSellRevenue,
+    unmatchedSellQuantity,
+    unmatchedSellValue,
+    profitByItem,
+    revenueByPartner: revenueByPartnerList,
+  };
+}
+
+/** Buckets a ranked list into the top N entries plus a trailing "Other"
+ * slice for everything past that - the same "top handful + everything
+ * else" convention EveConsole's own pie charts use, so a pie never has to
+ * render dozens of slivers for a long tail of one-off items/partners. */
+function toPieSlices<T>(rows: T[], getLabel: (row: T) => string, getValue: (row: T) => number, topN = 7): { label: string; value: number }[] {
+  const top = rows.slice(0, topN).map((r) => ({ label: getLabel(r), value: Math.abs(getValue(r)) }));
+  const rest = rows.slice(topN);
+  const otherValue = rest.reduce((sum, r) => sum + Math.abs(getValue(r)), 0);
+  return otherValue > 0 ? [...top, { label: "Other", value: otherValue }] : top;
 }
 
 function WalletMarketPage({
@@ -548,6 +592,32 @@ function WalletMarketPage({
                       >
                         <span className="market-stat-label">Unmatched Sells</span>
                         <span className="market-stat-value wallet-amount-positive">{formatIsk(realizedPnl.unmatchedSellValue)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {realizedPnl && (realizedPnl.profitByItem.length > 0 || realizedPnl.revenueByPartner.length > 0) && (
+                  <div className="wallet-pnl-breakdown-row">
+                    {realizedPnl.profitByItem.some((p) => p.profit > 0) && (
+                      <div className="wallet-pnl-breakdown-panel">
+                        <p className="kills-feed-section-title">Profit by Item</p>
+                        <PieChartWithLegend
+                          slices={toPieSlices(
+                            realizedPnl.profitByItem.filter((p) => p.profit > 0),
+                            (p) => p.typeName,
+                            (p) => p.profit,
+                          )}
+                          formatValue={formatIsk}
+                        />
+                      </div>
+                    )}
+                    {realizedPnl.revenueByPartner.length > 0 && (
+                      <div className="wallet-pnl-breakdown-panel">
+                        <p className="kills-feed-section-title">Top Trading Partners</p>
+                        <PieChartWithLegend
+                          slices={toPieSlices(realizedPnl.revenueByPartner, (p) => p.name, (p) => p.revenue)}
+                          formatValue={formatIsk}
+                        />
                       </div>
                     )}
                   </div>

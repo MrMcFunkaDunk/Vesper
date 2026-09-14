@@ -1,3 +1,4 @@
+import type { PointerEvent as ReactPointerEvent } from "react";
 import type { CharacterOverview, SessionCharacter } from "../lib/eve";
 import { formatIsk, formatSp, formatTimeRemaining, formatQueueSummary } from "../lib/format";
 import CloneStateBadge from "./CloneStateBadge";
@@ -9,14 +10,35 @@ interface CharacterCardProps {
   pending: boolean;
   onSelect: () => void;
   onReauth: () => void;
+  /** Drag-to-reorder passthrough (Dashboard's own "arrange your character
+   * cards" control) - all optional so every other caller of this card
+   * (Character Comparison, etc.) is unaffected. */
+  dragRef?: (el: HTMLElement | null) => void;
+  onDragPointerDown?: (e: ReactPointerEvent<HTMLElement>) => void;
+  onDragPointerMove?: (e: ReactPointerEvent<HTMLElement>) => void;
+  onDragPointerUp?: (e: ReactPointerEvent<HTMLElement>) => void;
+  dragging?: boolean;
 }
 
-function CharacterCard({ character, overview, isActive, pending, onSelect, onReauth }: CharacterCardProps) {
+function CharacterCard({
+  character,
+  overview,
+  isActive,
+  pending,
+  onSelect,
+  onReauth,
+  dragRef,
+  onDragPointerDown,
+  onDragPointerMove,
+  onDragPointerUp,
+  dragging,
+}: CharacterCardProps) {
   const loading = overview === undefined;
 
   return (
     <div
-      className={`character-card${isActive ? " character-card-active" : ""}`}
+      ref={dragRef}
+      className={`character-card${isActive ? " character-card-active" : ""}${dragging ? " character-card-dragging" : ""}`}
       role="button"
       tabIndex={0}
       onClick={onSelect}
@@ -26,6 +48,9 @@ function CharacterCard({ character, overview, isActive, pending, onSelect, onRea
           onSelect();
         }
       }}
+      onPointerDown={onDragPointerDown}
+      onPointerMove={onDragPointerMove}
+      onPointerUp={onDragPointerUp}
     >
       <div className="character-card-header">
         <div className="character-card-portrait-wrap">

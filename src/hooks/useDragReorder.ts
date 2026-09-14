@@ -3,8 +3,8 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 
 const DRAG_THRESHOLD_PX = 6;
 
-interface DragState {
-  id: string;
+interface DragState<T> {
+  id: T;
   startX: number;
   startY: number;
   dragging: boolean;
@@ -16,15 +16,20 @@ interface DragState {
  * item, live-reorders as the pointer crosses sibling midpoints, and
  * suppresses the click that would otherwise fire on release after a real
  * drag (so plain clicks still work for selection).
+ *
+ * Generic over the id type (string nav ids, numeric character ids,
+ * whatever a caller's own order array is keyed by) - every operation here
+ * is just equality-checking and Map-keying, neither of which cares what T
+ * actually is.
  */
-export function useDragReorder(order: string[], onReorder: (next: string[]) => void, axis: "vertical" | "wrap" = "vertical") {
-  const itemRefs = useRef(new Map<string, HTMLElement>());
-  const dragState = useRef<DragState | null>(null);
+export function useDragReorder<T>(order: T[], onReorder: (next: T[]) => void, axis: "vertical" | "wrap" = "vertical") {
+  const itemRefs = useRef(new Map<T, HTMLElement>());
+  const dragState = useRef<DragState<T> | null>(null);
   const justDraggedRef = useRef(false);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<T | null>(null);
 
   const setItemRef = useCallback(
-    (id: string) => (el: HTMLElement | null) => {
+    (id: T) => (el: HTMLElement | null) => {
       if (el) itemRefs.current.set(id, el);
       else itemRefs.current.delete(id);
     },
@@ -32,7 +37,7 @@ export function useDragReorder(order: string[], onReorder: (next: string[]) => v
   );
 
   const handlePointerDown = useCallback(
-    (id: string) => (event: ReactPointerEvent<HTMLElement>) => {
+    (id: T) => (event: ReactPointerEvent<HTMLElement>) => {
       if (event.button !== 0) return;
       dragState.current = { id, startX: event.clientX, startY: event.clientY, dragging: false };
       event.currentTarget.setPointerCapture(event.pointerId);

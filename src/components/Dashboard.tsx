@@ -16,6 +16,8 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { getAllCachedOverviews, setCachedOverview, isTransientServerError } from "../lib/overviewCache";
 import { useTheme, isPremiumTheme } from "../hooks/useTheme";
 import PremiumDashboard from "./premium/PremiumDashboard";
+import { useCharacterOrder } from "../hooks/useCharacterOrder";
+import { useDragReorder } from "../hooks/useDragReorder";
 
 interface DashboardProps {
   session: Session;
@@ -116,6 +118,24 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
   const activeCharacter =
     session.characters.find((c) => c.id === session.active_character_id) ?? session.characters[0];
 
+  // Drag-to-reorder character cards - the Dashboard's own "arrange your
+  // layout" control, same pattern as the Sidebar's nav-item reordering.
+  // Premium's own dashboard composition is untouched by this (out of scope
+  // for this pass); only the standard card-grid layout below picks it up.
+  const characterIdList = session.characters.map((c) => c.id);
+  const { order: characterOrder, setOrder: setCharacterOrder } = useCharacterOrder(characterIdList);
+  const {
+    draggingId: draggingCharacterId,
+    setItemRef: setCharacterItemRef,
+    handlePointerDown: handleCharacterPointerDown,
+    handlePointerMove: handleCharacterPointerMove,
+    handlePointerUp: handleCharacterPointerUp,
+    consumeJustDragged: consumeCharacterJustDragged,
+  } = useDragReorder(characterOrder, setCharacterOrder, "wrap");
+  const orderedCharacters = characterOrder
+    .map((id) => session.characters.find((c) => c.id === id))
+    .filter((c): c is SessionCharacter => Boolean(c));
+
   if (comparing) {
     return <CharacterComparisonView characters={session.characters} onClose={() => setComparing(false)} />;
   }
@@ -170,15 +190,23 @@ function Dashboard({ session, onOpenDetail, onAdd }: DashboardProps) {
         </div>
 
         <div className="character-grid">
-          {session.characters.map((character) => (
+          {orderedCharacters.map((character) => (
             <CharacterCard
               key={character.id}
               character={character}
               overview={overviews[character.id]}
               isActive={character.id === session.active_character_id}
               pending={pending}
-              onSelect={() => onOpenDetail(character.id)}
+              onSelect={() => {
+                if (consumeCharacterJustDragged()) return;
+                onOpenDetail(character.id);
+              }}
               onReauth={handleAccountAction}
+              dragRef={setCharacterItemRef(character.id)}
+              onDragPointerDown={handleCharacterPointerDown(character.id)}
+              onDragPointerMove={handleCharacterPointerMove}
+              onDragPointerUp={handleCharacterPointerUp}
+              dragging={draggingCharacterId === character.id}
             />
           ))}
           <button

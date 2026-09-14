@@ -53,6 +53,7 @@ import { useIndustryDefaults } from "../hooks/useIndustryDefaults";
 import { useSystemPresets, type SystemPreset } from "../hooks/useSystemPresets";
 import HelpBadge from "./HelpBadge";
 import PageTabBar from "./PageTabBar";
+import IndustryOpportunitiesTab from "./IndustryOpportunitiesTab";
 import { HELP_CONTENT } from "../lib/helpContent";
 
 // EVE's real "Asteroid" item category - confirmed against the local SDE
@@ -115,7 +116,7 @@ const IMPLANT_LABEL: Record<ImplantTier, string> = {
   rx804: "RX-804 (+4%)",
 };
 
-type IndustryTab = "production" | "reprocessing" | "invention" | "research";
+type IndustryTab = "production" | "reprocessing" | "invention" | "research" | "opportunities";
 
 type StructureTier = "npc_station" | "engineering_complex";
 
@@ -145,7 +146,7 @@ const DECRYPTORS: DecryptorOption[] = [
   { key: "symmetry", label: "Symmetry (+0% chance)", probabilityMultiplier: 1.0, runModifier: 2, meModifier: 1, teModifier: 8 },
 ];
 
-function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number): string {
   if (seconds <= 0) return "0m";
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
@@ -3007,6 +3008,7 @@ const INDUSTRY_TABS: { id: IndustryTab; label: string }[] = [
   { id: "reprocessing", label: "Reprocessing" },
   { id: "invention", label: "Invention" },
   { id: "research", label: "Research" },
+  { id: "opportunities", label: "Opportunities" },
 ];
 const INDUSTRY_TAB_IDS: IndustryTab[] = INDUSTRY_TABS.map((t) => t.id);
 
@@ -3053,8 +3055,10 @@ function IndustryPage({ initialTab, onConsumeInitialTab, onActiveTabChange }: In
           <ReprocessingCalculator />
         ) : tab === "invention" ? (
           <InventionCalculator />
-        ) : (
+        ) : tab === "research" ? (
           <ResearchCalculator />
+        ) : (
+          <IndustryOpportunitiesTab />
         )}
       </div>
     </main>

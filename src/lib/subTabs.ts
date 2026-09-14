@@ -41,6 +41,7 @@ export const SUB_TABS: Record<string, SubTabInfo[]> = {
     { id: "reprocessing", label: "Reprocessing" },
     { id: "invention", label: "Invention" },
     { id: "research", label: "Research" },
+    { id: "opportunities", label: "Opportunities" },
   ],
   map: [
     { id: "map", label: "Map" },
@@ -48,6 +49,7 @@ export const SUB_TABS: Record<string, SubTabInfo[]> = {
     { id: "likelycamps", label: "Likely Gate Camps" },
     { id: "localthreat", label: "Local Threat" },
     { id: "dscan", label: "D-Scan" },
+    { id: "regionmap", label: "Region Map" },
   ],
   mining: [
     { id: "oretable", label: "Ore Table" },
