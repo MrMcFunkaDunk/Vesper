@@ -349,6 +349,11 @@ export interface AssetEntry {
    * station/structure. Lets the UI find "everything fitted/stowed on this
    * specific ship" by matching this against the ship's own item_id. */
   location_id: number;
+  /** The root location's solar system - 0 when it couldn't be resolved
+   * (e.g. a structure outside this character's access). Lets the "In
+   * Assets" fit-item search compute jump distance without a second
+   * round trip. */
+  solar_system_id: number;
 }
 
 export interface CharacterAssets {
@@ -358,6 +363,14 @@ export interface CharacterAssets {
 
 export function getCharacterAssets(id: number): Promise<CharacterAssets> {
   return invoke("get_character_assets", { id });
+}
+
+/** Jump count from origin to every one of a batch of destination systems -
+ * one ESI route call per distinct destination, not per matched asset row.
+ * A destination ESI can't route to is simply absent from the map. */
+export async function getJumpCounts(origin: number, destinations: number[]): Promise<Map<number, number>> {
+  const result = await invoke<Record<number, number>>("get_jump_counts", { origin, destinations });
+  return new Map(Object.entries(result).map(([id, jumps]) => [Number(id), jumps]));
 }
 
 export interface MarketOrderEntry {

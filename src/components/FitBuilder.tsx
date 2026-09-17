@@ -21,7 +21,15 @@ import { formatIsk, typeIconUrl } from "../lib/format";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 import { CategoryTreeNode } from "./MarketBrowser";
-import { getCharacterSkills, type SessionCharacter, type SkillEntry } from "../lib/eve";
+import {
+  getCharacterSkills,
+  getCharacterAssets,
+  getCharacterLocation,
+  getJumpCounts,
+  type SessionCharacter,
+  type SkillEntry,
+  type AssetEntry,
+} from "../lib/eve";
 
 const PURPOSES = ["PvP", "PvE", "Exploring", "Industry", "Mining", "Mission", "Other"];
 
@@ -180,6 +188,19 @@ function FitBuilder({
   const [doctrineSkills, setDoctrineSkills] = useState<Map<number, SkillEntry[]>>(new Map());
   const [doctrineLoading, setDoctrineLoading] = useState<Set<number>>(new Set());
 
+  // "In Assets" - same lazy-once-expanded loading shape as Check Doctrine,
+  // but for one picked character's real asset list rather than their
+  // skills, so the fit's items can be cross-checked against where they
+  // actually are. Cached per character (switching back to one already
+  // fetched this session is instant) even though only one is shown at a
+  // time - jumps are measured from that same character's current location,
+  // so one selector drives both which assets are searched and the origin.
+  const [assetsByCharacter, setAssetsByCharacter] = useState<Map<number, AssetEntry[]>>(new Map());
+  const [assetsLoading, setAssetsLoading] = useState<Set<number>>(new Set());
+  const [assetsCharacterId, setAssetsCharacterId] = useState<number | null>(characters[0]?.id ?? null);
+  const [jumpOriginSystemId, setJumpOriginSystemId] = useState<number | null>(null);
+  const [jumpCounts, setJumpCounts] = useState<Map<number, number>>(new Map());
+
   const [combatOverlayOn, setCombatOverlayOn] = useState(false);
 
   useEffect(() => {
@@ -328,6 +349,139 @@ function FitBuilder({
       }
     }
     return { ok: missing.length === 0, missing };
+  }
+
+  useEffect(() => {
+    if (!expandedSections.has("assets") || assetsCharacterId == null) return;
+    if (assetsByCharacter.has(assetsCharacterId) || assetsLoading.has(assetsCharacterId)) return;
+    const characterId = assetsCharacterId;
+    setAssetsLoading((prev) => new Set(prev).add(characterId));
+    getCharacterAssets(characterId)
+      .then((result) => {
+        setAssetsByCharacter((prev) => new Map(prev).set(characterId, result.needs_reauth ? [] : result.entries));
+      })
+      .catch(() => {
+        setAssetsByCharacter((prev) => new Map(prev).set(characterId, []));
+      })
+      .finally(() => {
+        setAssetsLoading((prev) => {
+          const next = new Set(prev);
+          next.delete(characterId);
+          return next;
+        });
+      });
+  }, [expandedSections, assetsCharacterId, assetsByCharacter, assetsLoading]);
+
+  useEffect(() => {
+    if (!expandedSections.has("assets") || assetsCharacterId == null) {
+      return;
+    }
+    let cancelled = false;
+    getCharacterLocation(assetsCharacterId)
+      .then((loc) => {
+        if (!cancelled) setJumpOriginSystemId(loc.solar_system_id ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setJumpOriginSystemId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedSections, assetsCharacterId]);
+
+  /** Every distinct type the fit actually needs (the hull plus every fitted/
+   * drone/cargo item), with quantities summed - a fit calling for 3x the
+   * same rig should ask "do I have 3", not list the same type three times. */
+  const neededItems = useMemo(() => {
+    const qtyByType = new Map<number, number>();
+    if (draft.ship_type_id) qtyByType.set(draft.ship_type_id, (qtyByType.get(draft.ship_type_id) ?? 0) + 1);
+    for (const item of draft.items) qtyByType.set(item.type_id, (qtyByType.get(item.type_id) ?? 0) + item.quantity);
+    return Array.from(qtyByType.entries()).map(([typeId, neededQty]) => ({ typeId, neededQty, name: nameFor(typeId) }));
+  }, [draft.ship_type_id, draft.items, nameFor]);
+
+  const neededTypeIds = useMemo(() => new Set(neededItems.map((i) => i.typeId)), [neededItems]);
+
+  interface AssetMatch {
+    locationName: string;
+    systemId: number;
+    quantity: number;
+  }
+
+  /** True when an asset's location_flag places it fitted/stowed on some
+   * ship - a hi/mid/low/rig/subsystem slot, a fighter tube, or that ship's
+   * own drone bay/cargo hold/fuel bay. A plain container or a station
+   * hangar division uses a different flag ("Unlocked"/"Hangar"/etc.), so
+   * this only catches genuine ship attachment, not "sitting in a box". */
+  function isShipAttached(flag: string): boolean {
+    return (
+      /^(HiSlot|MedSlot|LoSlot|RigSlot|SubSystemSlot|FighterTube)\d+$/.test(flag) ||
+      flag === "DroneBay" ||
+      flag === "FighterBay" ||
+      flag === "Cargo" ||
+      flag === "SpecializedFuelBay"
+    );
+  }
+
+  /** Only walks assets whose type is actually needed by this fit - an
+   * account's full asset list can run into the thousands, and every other
+   * row is irrelevant to "do I have these specific items". Scoped to the
+   * one character picked above, grouped by location so multiple stacks of
+   * the same item in the same hangar collapse into one row. Skips anything
+   * already fitted/stowed on some other ship - a blaster bolted onto a
+   * different Algos in Korsiki doesn't help build a fresh one in Auduene,
+   * only loose stock (a hangar, a plain container, asset safety, ...) does. */
+  const assetMatchesByType = useMemo(() => {
+    const entries = assetsCharacterId != null ? assetsByCharacter.get(assetsCharacterId) ?? [] : [];
+    const grouped = new Map<string, AssetMatch & { typeId: number }>();
+    for (const a of entries) {
+      if (!neededTypeIds.has(a.type_id)) continue;
+      if (isShipAttached(a.location_flag)) continue;
+      const key = `${a.type_id}|${a.location_name}`;
+      const existing = grouped.get(key);
+      if (existing) existing.quantity += a.quantity;
+      else grouped.set(key, { typeId: a.type_id, locationName: a.location_name, systemId: a.solar_system_id, quantity: a.quantity });
+    }
+    const byType = new Map<number, AssetMatch[]>();
+    for (const { typeId, ...match } of grouped.values()) {
+      const list = byType.get(typeId) ?? [];
+      list.push(match);
+      byType.set(typeId, list);
+    }
+    for (const list of byType.values()) list.sort((a, b) => b.quantity - a.quantity);
+    return byType;
+  }, [assetsByCharacter, assetsCharacterId, neededTypeIds]);
+
+  const matchSystemIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const list of assetMatchesByType.values()) for (const m of list) if (m.systemId) ids.add(m.systemId);
+    return Array.from(ids);
+  }, [assetMatchesByType]);
+
+  useEffect(() => {
+    if (jumpOriginSystemId == null || matchSystemIds.length === 0) {
+      setJumpCounts(new Map());
+      return;
+    }
+    let cancelled = false;
+    getJumpCounts(jumpOriginSystemId, matchSystemIds)
+      .then((result) => {
+        if (!cancelled) setJumpCounts(result);
+      })
+      .catch(() => {
+        if (!cancelled) setJumpCounts(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpOriginSystemId, matchSystemIds.join(",")]);
+
+  function jumpsLabel(systemId: number): string {
+    if (jumpOriginSystemId == null) return "";
+    if (systemId === jumpOriginSystemId) return "here";
+    const jumps = jumpCounts.get(systemId);
+    if (jumps == null) return "...";
+    return `${jumps} jump${jumps === 1 ? "" : "s"}`;
   }
 
   function flyabilityBadge(typeId: number) {
@@ -633,6 +787,68 @@ function FitBuilder({
                   addUnbounded("Cargo", s.id);
                 }}
               />
+            </div>
+
+            <div className="fit-section">
+              <button type="button" className="fit-section-header" onClick={() => toggleSection("assets")}>
+                <ChevronDown size={14} strokeWidth={2} className={expandedSections.has("assets") ? "" : "fit-section-chevron-closed"} />
+                In Assets
+              </button>
+              {expandedSections.has("assets") && (
+                <div className="fit-section-body">
+                  {characters.length === 0 ? (
+                    <p className="detail-empty">No characters logged in.</p>
+                  ) : neededItems.length === 0 ? (
+                    <p className="detail-empty">Pick a ship or add items to this fit first.</p>
+                  ) : (
+                    <>
+                      <p className="settings-section-hint">
+                        Only unattached stock counts here - a hangar, a container, asset safety. Anything already
+                        fitted or stowed on a different ship doesn't show, since it isn't free to use for this build.
+                      </p>
+                      <div className="fit-assets-origin">
+                        <span>Character</span>
+                        <CharacterSelectorStrip characters={characters} selectedId={assetsCharacterId} onSelect={setAssetsCharacterId} />
+                      </div>
+                      {assetsCharacterId != null && assetsLoading.has(assetsCharacterId) ? (
+                        <p className="detail-empty">Checking assets...</p>
+                      ) : assetMatchesByType.size === 0 ? (
+                        <p className="detail-empty">No items in assets.</p>
+                      ) : (
+                        <div className="fit-assets-list">
+                          {neededItems.map((item) => {
+                            const matches = assetMatchesByType.get(item.typeId) ?? [];
+                            return (
+                              <div key={item.typeId} className="fit-assets-item">
+                                <div className="fit-assets-item-head">
+                                  <img src={typeIconUrl(item.typeId)} alt="" className="market-browser-row-icon" />
+                                  <span>
+                                    {item.name}
+                                    {item.neededQty > 1 ? ` x${item.neededQty}` : ""}
+                                  </span>
+                                </div>
+                                {matches.length === 0 ? (
+                                  <p className="fit-assets-item-empty">Not in assets.</p>
+                                ) : (
+                                  <ul className="fit-assets-locations">
+                                    {matches.map((m, i) => (
+                                      <li key={i}>
+                                        <span className="fit-assets-location-name">{m.locationName}</span>
+                                        <span className="fit-assets-location-qty">x{m.quantity.toLocaleString()}</span>
+                                        <span className="fit-assets-location-jumps">{jumpsLabel(m.systemId)}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}

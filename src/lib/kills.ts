@@ -214,6 +214,12 @@ export function queryKillReports(category: KillReportCategory): Promise<KillEntr
   return invoke("query_kill_reports", { category });
 }
 
+/** Every locally-recorded kill of one specific victim ship type - "search by
+ * ship" (e.g. every Tengu death VESPER's local kill history has seen). */
+export function queryKillsByShipType(typeId: number): Promise<KillEntry[]> {
+  return invoke("query_kills_by_ship_type", { typeId });
+}
+
 export interface RankingEntry {
   id: number;
   name: string;

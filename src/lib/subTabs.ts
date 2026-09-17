@@ -22,10 +22,12 @@ export const SUB_TABS: Record<string, SubTabInfo[]> = {
   "fittings-fleets": [
     { id: "library", label: "My Fits" },
     { id: "builder", label: "New Fit" },
+    { id: "ships", label: "My Ships" },
   ],
   wallet: [
     { id: "browser", label: "Market Browser" },
     { id: "marketcompare", label: "Market Compare" },
+    { id: "shipscanner", label: "Ship Scanner" },
     { id: "itemdb", label: "Item Database" },
     { id: "appraisal", label: "Appraisal" },
     { id: "screener", label: "Screener" },

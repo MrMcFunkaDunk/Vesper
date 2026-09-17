@@ -871,6 +871,48 @@ pub async fn get_category_groups(app: tauri::AppHandle, client: &reqwest::Client
     .map_err(|e| format!("category groups task failed: {e}"))?
 }
 
+/// Same shape as get_category_groups, but each group's count only includes
+/// hulls at one specific meta level (or every hull when meta_group_id is
+/// None) - the Ship Scanner's "pick tech level first, then see how many
+/// hulls of each class actually match" check, so a class with zero hulls at
+/// that level (e.g. no Storyline Titans) simply doesn't appear rather than
+/// dead-ending a scan on an empty result.
+pub async fn get_category_groups_by_meta(
+    app: tauri::AppHandle,
+    client: &reqwest::Client,
+    category_id: i64,
+    meta_group_id: Option<i64>,
+) -> Result<Vec<GroupSummary>, String> {
+    let path = ensure_synced(&app, client).await?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<GroupSummary>, String> {
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open market database: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT g.id, g.name, COUNT(DISTINCT t.id) AS item_count \
+                 FROM item_groups g \
+                 JOIN types t ON t.group_id = g.id \
+                 LEFT JOIN meta_types mt ON mt.type_id = t.id \
+                 WHERE g.category_id = ?1 AND (?2 IS NULL OR mt.meta_group_id = ?2) \
+                 GROUP BY g.id \
+                 HAVING item_count > 0 \
+                 ORDER BY g.name",
+            )
+            .map_err(|e| format!("failed to query category groups by meta: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![category_id, meta_group_id], |row| {
+                Ok(GroupSummary { id: row.get(0)?, name: row.get(1)?, item_count: row.get(2)? })
+            })
+            .map_err(|e| format!("failed to query category groups by meta: {e}"))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read group row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("category groups by meta task failed: {e}"))?
+}
+
 /// Every item filed directly under one leaf group - same query shape as
 /// get_market_group_types, just keyed by item group instead of market
 /// group so it also covers items with no market listing at all.
@@ -1970,6 +2012,129 @@ pub struct MarketHistoryPoint {
 /// year or more of data in a single (non-paginated) response.
 pub async fn fetch_region_history(client: &reqwest::Client, region_id: i64, type_id: i64) -> Result<Vec<MarketHistoryPoint>, String> {
     public_get::<Vec<MarketHistoryPoint>>(client, &format!("/markets/{region_id}/history/?type_id={type_id}")).await
+}
+
+#[derive(Serialize)]
+pub struct ShipScanShip {
+    pub type_id: i64,
+    pub type_name: String,
+    /// 1=Tech I, 2=Tech II, 3=Storyline, 4=Faction/Pirate, 14=Tech III - null
+    /// when this hull has no meta_types row at all (unclassified/very new).
+    pub meta_group_id: Option<i64>,
+    pub volume_sold: i64,
+    /// Count of open SELL orders only (not buy) - the Ship Scanner's
+    /// "Sell Orders" column, a market-depth signal paired with Best Sell.
+    pub sell_order_count: i64,
+    pub best_sell: Option<f64>,
+    pub best_buy: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct ShipScanHub {
+    pub region_id: i64,
+    pub ships: Vec<ShipScanShip>,
+}
+
+#[derive(Serialize)]
+pub struct ShipScanResult {
+    pub hubs: Vec<ShipScanHub>,
+    pub hull_count: i64,
+    pub feeds_processed: i64,
+}
+
+/// Caps how many (hub, hull) order-book + history pairs are in flight at
+/// once - a big class scanned across all 5 hubs (e.g. 51 Frigates x 5 = 255
+/// pairs) would otherwise fire that many ESI requests simultaneously.
+const SHIP_SCAN_CONCURRENCY: usize = 12;
+
+/// The Ship Scanner tab's core query: every hull in one ship-hull group
+/// (optionally narrowed to one meta level - Tech I/II/III, Faction/Pirate,
+/// Storyline), ranked by recent sales volume in each of the given regions.
+/// Verified locally before building: types.group_id is the real SDE ship
+/// class (categoryID 6's groups - Frigate, Cruiser, Battleship, etc.), and
+/// meta_types.meta_group_id already puts Navy Issue AND pirate-faction hulls
+/// in the same bucket (4) alongside each other - confirmed against Gila,
+/// Vexor Navy Issue, Vigilant, Stratios all sharing meta_group_id 4 - so
+/// there's no separate "pirate" id to filter on beyond that shared one.
+pub async fn scan_ship_market(
+    app: &tauri::AppHandle,
+    client: &reqwest::Client,
+    group_id: i64,
+    meta_group_id: Option<i64>,
+    region_ids: Vec<i64>,
+    days: i64,
+    top_n: i64,
+) -> Result<ShipScanResult, String> {
+    let path = ensure_synced(app, client).await?;
+    let candidates: Vec<(i64, String, Option<i64>)> = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<(i64, String, Option<i64>)>, String> {
+        let conn = rusqlite::Connection::open(&path).map_err(|e| format!("failed to open market database: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT t.id, t.name, mt.meta_group_id \
+                 FROM types t LEFT JOIN meta_types mt ON mt.type_id = t.id \
+                 WHERE t.group_id = ?1 AND (?2 IS NULL OR mt.meta_group_id = ?2) \
+                 ORDER BY t.name",
+            )
+            .map_err(|e| format!("failed to query ship candidates: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![group_id, meta_group_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|e| format!("failed to query ship candidates: {e}"))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read ship candidate row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("ship candidate query task failed: {e}"))??;
+
+    let hull_count = candidates.len() as i64;
+    let feeds_processed = hull_count * region_ids.len() as i64;
+
+    let units: Vec<(i64, i64, String, Option<i64>)> = region_ids
+        .iter()
+        .flat_map(|&region_id| candidates.iter().map(move |(type_id, name, meta)| (region_id, *type_id, name.clone(), *meta)))
+        .collect();
+
+    let mut by_region: HashMap<i64, Vec<ShipScanShip>> = HashMap::new();
+    let scanned: Vec<(i64, ShipScanShip)> = stream::iter(units)
+        .map(|(region_id, type_id, type_name, meta_group_id)| async move {
+            let (orders, history) = futures::join!(fetch_region_orders(client, region_id, type_id), fetch_region_history(client, region_id, type_id));
+            let orders = orders.unwrap_or_default();
+            let history = history.unwrap_or_default();
+            let (mut best_sell, mut best_buy) = (None, None);
+            let mut sell_order_count: i64 = 0;
+            for o in &orders {
+                if o.is_buy_order {
+                    best_buy = Some(best_buy.map_or(o.price, |m: f64| m.max(o.price)));
+                } else {
+                    best_sell = Some(best_sell.map_or(o.price, |m: f64| m.min(o.price)));
+                    sell_order_count += 1;
+                }
+            }
+            let cutoff = history.len().saturating_sub(days.max(0) as usize);
+            let volume_sold: i64 = history[cutoff..].iter().map(|p| p.volume).sum();
+            (region_id, ShipScanShip { type_id, type_name, meta_group_id, volume_sold, sell_order_count, best_sell, best_buy })
+        })
+        .buffer_unordered(SHIP_SCAN_CONCURRENCY)
+        .collect()
+        .await;
+
+    for (region_id, ship) in scanned {
+        by_region.entry(region_id).or_default().push(ship);
+    }
+
+    let hubs = region_ids
+        .into_iter()
+        .map(|region_id| {
+            let mut ships = by_region.remove(&region_id).unwrap_or_default();
+            ships.sort_by(|a, b| b.volume_sold.cmp(&a.volume_sold));
+            ships.truncate(top_n.max(0) as usize);
+            ShipScanHub { region_id, ships }
+        })
+        .collect();
+
+    Ok(ShipScanResult { hubs, hull_count, feeds_processed })
 }
 
 #[derive(Deserialize, Serialize, Clone)]

@@ -114,6 +114,14 @@ export function getCategoryGroups(categoryId: number): Promise<GroupSummary[]> {
   return invoke("get_category_groups", { categoryId });
 }
 
+/** Same as getCategoryGroups, but each group's item_count only reflects
+ * hulls at one meta level (null = every level) - the Ship Scanner's "pick a
+ * tech level first, then see how many hulls of each class actually match"
+ * check, so a class with zero hulls at that level just doesn't appear. */
+export function getCategoryGroupsByMeta(categoryId: number, metaGroupId: number | null): Promise<GroupSummary[]> {
+  return invoke("get_category_groups_by_meta", { categoryId, metaGroupId });
+}
+
 /** Every item filed directly under one leaf group. */
 export function getGroupItems(groupId: number): Promise<TypeSummary[]> {
   return invoke("get_group_items", { groupId });
@@ -262,6 +270,46 @@ export interface MarketHistoryPoint {
 /** Daily price/volume history for one item in one region. */
 export function getRegionMarketHistory(regionId: number, typeId: number): Promise<MarketHistoryPoint[]> {
   return invoke("get_region_market_history", { regionId, typeId });
+}
+
+export interface ShipScanShip {
+  type_id: number;
+  type_name: string;
+  /** 1=Tech I, 2=Tech II, 3=Storyline, 4=Faction/Pirate, 14=Tech III - null
+   * when this hull has no meta classification at all. */
+  meta_group_id: number | null;
+  volume_sold: number;
+  /** Open SELL orders only (not buy) - a market-depth signal paired with best_sell. */
+  sell_order_count: number;
+  best_sell: number | null;
+  best_buy: number | null;
+}
+
+export interface ShipScanHub {
+  region_id: number;
+  ships: ShipScanShip[];
+}
+
+export interface ShipScanResult {
+  hubs: ShipScanHub[];
+  hull_count: number;
+  feeds_processed: number;
+}
+
+/** The Ship Scanner tab's core query - every hull in one ship-hull group
+ * (types.group_id, e.g. Cruiser), optionally narrowed to one meta level
+ * (metaGroupId - Tech I/II/III, Faction/Pirate, Storyline), ranked by
+ * recent sales volume across the given regions. A manual scan rather than
+ * a live view: a big class across all 5 hubs is genuinely a lot of ESI
+ * calls (hulls x hubs, orders + history each), so it only runs when asked. */
+export function scanShipMarket(
+  groupId: number,
+  metaGroupId: number | null,
+  regionIds: number[],
+  days: number,
+  topN: number,
+): Promise<ShipScanResult> {
+  return invoke("scan_ship_market", { groupId, metaGroupId, regionIds, days, topN });
 }
 
 /** Percent change from one price point to another - the one formula

@@ -1,16 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
-import { searchMarketTypes, getRegionSellMinPrice, getRegionMarketOrders, type TypeSearchMatch, type MarketOrder } from "../lib/market";
+import { searchMarketTypes, getRegionMarketOrders, resolveMarketLocations, type TypeSearchMatch, type MarketOrder } from "../lib/market";
 import { weightedPercentilePrice } from "../lib/mining";
 import { TRADE_HUB_REGIONS, tradeHubName } from "../lib/map";
 import { formatIsk, typeIconUrl } from "../lib/format";
 import { useSortableRows } from "../hooks/useSortableRows";
 import { SortableTh } from "./SortableTh";
+import type { SessionCharacter } from "../lib/eve";
 
 interface RegionPriceRow {
   regionId: number;
   regionName: string;
   price: number | null;
 }
+
+/** One order from any of the 5 hubs, tagged with which hub it came from -
+ * the whole point of the top-20 lists below is that a single ranked list
+ * spanning all 5 hubs can mix them freely (e.g. the first 5 best sells all
+ * sitting in Jita, the next 2 actually cheaper out of Hek). */
+interface RankedOrder {
+  order: MarketOrder;
+  regionId: number;
+  regionName: string;
+}
+
+const TOP_ORDER_LIMIT = 20;
 
 const PRICE_BASES = [
   { id: "min", label: "Sell Min" },
@@ -19,14 +32,18 @@ const PRICE_BASES = [
 ] as const;
 type PriceBasisId = (typeof PRICE_BASES)[number]["id"];
 
-function MarketCompareTab() {
+interface MarketCompareTabProps {
+  characters: SessionCharacter[];
+}
+
+function MarketCompareTab({ characters }: MarketCompareTabProps) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selected, setSelected] = useState<TypeSearchMatch | null>(null);
   const [priceBasis, setPriceBasis] = useState<PriceBasisId>("min");
-  const [minRows, setMinRows] = useState<RegionPriceRow[] | null>(null);
   const [orderBooks, setOrderBooks] = useState<Map<number, MarketOrder[]> | null>(null);
+  const [locationNames, setLocationNames] = useState<Record<number, string>>({});
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -53,38 +70,16 @@ function MarketCompareTab() {
     };
   }, [query]);
 
-  // Sell-min prices don't depend on priceBasis at all, so they're fetched
-  // once per selected item via the same targeted call this always used.
+  // Full order books for all 5 hubs, fetched once per selected item -
+  // unconditionally now, since the top-20 sell/buy lists need every
+  // individual order regardless of which price basis the hub summary
+  // table is showing (there's no cheaper partial fetch that still covers
+  // both views). Toggling the price basis afterwards just re-walks this
+  // same already-fetched data (see weightedPercentilePrice) rather than
+  // re-hitting ESI for all 5 regions again.
   useEffect(() => {
-    setMinRows(null);
     setOrderBooks(null);
     if (!selected) return;
-    let cancelled = false;
-    Promise.all(
-      TRADE_HUB_REGIONS.map(
-        async (h): Promise<RegionPriceRow> => ({
-          regionId: h.regionId,
-          regionName: h.regionName,
-          price: await getRegionSellMinPrice(h.regionId, selected.id).catch(() => null),
-        }),
-      ),
-    ).then((results) => {
-      if (!cancelled) setMinRows(results);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [selected]);
-
-  // Full order books are only needed for the percentile modes, and only
-  // fetched once per selected item - lazily, so switching straight to a
-  // percentile basis fetches them, but staying on "Sell Min" never pays
-  // for it. Once fetched they're cached here, so toggling between 90th
-  // and 98th afterwards just re-walks the same already-fetched orders
-  // (see weightedPercentilePrice) instead of re-hitting ESI for all 5
-  // regions again.
-  useEffect(() => {
-    if (!selected || priceBasis === "min" || orderBooks) return;
     let cancelled = false;
     Promise.all(
       TRADE_HUB_REGIONS.map(async (h): Promise<readonly [number, MarketOrder[]]> => [h.regionId, await getRegionMarketOrders(h.regionId, selected.id).catch(() => [])]),
@@ -94,18 +89,20 @@ function MarketCompareTab() {
     return () => {
       cancelled = true;
     };
-  }, [selected, priceBasis, orderBooks]);
+  }, [selected]);
 
   const rows: RegionPriceRow[] | null = useMemo(() => {
-    if (priceBasis === "min") return minRows;
     if (!orderBooks) return null;
-    const percentile = priceBasis === "p98" ? 98 : 90;
-    return TRADE_HUB_REGIONS.map((h) => ({
-      regionId: h.regionId,
-      regionName: h.regionName,
-      price: weightedPercentilePrice(orderBooks.get(h.regionId) ?? [], percentile, "sell"),
-    }));
-  }, [priceBasis, minRows, orderBooks]);
+    return TRADE_HUB_REGIONS.map((h) => {
+      const book = orderBooks.get(h.regionId) ?? [];
+      if (priceBasis === "min") {
+        const sellPrices = book.filter((o) => !o.is_buy_order).map((o) => o.price);
+        return { regionId: h.regionId, regionName: h.regionName, price: sellPrices.length > 0 ? Math.min(...sellPrices) : null };
+      }
+      const percentile = priceBasis === "p98" ? 98 : 90;
+      return { regionId: h.regionId, regionName: h.regionName, price: weightedPercentilePrice(book, percentile, "sell") };
+    });
+  }, [orderBooks, priceBasis]);
 
   const priced = rows?.filter((r) => r.price != null) ?? [];
   const cheapest = priced.length > 0 ? Math.min(...priced.map((r) => r.price!)) : null;
@@ -120,6 +117,88 @@ function MarketCompareTab() {
     "price",
     "asc",
   );
+
+  /** The best 20 sell orders (cheapest first - what you'd actually buy at)
+   * and best 20 buy orders (highest first - what you'd actually sell into)
+   * across all 5 hubs combined, each still tagged with its own hub so two
+   * orders at the same price from different hubs stay distinguishable. */
+  const { topSells, topBuys } = useMemo(() => {
+    if (!orderBooks) return { topSells: [] as RankedOrder[], topBuys: [] as RankedOrder[] };
+    const all: RankedOrder[] = [];
+    for (const h of TRADE_HUB_REGIONS) {
+      for (const order of orderBooks.get(h.regionId) ?? []) {
+        all.push({ order, regionId: h.regionId, regionName: h.regionName });
+      }
+    }
+    const topSells = all
+      .filter((r) => !r.order.is_buy_order)
+      .sort((a, b) => a.order.price - b.order.price)
+      .slice(0, TOP_ORDER_LIMIT);
+    const topBuys = all
+      .filter((r) => r.order.is_buy_order)
+      .sort((a, b) => b.order.price - a.order.price)
+      .slice(0, TOP_ORDER_LIMIT);
+    return { topSells, topBuys };
+  }, [orderBooks]);
+
+  useEffect(() => {
+    const ids = [...new Set([...topSells, ...topBuys].map((r) => r.order.location_id))];
+    if (ids.length === 0 || characters.length === 0) {
+      setLocationNames({});
+      return;
+    }
+    let cancelled = false;
+    resolveMarketLocations(characters[0].id, ids)
+      .then((names) => {
+        if (!cancelled) setLocationNames(names);
+      })
+      .catch(() => {
+        if (!cancelled) setLocationNames({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [topSells, topBuys, characters]);
+
+  function stationName(order: MarketOrder): string {
+    return locationNames[order.location_id] ?? `Station #${order.location_id}`;
+  }
+
+  function renderOrderTable(title: string, orders: RankedOrder[], priceClass: string) {
+    return (
+      <div className="market-browser-book">
+        <p className="wh-side-label">{title}</p>
+        {orders.length === 0 ? (
+          <p className="detail-empty">No orders found.</p>
+        ) : (
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th className="data-table-numeric">#</th>
+                  <th className="data-table-numeric">Price</th>
+                  <th>Trade Hub</th>
+                  <th>Station</th>
+                  <th className="data-table-numeric">Volume</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((r, i) => (
+                  <tr key={r.order.order_id}>
+                    <td className="data-table-numeric">{i + 1}</td>
+                    <td className={`data-table-numeric ${priceClass}`}>{formatIsk(r.order.price)}</td>
+                    <td>{tradeHubName(r.regionName)}</td>
+                    <td>{stationName(r.order)}</td>
+                    <td className="data-table-numeric">{r.order.volume_remain.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="industry-production">
@@ -215,6 +294,16 @@ function MarketCompareTab() {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          <p className="wh-side-label">Top {TOP_ORDER_LIMIT} Orders Across All Trade Hubs</p>
+          {!orderBooks ? (
+            <p className="detail-empty">Loading orders...</p>
+          ) : (
+            <div className="market-browser-books">
+              {renderOrderTable(`Best Sell Orders (Buy From Here)`, topSells, "wallet-amount-negative")}
+              {renderOrderTable(`Best Buy Orders (Sell To Here)`, topBuys, "wallet-amount-positive")}
             </div>
           )}
         </div>

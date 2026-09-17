@@ -197,10 +197,10 @@ function MarketHistoryChart({ points, days = 90 }: MarketHistoryChartProps) {
             <thead>
               <tr>
                 <th>Date</th>
-                <th className="data-table-numeric">Average</th>
-                <th className="data-table-numeric">High</th>
-                <th className="data-table-numeric">Low</th>
-                <th className="data-table-numeric">Volume</th>
+                <th className="data-table-numeric market-history-grid-average">Average</th>
+                <th className="data-table-numeric market-history-grid-high">High</th>
+                <th className="data-table-numeric market-history-grid-low">Low</th>
+                <th className="data-table-numeric market-history-grid-volume">Volume</th>
                 <th className="data-table-numeric">Orders</th>
               </tr>
             </thead>
@@ -208,10 +208,10 @@ function MarketHistoryChart({ points, days = 90 }: MarketHistoryChartProps) {
               {[...recent].reverse().map((p) => (
                 <tr key={p.date}>
                   <td>{p.date}</td>
-                  <td className="data-table-numeric">{formatIsk(p.average)}</td>
-                  <td className="data-table-numeric">{formatIsk(p.highest)}</td>
-                  <td className="data-table-numeric">{formatIsk(p.lowest)}</td>
-                  <td className="data-table-numeric">{p.volume.toLocaleString()}</td>
+                  <td className="data-table-numeric market-history-grid-average">{formatIsk(p.average)}</td>
+                  <td className="data-table-numeric market-history-grid-high">{formatIsk(p.highest)}</td>
+                  <td className="data-table-numeric market-history-grid-low">{formatIsk(p.lowest)}</td>
+                  <td className="data-table-numeric market-history-grid-volume">{p.volume.toLocaleString()}</td>
                   <td className="data-table-numeric">{p.order_count.toLocaleString()}</td>
                 </tr>
               ))}

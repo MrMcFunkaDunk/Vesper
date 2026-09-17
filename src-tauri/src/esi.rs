@@ -1000,6 +1000,7 @@ struct EsiConstellationInfo {
 static SYSTEM_REGION_CACHE: LazyLock<Mutex<HashMap<i64, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static SYSTEM_CONSTELLATION_NAME_CACHE: LazyLock<Mutex<HashMap<i64, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static LOCATION_REGION_CACHE: LazyLock<Mutex<HashMap<i64, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static LOCATION_SYSTEM_CACHE: LazyLock<Mutex<HashMap<i64, i64>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 async fn fetch_region_for_system(client: &reqwest::Client, system_id: i64) -> Option<String> {
     if let Some(region) = SYSTEM_REGION_CACHE.lock().unwrap().get(&system_id).cloned() {
@@ -1026,17 +1027,14 @@ async fn fetch_constellation_for_system(client: &reqwest::Client, system_id: i64
 }
 
 /// Resolves an asset's top-level location (station or player structure) to
-/// its region name. Stations are public; structures need the character's own
-/// token and only resolve if they're on that structure's access list -
-/// unresolvable ones fall back to "Unknown Region" for that call, but that
-/// failure is deliberately NOT cached (only real resolutions are): a
-/// structure that fails now (missing scope, ACL, transient error) can
-/// legitimately succeed on a later attempt, and this cache lives for the
-/// whole process lifetime - caching the failure would permanently freeze
-/// "Unknown Region" for that id even after whatever caused it is fixed.
-async fn fetch_location_region(client: &reqwest::Client, access_token: &str, location_id: i64) -> String {
-    if let Some(region) = LOCATION_REGION_CACHE.lock().unwrap().get(&location_id).cloned() {
-        return region;
+/// its solar system id - shared by fetch_location_region (region needs the
+/// system as an intermediate step anyway) and the "In Assets" fit-item
+/// search's jump-distance column, which needs the system id itself. Stations
+/// are public; structures need the character's own token and only resolve
+/// if they're on that structure's access list.
+async fn fetch_location_system_id(client: &reqwest::Client, access_token: &str, location_id: i64) -> Option<i64> {
+    if let Some(sid) = LOCATION_SYSTEM_CACHE.lock().unwrap().get(&location_id).cloned() {
+        return Some(sid);
     }
     // Player structures always use ids far beyond a station's range - skip
     // the guaranteed-404 station lookup for those rather than needlessly
@@ -1051,7 +1049,20 @@ async fn fetch_location_region(client: &reqwest::Client, access_token: &str, loc
     } else {
         fetch_structure_info(client, access_token, location_id).await.map(|s| s.solar_system_id)
     };
-    let Some(sid) = system_id else {
+    // Deliberately not caching a failure (missing scope, ACL, transient
+    // error) - a structure that fails now can legitimately succeed later,
+    // and this cache lives for the whole process lifetime.
+    if let Some(sid) = system_id {
+        LOCATION_SYSTEM_CACHE.lock().unwrap().insert(location_id, sid);
+    }
+    system_id
+}
+
+async fn fetch_location_region(client: &reqwest::Client, access_token: &str, location_id: i64) -> String {
+    if let Some(region) = LOCATION_REGION_CACHE.lock().unwrap().get(&location_id).cloned() {
+        return region;
+    }
+    let Some(sid) = fetch_location_system_id(client, access_token, location_id).await else {
         return "Unknown Region".to_string();
     };
     let Some(region) = fetch_region_for_system(client, sid).await else {
@@ -1071,6 +1082,26 @@ async fn fetch_location_regions(client: &reqwest::Client, access_token: &str, lo
             futures::future::join_all(chunk.iter().map(|&id| async move { (id, fetch_location_region(client, access_token, id).await) }))
                 .await;
         merged.extend(results);
+    }
+    merged
+}
+
+/// Same batching as fetch_location_regions, but for the raw system id
+/// instead - shares LOCATION_SYSTEM_CACHE with it, so calling both on the
+/// same location list (as fetch_character_assets does, for region_name and
+/// solar_system_id respectively) only resolves each location's station/
+/// structure lookup once.
+async fn fetch_location_systems(client: &reqwest::Client, access_token: &str, location_ids: &[i64]) -> HashMap<i64, i64> {
+    let mut unique: Vec<i64> = location_ids.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    let mut merged = HashMap::new();
+    for chunk in unique.chunks(TYPE_DETAIL_CONCURRENCY) {
+        let results = futures::future::join_all(
+            chunk.iter().map(|&id| async move { (id, fetch_location_system_id(client, access_token, id).await) }),
+        )
+        .await;
+        merged.extend(results.into_iter().filter_map(|(id, sid)| sid.map(|s| (id, s))));
     }
     merged
 }
@@ -2251,6 +2282,11 @@ pub struct AssetEntry {
     /// "these items all have location_id == that ship's item_id" and show
     /// them as its fit/cargo/drone bay instead.
     pub location_id: i64,
+    /// The root location's solar system - lets the frontend compute jump
+    /// distance to it (the "In Assets" fit-item search) without a second
+    /// round trip. 0 when the system couldn't be resolved (e.g. a structure
+    /// outside this character's access).
+    pub solar_system_id: i64,
 }
 
 #[derive(Serialize, Default)]
@@ -2289,6 +2325,11 @@ pub async fn fetch_character_assets(app: &tauri::AppHandle, client: &reqwest::Cl
     // which would otherwise blank out every other item's name too.
     let item_locations: HashMap<i64, i64> = raw.iter().map(|a| (a.item_id, a.location_id)).collect();
     let root_locations: Vec<i64> = raw.iter().map(|a| resolve_root_location(&item_locations, a.location_id)).collect();
+    // Systems first, region second - fetch_location_region resolves the
+    // same station/structure via the shared LOCATION_SYSTEM_CACHE, so this
+    // ordering means the region pass below is pure cache hits, not a second
+    // round of ESI lookups.
+    let systems = fetch_location_systems(client, &access_token, &root_locations).await;
     let regions = fetch_location_regions(client, &access_token, &root_locations).await;
 
     let mut lookup_ids = type_ids.clone();
@@ -2309,6 +2350,7 @@ pub async fn fetch_character_assets(app: &tauri::AppHandle, client: &reqwest::Cl
             location_name: names.get(&root_location).cloned().unwrap_or_else(|| location_fallback_name(root_location)),
             location_flag: a.location_flag,
             location_id: a.location_id,
+            solar_system_id: systems.get(&root_location).copied().unwrap_or(0),
         })
         .collect();
     entries.sort_by(|a, b| a.type_name.cmp(&b.type_name));

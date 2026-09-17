@@ -585,6 +585,11 @@ pub async fn query_kill_reports(app: AppHandle, category: String) -> Result<Vec<
 }
 
 #[tauri::command]
+pub async fn query_kills_by_ship_type(app: AppHandle, type_id: i64) -> Result<Vec<kills::KillEntry>, String> {
+    kill_history::query_kills_by_ship_type(app, type_id).await
+}
+
+#[tauri::command]
 pub async fn get_kill_top_stats(app: AppHandle, window_minutes: i64) -> Result<kill_history::TopStatsResult, String> {
     kill_history::get_top_stats(app, window_minutes).await
 }
@@ -867,6 +872,11 @@ pub async fn get_system_gates(state: State<'_, AppState>, system_id: i64) -> Res
 }
 
 #[tauri::command]
+pub async fn get_jump_counts(state: State<'_, AppState>, origin: i64, destinations: Vec<i64>) -> Result<std::collections::HashMap<i64, i64>, String> {
+    Ok(route::get_jump_counts(&state.http_client, origin, &destinations).await)
+}
+
+#[tauri::command]
 pub async fn get_item_categories(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<market::CategorySummary>, String> {
     market::get_item_categories(app, &state.http_client).await
 }
@@ -874,6 +884,16 @@ pub async fn get_item_categories(app: AppHandle, state: State<'_, AppState>) -> 
 #[tauri::command]
 pub async fn get_category_groups(app: AppHandle, state: State<'_, AppState>, category_id: i64) -> Result<Vec<market::GroupSummary>, String> {
     market::get_category_groups(app, &state.http_client, category_id).await
+}
+
+#[tauri::command]
+pub async fn get_category_groups_by_meta(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    category_id: i64,
+    meta_group_id: Option<i64>,
+) -> Result<Vec<market::GroupSummary>, String> {
+    market::get_category_groups_by_meta(app, &state.http_client, category_id, meta_group_id).await
 }
 
 #[tauri::command]
@@ -1044,6 +1064,19 @@ pub async fn get_region_market_history(
     type_id: i64,
 ) -> Result<Vec<market::MarketHistoryPoint>, String> {
     market::fetch_region_history(&state.http_client, region_id, type_id).await
+}
+
+#[tauri::command]
+pub async fn scan_ship_market(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    group_id: i64,
+    meta_group_id: Option<i64>,
+    region_ids: Vec<i64>,
+    days: i64,
+    top_n: i64,
+) -> Result<market::ShipScanResult, String> {
+    market::scan_ship_market(&app, &state.http_client, group_id, meta_group_id, region_ids, days, top_n).await
 }
 
 #[tauri::command]

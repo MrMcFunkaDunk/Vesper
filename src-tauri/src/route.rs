@@ -31,6 +31,33 @@ async fn get_route(client: &reqwest::Client, origin: i64, destination: i64, avoi
     response.json::<Vec<i64>>().await.map_err(|e| format!("failed to parse ESI route response: {e}"))
 }
 
+/// Jump count from one origin to every one of a batch of destinations - the
+/// "In Assets" fit-item search's distance column, one ESI route call per
+/// distinct destination system (concurrent, same-system dedup) rather than
+/// per matched asset row, since many rows commonly share a system. A
+/// destination ESI can't route to (no connection, or an unreachable
+/// wormhole-only gap) is simply absent from the result rather than failing
+/// the whole batch.
+pub async fn get_jump_counts(client: &reqwest::Client, origin: i64, destinations: &[i64]) -> HashMap<i64, i64> {
+    let mut unique: Vec<i64> = destinations.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+
+    futures::future::join_all(unique.into_iter().map(|dest| async move {
+        if dest == origin {
+            return (dest, Some(0i64));
+        }
+        match get_route(client, origin, dest, &[], "shortest").await {
+            Ok(route) if !route.is_empty() => (dest, Some(route.len() as i64 - 1)),
+            _ => (dest, None),
+        }
+    }))
+    .await
+    .into_iter()
+    .filter_map(|(id, jumps)| jumps.map(|j| (id, j)))
+    .collect()
+}
+
 /// Stitches together a route through every waypoint in order (A -> B -> C
 /// becomes leg A->B followed by leg B->C), dropping each leg's duplicate
 /// boundary system so the combined path doesn't repeat a system where two

@@ -26,6 +26,7 @@ import { NAV_ITEMS } from "./Sidebar";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import SettingsSyncPanel from "./SettingsSyncPanel";
 import TrackedEntitiesPanel from "./TrackedEntitiesPanel";
+import UpdateHistoryPanel from "./UpdateHistoryPanel";
 
 interface SettingsPageProps {
   session: Session;
@@ -33,7 +34,7 @@ interface SettingsPageProps {
   onLogout: (id: number) => void;
 }
 
-type SettingsTab = "general" | "sounds" | "display" | "sync";
+type SettingsTab = "general" | "sounds" | "display" | "sync" | "updates";
 
 /** Strips the "esi-"/".v1" boilerplate every scope carries and turns the
  * dot/underscore-separated remainder into something readable, e.g.
@@ -215,9 +216,14 @@ function SettingsPage({ session, onAdd, onLogout }: SettingsPageProps) {
           <button type="button" className={`kills-tab ${tab === "sync" ? "kills-tab-active" : ""}`} onClick={() => setTab("sync")}>
             Settings Sync
           </button>
+          <button type="button" className={`kills-tab ${tab === "updates" ? "kills-tab-active" : ""}`} onClick={() => setTab("updates")}>
+            Updates
+          </button>
         </div>
 
         {tab === "sync" && <SettingsSyncPanel characters={session.characters} />}
+
+        {tab === "updates" && <UpdateHistoryPanel />}
 
         {tab === "general" && (
           <>

@@ -1102,6 +1102,33 @@ pub async fn query_kill_reports(app: tauri::AppHandle, category: String) -> Resu
     .map_err(|e| format!("kill report query task failed: {e}"))?
 }
 
+/// Every locally-recorded kill of one specific victim ship type - "search by
+/// ship" for Kill Reports (e.g. every Tengu death this app has seen), same
+/// store and result shape as query_kill_reports above, just parameterized
+/// by a picked type id instead of a fixed category string.
+pub async fn query_kills_by_ship_type(app: tauri::AppHandle, type_id: i64) -> Result<Vec<KillEntry>, String> {
+    let path = db_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<KillEntry>, String> {
+        let conn = open_db(&path)?;
+        ensure_schema(&conn)?;
+
+        let mut stmt = conn
+            .prepare("SELECT * FROM kill_history WHERE ship_type_id = ?1 ORDER BY killmail_time DESC LIMIT ?2")
+            .map_err(|e| format!("failed to prepare ship-type kills query: {e}"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![type_id, KILL_REPORT_LIMIT], row_to_kill_entry)
+            .map_err(|e| format!("failed to query kills by ship type: {e}"))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| format!("failed to read kill row: {e}"))?);
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("ship-type kills query task failed: {e}"))?
+}
+
 /// Cap on how many locally-recorded kills get merged into a system's
 /// killboard page 1 - generous enough to cover a genuinely busy system's
 /// last few hours without turning "recent" into "the whole day".

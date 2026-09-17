@@ -18,6 +18,7 @@ import { useDefaultTradeHub } from "../hooks/useDefaultTradeHub";
 import CharacterSelectorStrip from "./CharacterSelectorStrip";
 import MarketBrowser, { type MarketItemRef } from "./MarketBrowser";
 import MarketCompareTab from "./MarketCompareTab";
+import ShipScannerTab from "./ShipScannerTab";
 import ItemDatabase from "./ItemDatabase";
 import Appraisal from "./Appraisal";
 import Screener from "./Screener";
@@ -34,6 +35,7 @@ import { SortableTh } from "./SortableTh";
 type WalletMarketTab =
   | "browser"
   | "marketcompare"
+  | "shipscanner"
   | "itemdb"
   | "appraisal"
   | "screener"
@@ -47,6 +49,7 @@ type WalletMarketTab =
 const TABS: { id: WalletMarketTab; label: string }[] = [
   { id: "browser", label: "Market Browser" },
   { id: "marketcompare", label: "Market Compare" },
+  { id: "shipscanner", label: "Ship Scanner" },
   { id: "itemdb", label: "Item Database" },
   { id: "appraisal", label: "Appraisal" },
   { id: "screener", label: "Screener" },
@@ -361,7 +364,9 @@ function WalletMarketPage({
             onConsumeInitialItem={onConsumeInitialMarketItem}
           />
         ) : tab === "marketcompare" ? (
-          <MarketCompareTab />
+          <MarketCompareTab characters={characters} />
+        ) : tab === "shipscanner" ? (
+          <ShipScannerTab characters={characters} />
         ) : tab === "itemdb" ? (
           <ItemDatabase onSelectShip={onFitShip} />
         ) : tab === "appraisal" ? (

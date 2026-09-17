@@ -4,6 +4,8 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useNotificationCenter } from "../hooks/useNotificationCenter";
+import { usePersistentState } from "../hooks/usePersistentState";
+import { WHATS_NEW_PENDING_KEY, type PendingWhatsNew } from "../lib/whatsNew";
 
 /** Where the release itself (installers, sig files, release notes) actually
  * lives - releases.yml publishes every tagged build here as "v<version>". */
@@ -21,6 +23,7 @@ function UpdateBanner() {
   const [installing, setInstalling] = useState(false);
   const reportError = useErrorReporter();
   const { addNotification } = useNotificationCenter();
+  const [, setPendingWhatsNew] = usePersistentState<PendingWhatsNew | null>(WHATS_NEW_PENDING_KEY, null);
 
   useEffect(() => {
     check()
@@ -46,6 +49,10 @@ function UpdateBanner() {
     setInstalling(true);
     try {
       await update.downloadAndInstall();
+      // Stashed now, while the notes are already in hand from the update
+      // check - the relaunched app reads this back to show What's New
+      // without a second network round trip.
+      setPendingWhatsNew({ version: update.version, body: update.body ?? "" });
       await relaunch();
     } catch (err) {
       setInstalling(false);

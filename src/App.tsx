@@ -5,6 +5,7 @@ import MainContent from "./components/MainContent";
 import Dashboard from "./components/Dashboard";
 import ProximityFlashOverlay from "./components/ProximityFlashOverlay";
 import UpdateBanner from "./components/UpdateBanner";
+import WhatsNewModal from "./components/WhatsNewModal";
 
 // Every other page is lazy-loaded - each one only needs its (often
 // substantial, e.g. React Flow for the wormhole finder) code once the user
@@ -235,6 +236,7 @@ function App() {
       <div className="shell">
         <ProximityFlashOverlay />
         <UpdateBanner />
+        <WhatsNewModal />
         <ToastStack />
         <Sidebar activeId={activeId} activeSubTab={activeSubTab} onSelect={handleSelectNav} />
         <TopBar

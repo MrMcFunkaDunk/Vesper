@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, Pin, PinOff, Star } from "lucide-react";
-import { getMapData, regionHubColor, regionLabelWithHub, TRADE_HUB_REGIONS, type MapData } from "../lib/map";
+import { getMapData, regionHubColor, regionLabelWithHub, TRADE_HUB_REGIONS, tradeHubName, type MapData } from "../lib/map";
 import { isPriceWidgetOpen, openPriceWidget, closePriceWidget } from "../lib/priceWidget";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import { toCsv, downloadCsv } from "../lib/csvExport";
@@ -172,6 +172,19 @@ interface MarketBrowserProps {
   onConsumeInitialItem?: () => void;
 }
 
+/** One trade hub's row in the Compare Trade Hubs table - same metrics as
+ * the single-region stat cards above the tabs, just computed per hub
+ * instead of only for whichever region is currently selected. */
+interface HubStat {
+  latestAverage: number | null;
+  bestSell: number | null;
+  bestBuy: number | null;
+  spread: number | null;
+  spreadPct: number | null;
+  splitPrice: number | null;
+  avgVolume7d: number | null;
+}
+
 function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: MarketBrowserProps) {
   const [mapData, setMapData] = useState<MapData | null>(null);
   // Two permanently-visible, mutually exclusive pickers rather than a
@@ -227,6 +240,14 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
   const [history, setHistory] = useState<MarketHistoryPoint[] | null>(null);
   const [locationNames, setLocationNames] = useState<Record<number, string>>({});
   const [loadingItem, setLoadingItem] = useState(false);
+
+  // Trade-hub comparison for the Price History view - collapsed and
+  // unfetched by default (10 extra ESI calls, 5 hubs x orders+history), so
+  // it only costs anything once someone actually wants to see all 5 side
+  // by side rather than every time an item's history is opened.
+  const [hubComparisonOpen, setHubComparisonOpen] = useState(false);
+  const [hubStats, setHubStats] = useState<Map<number, HubStat> | null>(null);
+  const [hubStatsLoading, setHubStatsLoading] = useState(false);
 
   useEffect(() => {
     getMapData().then(setMapData).catch(() => {});
@@ -308,6 +329,47 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
       })
       .finally(() => setLoadingItem(false));
   }, [regionId, selectedType]);
+
+  // A new item invalidates any comparison fetched for the last one - closed
+  // and cleared rather than left showing stale numbers under the new name.
+  useEffect(() => {
+    setHubComparisonOpen(false);
+    setHubStats(null);
+  }, [selectedType]);
+
+  useEffect(() => {
+    if (!hubComparisonOpen || !selectedType || hubStats) return;
+    let cancelled = false;
+    setHubStatsLoading(true);
+    Promise.all(
+      TRADE_HUB_REGIONS.map(async (h): Promise<readonly [number, HubStat]> => {
+        const [hubOrders, hubHistory] = await Promise.all([
+          getRegionMarketOrders(h.regionId, selectedType.id).catch(() => []),
+          getRegionMarketHistory(h.regionId, selectedType.id).catch(() => []),
+        ]);
+        const hubSells = hubOrders.filter((o) => !o.is_buy_order).sort((a, b) => a.price - b.price);
+        const hubBuys = hubOrders.filter((o) => o.is_buy_order).sort((a, b) => b.price - a.price);
+        const bestSell = hubSells[0]?.price ?? null;
+        const bestBuy = hubBuys[0]?.price ?? null;
+        const spread = bestSell != null && bestBuy != null ? bestSell - bestBuy : null;
+        const spreadPct = spread != null && bestSell ? (spread / bestSell) * 100 : null;
+        const splitPrice = bestSell != null && bestBuy != null ? (bestSell + bestBuy) / 2 : null;
+        const avgVolume7d =
+          hubHistory.length > 0 ? hubHistory.slice(-7).reduce((sum, p) => sum + p.volume, 0) / Math.min(7, hubHistory.length) : null;
+        const latestAverage = hubHistory.length > 0 ? hubHistory[hubHistory.length - 1].average : null;
+        return [h.regionId, { latestAverage, bestSell, bestBuy, spread, spreadPct, splitPrice, avgVolume7d }];
+      }),
+    )
+      .then((results) => {
+        if (!cancelled) setHubStats(new Map(results));
+      })
+      .finally(() => {
+        if (!cancelled) setHubStatsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hubComparisonOpen, selectedType, hubStats]);
 
   useEffect(() => {
     if (!orders || orders.length === 0 || characters.length === 0) {
@@ -616,6 +678,58 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
                   Export CSV
                 </button>
               </div>
+
+              {itemTab === "history" && (
+                <div className="fit-section market-hub-compare">
+                  <button type="button" className="fit-section-header" onClick={() => setHubComparisonOpen((v) => !v)}>
+                    <ChevronRight size={14} strokeWidth={2} className={hubComparisonOpen ? "market-hub-compare-chevron-open" : undefined} />
+                    Compare Trade Hubs
+                  </button>
+                  {hubComparisonOpen && (
+                    <div className="fit-section-body">
+                      {hubStatsLoading && !hubStats ? (
+                        <p className="detail-empty">Checking all 5 trade hubs...</p>
+                      ) : !hubStats ? null : (
+                        <div className="data-table-wrap">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Trade Hub</th>
+                                <th className="data-table-numeric market-history-grid-average">Average</th>
+                                <th className="data-table-numeric">Spread</th>
+                                <th className="data-table-numeric wallet-amount-negative">Best Sell</th>
+                                <th className="data-table-numeric wallet-amount-positive">Best Buy</th>
+                                <th className="data-table-numeric">Split Price</th>
+                                <th className="data-table-numeric">Avg Vol (7d)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {TRADE_HUB_REGIONS.map((h) => {
+                                const s = hubStats.get(h.regionId);
+                                return (
+                                  <tr key={h.regionId}>
+                                    <td>{tradeHubName(h.regionName)}</td>
+                                    <td className="data-table-numeric market-history-grid-average">
+                                      {s?.latestAverage != null ? formatIsk(s.latestAverage) : "—"}
+                                    </td>
+                                    <td className="data-table-numeric market-stat-value-warning">
+                                      {s?.spread != null ? `${formatIsk(s.spread)}${s.spreadPct != null ? ` (${s.spreadPct.toFixed(1)}%)` : ""}` : "—"}
+                                    </td>
+                                    <td className="data-table-numeric wallet-amount-negative">{s?.bestSell != null ? formatIsk(s.bestSell) : "—"}</td>
+                                    <td className="data-table-numeric wallet-amount-positive">{s?.bestBuy != null ? formatIsk(s.bestBuy) : "—"}</td>
+                                    <td className="data-table-numeric market-stat-value-isk">{s?.splitPrice != null ? formatIsk(s.splitPrice) : "—"}</td>
+                                    <td className="data-table-numeric">{s?.avgVolume7d != null ? Math.round(s.avgVolume7d).toLocaleString() : "—"}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {itemTab === "history" ? (
                 history && <MarketHistoryChart points={history} />
