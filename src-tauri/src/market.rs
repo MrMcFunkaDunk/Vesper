@@ -1105,6 +1105,56 @@ pub async fn get_item_detail(app: tauri::AppHandle, client: &reqwest::Client, ty
     .map_err(|e| format!("item detail task failed: {e}"))?
 }
 
+/// Bulk group+category name lookup for many type_ids at once, straight from
+/// the local synced market database - the same types/item_groups/
+/// item_categories join get_item_detail above uses for one item at a time,
+/// batched here into a single IN(...) query instead of one lookup per type.
+/// A character's asset list can span hundreds of distinct types, so this is
+/// what backs the Assets tab's own "Category" column without turning a big
+/// load into hundreds of individual queries (or, as it replaced, hundreds
+/// of live ESI calls). Missing/unrecognized type_ids are simply absent from
+/// the returned map rather than failing the whole batch.
+pub(crate) async fn get_item_group_and_category_names(
+    app: &tauri::AppHandle,
+    client: &reqwest::Client,
+    type_ids: &[i64],
+) -> HashMap<i64, (String, String)> {
+    let mut unique: Vec<i64> = type_ids.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    if unique.is_empty() {
+        return HashMap::new();
+    }
+    let Ok(path) = ensure_synced(app, client).await else {
+        return HashMap::new();
+    };
+
+    tauri::async_runtime::spawn_blocking(move || -> HashMap<i64, (String, String)> {
+        let Ok(conn) = rusqlite::Connection::open(&path) else {
+            return HashMap::new();
+        };
+        let placeholders = vec!["?"; unique.len()].join(",");
+        let sql = format!(
+            "SELECT t.id, g.name, c.name \
+             FROM types t \
+             JOIN item_groups g ON g.id = t.group_id \
+             JOIN item_categories c ON c.id = g.category_id \
+             WHERE t.id IN ({placeholders})"
+        );
+        let Ok(mut stmt) = conn.prepare(&sql) else {
+            return HashMap::new();
+        };
+        let Ok(rows) = stmt.query_map(rusqlite::params_from_iter(unique.iter()), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        }) else {
+            return HashMap::new();
+        };
+        rows.flatten().map(|(id, group_name, category_name)| (id, (group_name, category_name))).collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 // --- Fit Builder resource math - dogma attribute ids verified against
 // PYFA's own bundled real SDE dump, not guessed. Ship-side capacities vs.
 // module/item-side consumption of the same resource. ------------------

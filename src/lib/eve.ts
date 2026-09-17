@@ -336,10 +336,19 @@ export interface AssetEntry {
   type_id: number;
   type_name: string;
   group_name: string;
+  /** The item's broader market category (e.g. "Ship", "Drone", "Ammunition
+   * & Charges") - group_name above is the finer SDE group (e.g. "Mining
+   * Drone"), too granular for a quick "what kind of thing is this" column. */
+  category_name: string;
   region_name: string;
   quantity: number;
   location_name: string;
   location_flag: string;
+  /** The direct, unresolved location_id - another asset's own item_id when
+   * this sits inside a ship/container rather than straight in a
+   * station/structure. Lets the UI find "everything fitted/stowed on this
+   * specific ship" by matching this against the ship's own item_id. */
+  location_id: number;
 }
 
 export interface CharacterAssets {

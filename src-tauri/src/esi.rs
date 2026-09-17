@@ -980,32 +980,6 @@ async fn fetch_implant_infos(client: &reqwest::Client, type_ids: &[i64]) -> Hash
     results.into_iter().filter_map(|(id, info)| info.map(|i| (id, i))).collect()
 }
 
-/// Any item's group name (e.g. "Cruiser", "Ammo & Charges") - the Assets
-/// tab's "Group" grouping mode, distinct from SKILL_INFO_CACHE only in that
-/// it doesn't also need rank, so it skips the dogma_attributes work.
-static ITEM_GROUP_CACHE: LazyLock<Mutex<HashMap<i64, String>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-async fn fetch_item_group_name(client: &reqwest::Client, type_id: i64) -> Option<String> {
-    if let Some(name) = ITEM_GROUP_CACHE.lock().unwrap().get(&type_id).cloned() {
-        return Some(name);
-    }
-    let detail = public_get::<EsiTypeDogma>(client, &format!("/universe/types/{type_id}/")).await.ok()?;
-    let group_name = fetch_group_name(client, detail.group_id).await?;
-    ITEM_GROUP_CACHE.lock().unwrap().insert(type_id, group_name.clone());
-    Some(group_name)
-}
-
-async fn fetch_item_group_names(client: &reqwest::Client, type_ids: &[i64]) -> HashMap<i64, String> {
-    let mut unique: Vec<i64> = type_ids.to_vec();
-    unique.sort_unstable();
-    unique.dedup();
-    let mut merged = HashMap::new();
-    for chunk in unique.chunks(TYPE_DETAIL_CONCURRENCY) {
-        let results = futures::future::join_all(chunk.iter().map(|&id| async move { (id, fetch_item_group_name(client, id).await) })).await;
-        merged.extend(results.into_iter().filter_map(|(id, name)| name.map(|n| (id, n))));
-    }
-    merged
-}
 
 #[derive(Deserialize)]
 struct EsiStationInfo {
@@ -2260,10 +2234,23 @@ pub struct AssetEntry {
     pub type_id: i64,
     pub type_name: String,
     pub group_name: String,
+    /// The item's broader market category (e.g. "Ship", "Drone",
+    /// "Ammunition & Charges") - group_name above is the finer SDE group
+    /// (e.g. "Mining Drone"), which is too granular for a quick "what kind
+    /// of thing is this" column. Straight from the local market database's
+    /// item_categories table, same source get_item_detail already uses.
+    pub category_name: String,
     pub region_name: String,
     pub quantity: i64,
     pub location_name: String,
     pub location_flag: String,
+    /// The direct, unresolved location_id - another asset's own item_id
+    /// when this sits inside a ship/container rather than straight in a
+    /// station/structure. location_name above walks this all the way up to
+    /// the real root location; this is kept as-is so the frontend can spot
+    /// "these items all have location_id == that ship's item_id" and show
+    /// them as its fit/cargo/drone bay instead.
+    pub location_id: i64,
 }
 
 #[derive(Serialize, Default)]
@@ -2277,7 +2264,7 @@ pub struct CharacterAssets {
 /// a lot of them are other assets in this same list (a container sitting
 /// in a hangar), which /universe/names/ has no concept of - those just
 /// fall back to a raw id rather than failing the whole tab.
-pub async fn fetch_character_assets(client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterAssets, String> {
+pub async fn fetch_character_assets(app: &tauri::AppHandle, client: &reqwest::Client, config: &SsoConfig, character_id: i64) -> Result<CharacterAssets, String> {
     let Some(access_token) = get_access_token(client, config, character_id).await else {
         return Ok(CharacterAssets { needs_reauth: true, ..Default::default() });
     };
@@ -2288,7 +2275,11 @@ pub async fn fetch_character_assets(client: &reqwest::Client, config: &SsoConfig
     };
 
     let type_ids: Vec<i64> = raw.iter().map(|a| a.type_id).collect();
-    let group_names = fetch_item_group_names(client, &type_ids).await;
+    // Local market database (already synced for the Market Browser/Item
+    // Database), not a live ESI call per type - an asset list can span
+    // hundreds of distinct types, and this is the same group+category join
+    // get_item_detail already does for one item, just batched.
+    let group_and_category = crate::market::get_item_group_and_category_names(app, client, &type_ids).await;
 
     // Container/ship-nested assets have a location_id that's actually another
     // asset's item_id, not a real station/structure - walk each up to its
@@ -2311,11 +2302,13 @@ pub async fn fetch_character_assets(client: &reqwest::Client, config: &SsoConfig
             item_id: a.item_id,
             type_id: a.type_id,
             type_name: names.get(&a.type_id).cloned().unwrap_or_else(|| format!("Type #{}", a.type_id)),
-            group_name: group_names.get(&a.type_id).cloned().unwrap_or_else(|| "Unknown".to_string()),
+            group_name: group_and_category.get(&a.type_id).map(|(g, _)| g.clone()).unwrap_or_else(|| "Unknown".to_string()),
+            category_name: group_and_category.get(&a.type_id).map(|(_, c)| c.clone()).unwrap_or_else(|| "Unknown".to_string()),
             region_name: regions.get(&root_location).cloned().unwrap_or_else(|| "Unknown Region".to_string()),
             quantity: a.quantity,
             location_name: names.get(&root_location).cloned().unwrap_or_else(|| location_fallback_name(root_location)),
             location_flag: a.location_flag,
+            location_id: a.location_id,
         })
         .collect();
     entries.sort_by(|a, b| a.type_name.cmp(&b.type_name));

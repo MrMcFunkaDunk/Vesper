@@ -2039,10 +2039,44 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 .dashboard-header,
 .entity-stats-header,
 .detail-panel-header,
-.industry-build-steps-header {
+.industry-build-steps-header,
+.kills-header,
+.wallet-market-header,
+.pi-header,
+.wh-page-header,
+.fittings-page-header,
+.calendar-page-header,
+.mail-page-header,
+.settings-header,
+.map-page-header {
   border-bottom: 1px solid;
   border-image: repeating-linear-gradient(90deg, var(--grid-line) 0 6px, transparent 6px 8px) 1;
-  padding-bottom: 6px;
+}
+
+/* Consistent breathing room on every page header - some of these were
+   plain unpadded blocks before they got a border/box treatment at all, so
+   the title text sat flush against the frame instead of sitting centered
+   within it. Kept separate from the tick-ruler rule above since it's a
+   distinct concern (spacing, not the divider line). */
+.dashboard-header,
+.kills-header,
+.wallet-market-header,
+.pi-header,
+.wh-page-header,
+.fittings-page-header,
+.calendar-page-header,
+.mail-page-header,
+.settings-header,
+.map-page-header {
+  padding: 14px 18px;
+}
+
+.map-page-header h2 {
+  margin: 2px 0 0;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 25px;
+  color: var(--text);
 }
 
 .dashboard-compare-btn {
@@ -2788,6 +2822,32 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   background: var(--bg-elevated-2);
 }
 
+/* "View Fit" - shown on any asset row that has other assets pointing back
+   at it via location_id (a ship's fitted modules/drones/cargo, or a
+   container's contents) - see ShipFitPanel.tsx. */
+.asset-view-fit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated-2);
+  color: var(--text-secondary);
+  font-family: var(--font-label);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.asset-view-fit-btn:hover {
+  color: var(--accent);
+  border-color: var(--border-active);
+}
+
 .asset-abyssal-status {
   display: block;
   font-size: 11px;
@@ -3240,15 +3300,21 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
 
 .character-tabs {
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+
+.character-tabs-row {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 18px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 2px;
+  gap: 8px 10px;
 }
 
 .character-tab {
-  padding: 9px 2px;
+  padding: 8px 14px;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
@@ -4166,6 +4232,21 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
   color: var(--text-muted);
 }
 
+/* Live preview on every tier header (see BuildTreeFlatList) - shown
+   whether the tier is open or closed, so a collapsed one reads as "12
+   items, 62.4M ISK" instead of an empty-looking pill. */
+.industry-build-tier-summary {
+  margin-left: 2px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-muted);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Within tier 2+, groups this tier's rows under the specific parent
    buildable item they're a material for - a tier can hold materials for
    several different parents at once, so each run of rows gets its own
@@ -4354,6 +4435,27 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 .industry-build-checkbox {
   flex-shrink: 0;
   cursor: pointer;
+}
+
+/* Tree View's own per-node expand/collapse control - sits in the exact
+   spot Tier View's checkbox occupies, so both views' Material/Qty/Runs/
+   Total columns land in the same place regardless of which is active. */
+.industry-build-nested-toggle {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.industry-build-nested-toggle:hover {
+  color: var(--text);
 }
 
 /* A real grid, not flex - flex only sizes each column by its own row's
@@ -6433,7 +6535,9 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 
 .kills-watchlist-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 26px;
 }
 
 .kills-secband-bar {
@@ -6541,10 +6645,10 @@ body[data-reduce-motion="true"] .skill-queue-progress-fill {
 @keyframes kills-npc-off-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 var(--danger-soft);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--danger) 65%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 5px transparent;
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--danger) 0%, transparent);
   }
 }
 
@@ -8480,6 +8584,80 @@ img.fit-wheel-clickable:hover {
 .system-stats-body {
   padding: 16px 18px;
   overflow-y: auto;
+}
+
+/* ---------------------------------------------------------------------------
+   SHIP FIT PANEL - reconstructed from the Assets tab (see ShipFitPanel.tsx).
+   Same backdrop/header/close/body shell as the System Stats popup, just its
+   own width and body content.
+   --------------------------------------------------------------------------- */
+
+.ship-fit-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.ship-fit-modal {
+  display: flex;
+  flex-direction: column;
+  width: 640px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 64px);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.ship-fit-slot-group + .ship-fit-slot-group {
+  margin-top: 16px;
+}
+
+.ship-fit-slot-label {
+  margin: 0 0 8px;
+  font-family: var(--font-label);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.ship-fit-slot-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ship-fit-slot-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+}
+
+.ship-fit-slot-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.ship-fit-slot-item-qty {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }
 
 .system-stats-grid {

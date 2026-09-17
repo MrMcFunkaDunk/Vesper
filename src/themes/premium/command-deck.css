@@ -22,7 +22,16 @@
 /* Tactical glass window on the page header - a precise top rule plus a
    faint blue interior glow, instead of Bulkhead's hazard band or Cold
    Ballast's vertical rail. */
-:root[data-theme="command-deck"] .dashboard-header {
+:root[data-theme="command-deck"] .dashboard-header,
+:root[data-theme="command-deck"] .kills-header,
+:root[data-theme="command-deck"] .wallet-market-header,
+:root[data-theme="command-deck"] .pi-header,
+:root[data-theme="command-deck"] .wh-page-header,
+:root[data-theme="command-deck"] .fittings-page-header,
+:root[data-theme="command-deck"] .calendar-page-header,
+:root[data-theme="command-deck"] .mail-page-header,
+:root[data-theme="command-deck"] .settings-header,
+:root[data-theme="command-deck"] .map-page-header {
   border-top: 2px solid var(--accent);
   box-shadow: inset 0 24px 40px -32px var(--accent), inset 1px 1px 0 var(--deck-bevel-light), inset -1px -1px 0 var(--deck-bevel-dark);
 }

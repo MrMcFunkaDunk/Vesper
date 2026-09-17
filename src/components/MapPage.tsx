@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Map as MapIcon } from "lucide-react";
 import MapView from "./MapView";
 import PageTabBar from "./PageTabBar";
 import GateCheck from "./GateCheck";
@@ -72,6 +73,17 @@ function MapPage({
   return (
     <main className="main main-map">
       <div className="map-page-shell">
+        <div className="map-page-header">
+          <p className="eyebrow">
+            <MapIcon size={14} strokeWidth={2} /> Map
+          </p>
+          <h2>Map, Gate &amp; Intel Check</h2>
+          <p className="wh-page-subtitle">
+            A searchable map of New Eden with live kill activity, plus gate-camp checking and local/D-Scan intel tools, so you can see
+            where the action is and plan routes around it.
+          </p>
+        </div>
+
         <PageTabBar pageId="map" tabs={TABS} activeTab={tab} onSelect={(id) => setTab(id as MapTab)} className="map-page-tabs" />
 
         {tab === "map" ? (

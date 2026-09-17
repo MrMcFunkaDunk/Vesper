@@ -95,18 +95,6 @@ function App() {
   // active - see the hook's own comment for why.
   const [multiboxAutoDetect, setMultiboxAutoDetect] = useMultiboxAutoDetect();
 
-  // The Map page owns real per-session state worth keeping warm across
-  // navigation - the canvas's own zoom/pan, the heat map, and (via
-  // useRecentActivity) the live kill feed it's already streaming - none of
-  // which should have to rebuild from scratch every time the user leaves
-  // and comes back. Rendered in a persistent sibling below instead of
-  // inside the tab switch, so it mounts once on first visit and then just
-  // toggles visibility with CSS from then on.
-  const [mapVisited, setMapVisited] = useState(false);
-  useEffect(() => {
-    if (activeId === "map") setMapVisited(true);
-  }, [activeId]);
-
   // Whichever sub-tab was active belongs to the PREVIOUS page - clear it the
   // moment the active page itself changes so the TopBar star doesn't briefly
   // favourite the wrong page's tab. If the new page has its own tabs, its
@@ -356,23 +344,28 @@ function App() {
           <MainContent icon={active.icon} label={active.label} description={active.description} />
         )}
         </Suspense>
-        {mapVisited && (
-          <div style={{ display: activeId === "map" ? "contents" : "none" }}>
-            <Suspense fallback={<div className="app-loading">Loading...</div>}>
-              <MapPage
-                onSelectKill={handleOpenKillmail}
-                onSelectSystem={handleOpenSystemKills}
-                onSelectGate={handleOpenGateKillboard}
-                onSelectCharacter={handleOpenCharacterKillboard}
-                characters={session.characters}
-                visible={activeId === "map"}
-                initialTab={activeId === "map" ? pendingSubTab : null}
-                onConsumeInitialTab={handleConsumePendingSubTab}
-                onActiveTabChange={setActiveSubTab}
-              />
-            </Suspense>
-          </div>
-        )}
+        {/* Mounted unconditionally, right from app start - not gated behind
+           a first visit - so the map/heat-map/kill-feed data (and the Map
+           page's own per-session state: canvas zoom/pan, etc.) is already
+           populated by the time the pilot actually clicks into it, instead
+           of only starting to load right then. Kept warm across navigation
+           the same way: a persistent sibling that just toggles visibility
+           with CSS rather than unmounting when another tab is active. */}
+        <div style={{ display: activeId === "map" ? "contents" : "none" }}>
+          <Suspense fallback={<div className="app-loading">Loading...</div>}>
+            <MapPage
+              onSelectKill={handleOpenKillmail}
+              onSelectSystem={handleOpenSystemKills}
+              onSelectGate={handleOpenGateKillboard}
+              onSelectCharacter={handleOpenCharacterKillboard}
+              characters={session.characters}
+              visible={activeId === "map"}
+              initialTab={activeId === "map" ? pendingSubTab : null}
+              onConsumeInitialTab={handleConsumePendingSubTab}
+              onActiveTabChange={setActiveSubTab}
+            />
+          </Suspense>
+        </div>
       </div>
     </CharacterLocationProvider>
   );

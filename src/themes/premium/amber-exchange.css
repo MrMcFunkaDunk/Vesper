@@ -16,7 +16,16 @@
 :root[data-theme="amber-exchange"] .dashboard-header,
 :root[data-theme="amber-exchange"] .entity-stats-header,
 :root[data-theme="amber-exchange"] .detail-panel-header,
-:root[data-theme="amber-exchange"] .industry-build-steps-header {
+:root[data-theme="amber-exchange"] .industry-build-steps-header,
+:root[data-theme="amber-exchange"] .kills-header,
+:root[data-theme="amber-exchange"] .wallet-market-header,
+:root[data-theme="amber-exchange"] .pi-header,
+:root[data-theme="amber-exchange"] .wh-page-header,
+:root[data-theme="amber-exchange"] .fittings-page-header,
+:root[data-theme="amber-exchange"] .calendar-page-header,
+:root[data-theme="amber-exchange"] .mail-page-header,
+:root[data-theme="amber-exchange"] .settings-header,
+:root[data-theme="amber-exchange"] .map-page-header {
   border-bottom: 3px solid;
   border-image: repeating-linear-gradient(90deg, var(--accent) 0 10px, var(--deck-cavity) 10px 16px) 3;
 }

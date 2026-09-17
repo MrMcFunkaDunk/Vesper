@@ -19,7 +19,16 @@
 /* Vertical accent rail on the header instead of Bulkhead's horizontal
    hazard band - a thin illuminated measurement track running down the
    left edge. */
-:root[data-theme="cold-ballast"] .dashboard-header {
+:root[data-theme="cold-ballast"] .dashboard-header,
+:root[data-theme="cold-ballast"] .kills-header,
+:root[data-theme="cold-ballast"] .wallet-market-header,
+:root[data-theme="cold-ballast"] .pi-header,
+:root[data-theme="cold-ballast"] .wh-page-header,
+:root[data-theme="cold-ballast"] .fittings-page-header,
+:root[data-theme="cold-ballast"] .calendar-page-header,
+:root[data-theme="cold-ballast"] .mail-page-header,
+:root[data-theme="cold-ballast"] .settings-header,
+:root[data-theme="cold-ballast"] .map-page-header {
   border-left: 3px solid var(--accent);
   box-shadow: inset 3px 0 8px -4px var(--accent), inset 1px 1px 0 var(--deck-bevel-light), inset -1px -1px 0 var(--deck-bevel-dark);
 }

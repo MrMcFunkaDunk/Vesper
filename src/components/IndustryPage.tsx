@@ -753,6 +753,17 @@ function BuildTreeFlatList({
       {tiers.map(([tierDepth, rows], tierIndex) => {
         const tierCollapsed = collapsedTiers.has(tierDepth);
         const tierPaths = rows.map((r) => r.path);
+        // A live preview of what's in this tier, shown right on its header -
+        // both expanded AND collapsed, so a closed tier reads as "12 items,
+        // 62.4M ISK" instead of an empty-looking pill with nothing in it.
+        // Same effectiveNodeCost every row's own Total column already uses,
+        // summed over just the ticked ones - the same number that'd show up
+        // if you opened every "Materials Total" line in this tier and added
+        // them by hand.
+        const tierSubtotal = rows.reduce(
+          (sum, r) => (checkedPaths.has(r.path) ? sum + effectiveNodeCost(r.node, r.path, tierDepth, collapsedTiers, checkedPaths) : sum),
+          0,
+        );
         const tierTitle = (
           <div className="industry-build-tier-title-row">
             <GroupCheckbox
@@ -764,6 +775,9 @@ function BuildTreeFlatList({
             <button type="button" className="industry-build-tier-title-btn" onClick={() => onToggleTier(tierDepth)}>
               <ChevronRight size={12} strokeWidth={2.5} className={`market-tree-chevron${tierCollapsed ? "" : " market-tree-chevron-open"}`} />
               <span className="industry-build-section-title">Tier {tierDepth}</span>
+              <span className="industry-build-tier-summary">
+                {rows.length} item{rows.length === 1 ? "" : "s"} · {formatIsk(tierSubtotal)}
+              </span>
             </button>
           </div>
         );
@@ -964,6 +978,276 @@ function BuildTreeFlatList({
   );
 }
 
+interface BuildTreeNestedRowProps {
+  node: BuildTreeNode;
+  path: string;
+  depth: number;
+  expandedPaths: Set<string>;
+  onToggleExpand: (path: string) => void;
+  itemGroupNames: Map<number, string>;
+  /** Every sub-assembly's own job cost, keyed by path - same map
+   * BuildTreeFlatList's own "For X" headers already read from. */
+  subJobCosts: Map<string, number>;
+  perBlueprintEfficiency: Map<number, { materialEfficiency: number; timeEfficiency: number }>;
+  materialEfficiency: number;
+  timeEfficiency: number;
+  onBlueprintEfficiencyChange: (typeId: number, field: "materialEfficiency" | "timeEfficiency", value: number) => void;
+  onRefreshTree: () => void;
+  calculating: boolean;
+}
+
+/** One row of the Tree View's plain expand-per-node BOM tree - the
+ * alternative to BuildTreeFlatList's tier-grouped shopping list, for
+ * browsing "what does this specific thing need" rather than "everything at
+ * this BOM depth, from wherever it came from". No checkbox/ticking (tree
+ * view has no shopping-list concept of its own), but every other piece of
+ * context a "For X" header carries in Tier View - per-run cost, ME/TE
+ * override + refresh, Materials Total/Job Cost/Group Total - shows up here
+ * too, once expanded, at the same node it actually belongs to instead of
+ * only at tier boundaries. An earlier version of this whole feature was a
+ * nested tree very like this one and it got replaced with the tier view
+ * after real testing found box-within-box nesting hard to read a few tiers
+ * down - this stays flat indentation with connecting structure, not
+ * another box per node, to give it a fairer shot at not repeating that. */
+function BuildTreeNestedRow({
+  node,
+  path,
+  depth,
+  expandedPaths,
+  onToggleExpand,
+  itemGroupNames,
+  subJobCosts,
+  perBlueprintEfficiency,
+  materialEfficiency,
+  timeEfficiency,
+  onBlueprintEfficiencyChange,
+  onRefreshTree,
+  calculating,
+}: BuildTreeNestedRowProps) {
+  const indent = 10 + depth * 18;
+  const childIndent = 10 + (depth + 1) * 18;
+  const groupName = itemGroupNames.get(node.typeId);
+  const hasChildren = node.materials.length > 0;
+  const expanded = expandedPaths.has(path);
+  const materialsTotal = hasChildren ? node.materials.reduce((sum, child) => sum + child.totalCost, 0) : 0;
+  const jobCost = subJobCosts.get(path);
+
+  return (
+    <div className="market-tree-node industry-build-node">
+      <div className="market-browser-tree-item industry-build-row" style={{ paddingLeft: indent }}>
+        {hasChildren ? (
+          <button
+            type="button"
+            className="industry-build-nested-toggle"
+            onClick={() => onToggleExpand(path)}
+            aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
+          >
+            <ChevronRight size={13} strokeWidth={2} className={`market-tree-chevron${expanded ? " market-tree-chevron-open" : ""}`} />
+          </button>
+        ) : (
+          <span className="industry-build-header-checkbox-spacer" />
+        )}
+        <button
+          type="button"
+          className="industry-build-row-body"
+          onClick={() => hasChildren && onToggleExpand(path)}
+        >
+          <img src={typeIconUrl(node.typeId, 32, node.name)} alt="" className="market-browser-row-icon" title={groupName} />
+          <span className="market-browser-tree-item-label" title={groupName}>
+            {node.name}
+            {node.activity != null && (
+              <Factory size={12} strokeWidth={2} className="industry-build-has-blueprint" aria-label="Has a blueprint/reaction formula">
+                <title>Has a blueprint/reaction formula - could be built instead of bought</title>
+              </Factory>
+            )}
+          </span>
+          <span className="industry-build-qty-col" title="Total Quantity: the total number of units required for this stage of the build.">
+            x{node.quantityNeeded.toLocaleString()}
+          </span>
+          <span
+            className="industry-build-runs-col"
+            title="Runs: how many times this item's own blueprint needs to run to produce the quantity above."
+          >
+            {node.activity != null ? node.runs.toLocaleString() : ""}
+          </span>
+          <span className="industry-build-cost" title="Total: this item's own assessed cost - the cheaper of building it from its own materials or buying it outright.">
+            {formatIsk(node.totalCost)}
+          </span>
+          <span />
+        </button>
+      </div>
+      {expanded && hasChildren && (
+        <>
+          <p className="industry-build-parent-header" style={{ paddingLeft: childIndent }}>
+            For {node.name}
+            {node.outputPerRun != null && node.buildCostPerUnit != null && (
+              <span className="industry-build-parent-header-meta">
+                {node.outputPerRun.toLocaleString()} per run · {formatIsk((node.buildCostPerUnit * node.quantityNeeded) / node.runs)} per run
+              </span>
+            )}
+            {node.activity === "manufacturing" && (
+              <span className="industry-build-parent-header-efficiency">
+                <label className="industry-build-parent-header-efficiency-field">
+                  ME
+                  <NumberStepperInput
+                    value={perBlueprintEfficiency.get(node.typeId)?.materialEfficiency ?? materialEfficiency}
+                    onChange={(v) => onBlueprintEfficiencyChange(node.typeId, "materialEfficiency", v)}
+                    min={0}
+                    max={10}
+                    className="industry-field-input"
+                  />
+                </label>
+                <label className="industry-build-parent-header-efficiency-field">
+                  TE
+                  <NumberStepperInput
+                    value={perBlueprintEfficiency.get(node.typeId)?.timeEfficiency ?? timeEfficiency}
+                    onChange={(v) => onBlueprintEfficiencyChange(node.typeId, "timeEfficiency", v)}
+                    min={0}
+                    max={20}
+                    step={2}
+                    className="industry-field-input"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="industry-build-parent-header-refresh"
+                  onClick={onRefreshTree}
+                  disabled={calculating}
+                  title="Recalculate the whole build using this item's ME/TE (and any others you've set) - the tree stays open exactly as it is now."
+                  aria-label={`Recalculate using ${node.name}'s ME/TE`}
+                >
+                  <RefreshCw size={12} strokeWidth={2} />
+                </button>
+              </span>
+            )}
+            {node.activity === "reaction" && (
+              <span
+                className="industry-build-parent-header-efficiency-na"
+                title="Reactions always run at 0% ME/TE - there's no research level to set, so this item has no boxes of its own."
+              >
+                Reaction - no ME/TE
+              </span>
+            )}
+          </p>
+          {node.materials.map((child) => (
+            <BuildTreeNestedRow
+              key={child.typeId}
+              node={child}
+              path={rowPath(path, child.typeId)}
+              depth={depth + 1}
+              expandedPaths={expandedPaths}
+              onToggleExpand={onToggleExpand}
+              itemGroupNames={itemGroupNames}
+              subJobCosts={subJobCosts}
+              perBlueprintEfficiency={perBlueprintEfficiency}
+              materialEfficiency={materialEfficiency}
+              timeEfficiency={timeEfficiency}
+              onBlueprintEfficiencyChange={onBlueprintEfficiencyChange}
+              onRefreshTree={onRefreshTree}
+              calculating={calculating}
+            />
+          ))}
+          <div className="industry-build-parent-subtotal" style={{ paddingLeft: childIndent }}>
+            <span />
+            <span className="industry-build-parent-subtotal-label">Materials Total</span>
+            <span />
+            <span />
+            <span className="industry-build-parent-subtotal-value">{formatIsk(materialsTotal)}</span>
+            <span />
+          </div>
+          {jobCost != null && (
+            <>
+              <div className="industry-build-parent-subtotal" style={{ paddingLeft: childIndent }}>
+                <span />
+                <span className="industry-build-parent-subtotal-label">Job Cost</span>
+                <span />
+                <span />
+                <span className="industry-build-parent-subtotal-value">{formatIsk(jobCost)}</span>
+                <span />
+              </div>
+              <div className="industry-build-parent-subtotal industry-build-parent-subtotal-grand" style={{ paddingLeft: childIndent }}>
+                <span />
+                <span className="industry-build-parent-subtotal-label">Group Total</span>
+                <span />
+                <span />
+                <span className="industry-build-parent-subtotal-value">{formatIsk(materialsTotal + jobCost)}</span>
+                <span />
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+interface BuildTreeNestedProps {
+  root: BuildTreeNode;
+  rootPath: string;
+  itemGroupNames: Map<number, string>;
+  subJobCosts: Map<string, number>;
+  perBlueprintEfficiency: Map<number, { materialEfficiency: number; timeEfficiency: number }>;
+  materialEfficiency: number;
+  timeEfficiency: number;
+  onBlueprintEfficiencyChange: (typeId: number, field: "materialEfficiency" | "timeEfficiency", value: number) => void;
+  onRefreshTree: () => void;
+  calculating: boolean;
+}
+
+/** Tree View's own top-level state - which nodes are expanded, independent
+ * of the tier view's collapsedTiers/checkedPaths entirely. Starts with the
+ * root's direct materials open (matching the tier view's own Tier 1
+ * defaulting open) so switching to Tree View never lands on a completely
+ * blank list. */
+function BuildTreeNested({
+  root,
+  rootPath,
+  itemGroupNames,
+  subJobCosts,
+  perBlueprintEfficiency,
+  materialEfficiency,
+  timeEfficiency,
+  onBlueprintEfficiencyChange,
+  onRefreshTree,
+  calculating,
+}: BuildTreeNestedProps) {
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
+    () => new Set(root.materials.map((child) => rowPath(rootPath, child.typeId))),
+  );
+
+  function toggleExpand(path: string) {
+    setExpandedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  return (
+    <div className="market-tree-children industry-build-children industry-build-children-nested">
+      {root.materials.map((child) => (
+        <BuildTreeNestedRow
+          key={child.typeId}
+          node={child}
+          path={rowPath(rootPath, child.typeId)}
+          depth={1}
+          expandedPaths={expandedPaths}
+          onToggleExpand={toggleExpand}
+          itemGroupNames={itemGroupNames}
+          subJobCosts={subJobCosts}
+          perBlueprintEfficiency={perBlueprintEfficiency}
+          materialEfficiency={materialEfficiency}
+          timeEfficiency={timeEfficiency}
+          onBlueprintEfficiencyChange={onBlueprintEfficiencyChange}
+          onRefreshTree={onRefreshTree}
+          calculating={calculating}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** Strips everything except digits and (at most) one decimal point, so
  * pasting or typing something like "1,234,567.89" still yields a clean
  * numeric string - commas are exactly what formatWithThousands below adds
@@ -1111,6 +1395,13 @@ function ProductionCalculator() {
    * "Collapse All" can close every open tier from one place instead of
    * only ever being able to reach whichever single row's own state it is. */
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  /** Tier View (the default, tick-driven shopping-list grouping below) vs
+   * Tree View (a plain expand-per-node BOM tree, read-only - no ticking,
+   * ME/TE editing, or job-cost breakdown of its own, just the same already-
+   * computed node.totalCost figures laid out to match the real build
+   * structure instead of by BOM depth). Both read the exact same
+   * pricedTree - this only changes how it's displayed. */
+  const [buildTreeView, setBuildTreeView] = useState<"tiers" | "nested">("tiers");
   const [calculating, setCalculating] = useState(false);
   const [hubRegionId, setHubRegionId] = useState(defaultTradeHub);
   const [hubPrices, setHubPrices] = useState<Map<number, number>>(new Map());
@@ -1842,7 +2133,25 @@ function ProductionCalculator() {
         <div className="industry-results-panel">
           <div className="industry-build-steps-header">
             <p className="wh-side-label">Build Steps</p>
-            {expandedPaths.size > 0 && (
+            <div className="market-history-mode-toggle" role="group" aria-label="Build Steps layout">
+              <button
+                type="button"
+                className={buildTreeView === "tiers" ? "market-history-mode-active" : ""}
+                onClick={() => setBuildTreeView("tiers")}
+                title="Group every material by BOM depth, ticked off as a shopping list - the original layout."
+              >
+                Tier View
+              </button>
+              <button
+                type="button"
+                className={buildTreeView === "nested" ? "market-history-mode-active" : ""}
+                onClick={() => setBuildTreeView("nested")}
+                title="Expand each item into its own materials, matching the build's real structure - read-only, no ticking/ME-TE editing."
+              >
+                Tree View
+              </button>
+            </div>
+            {buildTreeView === "tiers" && expandedPaths.size > 0 && (
               <button type="button" className="skill-action-btn" onClick={handleCollapseAll}>
                 Collapse All
               </button>
@@ -1875,7 +2184,21 @@ function ProductionCalculator() {
               itemGroupNames={itemGroupNames}
               collapsedTiers={collapsedTiers}
             />
-            {rootExpanded && pricedTree.materials.length > 0 && (
+            {rootExpanded && pricedTree.materials.length > 0 && buildTreeView === "nested" && (
+              <BuildTreeNested
+                root={pricedTree}
+                rootPath={rootPath}
+                itemGroupNames={itemGroupNames}
+                subJobCosts={subJobCosts}
+                perBlueprintEfficiency={perBlueprintEfficiency}
+                materialEfficiency={materialEfficiency}
+                timeEfficiency={timeEfficiency}
+                onBlueprintEfficiencyChange={handleBlueprintEfficiencyChange}
+                onRefreshTree={handleRefreshTree}
+                calculating={calculating}
+              />
+            )}
+            {rootExpanded && pricedTree.materials.length > 0 && buildTreeView === "tiers" && (
               <BuildTreeFlatList
                 root={pricedTree}
                 rootPath={rootPath}

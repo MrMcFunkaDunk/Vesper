@@ -9,7 +9,16 @@
 /* Hazard-stripe band across the page header's top edge - the one place in
    the whole deck that gets the literal yellow/black warning tape, used
    once, deliberately, rather than scattered everywhere. */
-:root[data-theme="bulkhead"] .dashboard-header {
+:root[data-theme="bulkhead"] .dashboard-header,
+:root[data-theme="bulkhead"] .kills-header,
+:root[data-theme="bulkhead"] .wallet-market-header,
+:root[data-theme="bulkhead"] .pi-header,
+:root[data-theme="bulkhead"] .wh-page-header,
+:root[data-theme="bulkhead"] .fittings-page-header,
+:root[data-theme="bulkhead"] .calendar-page-header,
+:root[data-theme="bulkhead"] .mail-page-header,
+:root[data-theme="bulkhead"] .settings-header,
+:root[data-theme="bulkhead"] .map-page-header {
   border-top: 6px solid;
   border-image: repeating-linear-gradient(135deg, var(--deck-hazard) 0 10px, var(--deck-hazard-dark) 10px 20px) 6;
 }
@@ -35,7 +44,16 @@
 /* Stat cards and panels get a visible rivet at each corner - stamped
    sheet metal, not smooth plate. */
 :root[data-theme="bulkhead"] .market-stat-card,
-:root[data-theme="bulkhead"] .dashboard-header {
+:root[data-theme="bulkhead"] .dashboard-header,
+:root[data-theme="bulkhead"] .kills-header,
+:root[data-theme="bulkhead"] .wallet-market-header,
+:root[data-theme="bulkhead"] .pi-header,
+:root[data-theme="bulkhead"] .wh-page-header,
+:root[data-theme="bulkhead"] .fittings-page-header,
+:root[data-theme="bulkhead"] .calendar-page-header,
+:root[data-theme="bulkhead"] .mail-page-header,
+:root[data-theme="bulkhead"] .settings-header,
+:root[data-theme="bulkhead"] .map-page-header {
   background-image: radial-gradient(circle 2px at 8px 8px, var(--deck-rivet) 40%, transparent 41%),
     radial-gradient(circle 2px at calc(100% - 8px) 8px, var(--deck-rivet) 40%, transparent 41%),
     radial-gradient(circle 2px at 8px calc(100% - 8px), var(--deck-rivet) 40%, transparent 41%),

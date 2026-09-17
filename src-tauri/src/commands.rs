@@ -215,9 +215,9 @@ pub fn get_asset_history(app: AppHandle, character_id: i64) -> Result<Vec<asset_
 }
 
 #[tauri::command]
-pub async fn get_character_assets(state: State<'_, AppState>, id: i64) -> Result<esi::CharacterAssets, String> {
+pub async fn get_character_assets(app: AppHandle, state: State<'_, AppState>, id: i64) -> Result<esi::CharacterAssets, String> {
     let config = config::load()?;
-    esi::fetch_character_assets(&state.http_client, &config, id).await
+    esi::fetch_character_assets(&app, &state.http_client, &config, id).await
 }
 
 #[tauri::command]

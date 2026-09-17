@@ -740,6 +740,15 @@
   background: var(--deck-cavity);
   border: 1px solid var(--deck-frame);
   padding: 3px;
+}
+
+/* .character-tabs is now just the column wrapper around its two row divs
+   (see CharacterDetail.tsx's TAB_ROWS) - its own row-to-row gap comes from
+   the base .character-tabs rule in App.css, not from here. The tight
+   switch-bank spacing below applies to .kills-tabs directly (still one
+   plain row) and to each individual .character-tabs-row instead. */
+:root[data-tier="premium"] .kills-tabs,
+:root[data-tier="premium"] .character-tabs-row {
   gap: 2px;
 }
 
@@ -944,6 +953,15 @@
 :root[data-tier="premium"] .industry-inputs-panel,
 :root[data-tier="premium"] .industry-results-panel,
 :root[data-tier="premium"] .dashboard-header,
+:root[data-tier="premium"] .kills-header,
+:root[data-tier="premium"] .wallet-market-header,
+:root[data-tier="premium"] .pi-header,
+:root[data-tier="premium"] .wh-page-header,
+:root[data-tier="premium"] .fittings-page-header,
+:root[data-tier="premium"] .calendar-page-header,
+:root[data-tier="premium"] .mail-page-header,
+:root[data-tier="premium"] .settings-header,
+:root[data-tier="premium"] .map-page-header,
 :root[data-tier="premium"] .settings-section,
 :root[data-tier="premium"] .severity-card,
 :root[data-tier="premium"] .gainers-losers-panel {
@@ -965,16 +983,27 @@
   border: 1px solid var(--deck-frame);
 }
 
-/* Only the two panels that never host anything rendered outside their own
-   box. .industry-inputs-panel and .settings-section both sometimes hold a
+/* Only panels that never host anything rendered outside their own box.
+   .industry-inputs-panel and .settings-section both sometimes hold a
    search combobox whose suggestion dropdown is position: absolute,
    top: 100% (see .gatecheck-slot-results/.kills-add-suggestions in
    App.css) and pops up BELOW the panel; clip-path clips a box's own
    overflowing content regardless of its own overflow property, so
    notching those two would silently cut those dropdowns off. Stat cards
-   and the page header have no such children. */
+   and every page header below have no such children - confirmed each one
+   individually (none host a combobox or other absolutely-positioned
+   child) before adding it to this list. */
 :root[data-tier="premium"] .market-stat-card,
-:root[data-tier="premium"] .dashboard-header {
+:root[data-tier="premium"] .dashboard-header,
+:root[data-tier="premium"] .kills-header,
+:root[data-tier="premium"] .wallet-market-header,
+:root[data-tier="premium"] .pi-header,
+:root[data-tier="premium"] .wh-page-header,
+:root[data-tier="premium"] .fittings-page-header,
+:root[data-tier="premium"] .calendar-page-header,
+:root[data-tier="premium"] .mail-page-header,
+:root[data-tier="premium"] .settings-header,
+:root[data-tier="premium"] .map-page-header {
   clip-path: polygon(
     var(--deck-notch) 0,
     100% 0,
@@ -985,18 +1014,45 @@
   );
 }
 
-:root[data-tier="premium"] .dashboard-header {
+:root[data-tier="premium"] .dashboard-header,
+:root[data-tier="premium"] .kills-header,
+:root[data-tier="premium"] .wallet-market-header,
+:root[data-tier="premium"] .pi-header,
+:root[data-tier="premium"] .wh-page-header,
+:root[data-tier="premium"] .fittings-page-header,
+:root[data-tier="premium"] .calendar-page-header,
+:root[data-tier="premium"] .mail-page-header,
+:root[data-tier="premium"] .settings-header,
+:root[data-tier="premium"] .map-page-header {
   position: relative;
 }
 
-/* Corner brackets on the page header only - one prominent, deliberate
-   mark instead of cluttering every panel with the same four glyphs.
-   Positioned on the top-right/bottom-left corners on purpose - the
-   clip-path notch above cuts the OTHER diagonal, and clip-path clips its
-   own element's ::before/::after along with everything else, so a
-   bracket placed on a notched corner would get clipped away with it. */
+/* Corner brackets on every page header - one prominent, deliberate mark
+   instead of cluttering every panel with the same four glyphs. Positioned
+   on the top-right/bottom-left corners on purpose - the clip-path notch
+   above cuts the OTHER diagonal, and clip-path clips its own element's
+   ::before/::after along with everything else, so a bracket placed on a
+   notched corner would get clipped away with it. */
 :root[data-tier="premium"] .dashboard-header::before,
-:root[data-tier="premium"] .dashboard-header::after {
+:root[data-tier="premium"] .dashboard-header::after,
+:root[data-tier="premium"] .kills-header::before,
+:root[data-tier="premium"] .kills-header::after,
+:root[data-tier="premium"] .wallet-market-header::before,
+:root[data-tier="premium"] .wallet-market-header::after,
+:root[data-tier="premium"] .pi-header::before,
+:root[data-tier="premium"] .pi-header::after,
+:root[data-tier="premium"] .wh-page-header::before,
+:root[data-tier="premium"] .wh-page-header::after,
+:root[data-tier="premium"] .fittings-page-header::before,
+:root[data-tier="premium"] .fittings-page-header::after,
+:root[data-tier="premium"] .calendar-page-header::before,
+:root[data-tier="premium"] .calendar-page-header::after,
+:root[data-tier="premium"] .mail-page-header::before,
+:root[data-tier="premium"] .mail-page-header::after,
+:root[data-tier="premium"] .settings-header::before,
+:root[data-tier="premium"] .settings-header::after,
+:root[data-tier="premium"] .map-page-header::before,
+:root[data-tier="premium"] .map-page-header::after {
   content: "";
   position: absolute;
   width: 14px;
@@ -1006,14 +1062,32 @@
   pointer-events: none;
 }
 
-:root[data-tier="premium"] .dashboard-header::before {
+:root[data-tier="premium"] .dashboard-header::before,
+:root[data-tier="premium"] .kills-header::before,
+:root[data-tier="premium"] .wallet-market-header::before,
+:root[data-tier="premium"] .pi-header::before,
+:root[data-tier="premium"] .wh-page-header::before,
+:root[data-tier="premium"] .fittings-page-header::before,
+:root[data-tier="premium"] .calendar-page-header::before,
+:root[data-tier="premium"] .mail-page-header::before,
+:root[data-tier="premium"] .settings-header::before,
+:root[data-tier="premium"] .map-page-header::before {
   top: 0;
   right: 0;
   border-left: none;
   border-bottom: none;
 }
 
-:root[data-tier="premium"] .dashboard-header::after {
+:root[data-tier="premium"] .dashboard-header::after,
+:root[data-tier="premium"] .kills-header::after,
+:root[data-tier="premium"] .wallet-market-header::after,
+:root[data-tier="premium"] .pi-header::after,
+:root[data-tier="premium"] .wh-page-header::after,
+:root[data-tier="premium"] .fittings-page-header::after,
+:root[data-tier="premium"] .calendar-page-header::after,
+:root[data-tier="premium"] .mail-page-header::after,
+:root[data-tier="premium"] .settings-header::after,
+:root[data-tier="premium"] .map-page-header::after {
   bottom: 0;
   left: 0;
   border-right: none;

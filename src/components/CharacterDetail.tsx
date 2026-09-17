@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Search, RefreshCw, Sparkles } from "lucide-react";
+import { ArrowLeft, Search, RefreshCw, Sparkles, Rocket } from "lucide-react";
 import { toCsv, downloadCsv } from "../lib/csvExport";
 import {
   getCharacterOverview,
@@ -40,6 +40,7 @@ import {
   type CharacterMedals,
   type CharacterLoyalty,
   type CharacterAssets,
+  type AssetEntry,
   type CharacterMarketOrders,
   type CharacterContracts,
   type ContractItemEntry,
@@ -58,6 +59,7 @@ import { recordAssetSnapshot, getAssetHistory, type AssetSnapshot } from "../lib
 import { checkAbyssalValue, type AbyssalValueResult } from "../lib/abyssal";
 import InsuranceCalculator from "./InsuranceCalculator";
 import SkillPlanTab from "./SkillPlanTab";
+import ShipFitPanel from "./ShipFitPanel";
 import {
   formatIsk,
   formatSp,
@@ -147,6 +149,14 @@ const TABS: { id: CharacterTab; label: string }[] = [
   { id: "research", label: "Research" },
   { id: "factionWarfare", label: "Faction Warfare" },
 ];
+
+/** Split into two even rows (the second gets the odd one out, if any)
+ * rather than left to a plain flex-wrap, which packs the first row full
+ * before wrapping and leaves a lopsided handful on the second - this way
+ * both rows read as a deliberate two-row layout, not an overflow. TABS
+ * itself never changes at runtime, so this only needs computing once. */
+const TABS_ROW_SPLIT = Math.ceil(TABS.length / 2);
+const TAB_ROWS = [TABS.slice(0, TABS_ROW_SPLIT), TABS.slice(TABS_ROW_SPLIT)];
 
 function SkillLevelPips({ level }: { level: number }) {
   return (
@@ -750,6 +760,7 @@ function CharacterDetail({
   function exportAssetsCsv() {
     const csv = toCsv(filteredAssets, [
       { header: "Item", value: (a) => a.type_name },
+      { header: "Category", value: (a) => a.category_name },
       { header: "Group", value: (a) => a.group_name },
       { header: "Quantity", value: (a) => a.quantity },
       { header: "Value", value: (a) => (assetPrices.get(a.type_id) ?? 0) * a.quantity },
@@ -794,6 +805,31 @@ function CharacterDetail({
       const q = assetQuery.toLowerCase();
       return a.type_name.toLowerCase().includes(q) || a.location_name.toLowerCase().includes(q) || a.region_name.toLowerCase().includes(q);
     }) ?? [];
+  const sortedAssets = useSortableRows(filteredAssets.slice(0, 1000), {
+    type_name: (a) => a.type_name,
+    category_name: (a) => a.category_name,
+    quantity: (a) => a.quantity,
+    value: (a) => (assetPrices.get(a.type_id) ?? 0) * a.quantity,
+    location_name: (a) => a.location_name,
+    location_flag: (a) => a.location_flag,
+  });
+  /** Every asset grouped by its direct (unresolved) location_id - a ship
+   * sitting in a hangar's own item_id is the location_id of everything
+   * fitted/stowed on it, so this map answers "what's on this specific
+   * ship/in this specific container" in one lookup. Built from the full,
+   * unfiltered/uncapped list - a ship's own row might not match the
+   * current search, but a still-matching ship's fit shouldn't be
+   * artificially thin because of it. */
+  const childrenByLocation = useMemo(() => {
+    const map = new Map<number, AssetEntry[]>();
+    for (const a of assets?.entries ?? []) {
+      const arr = map.get(a.location_id);
+      if (arr) arr.push(a);
+      else map.set(a.location_id, [a]);
+    }
+    return map;
+  }, [assets]);
+  const [viewingFit, setViewingFit] = useState<AssetEntry | null>(null);
 
   function toggleAssetGroup(name: string) {
     setExpandedAssetGroups((prev) => {
@@ -1251,7 +1287,7 @@ function CharacterDetail({
         );
 
       case "assets": {
-        const cappedAssets = filteredAssets.slice(0, 1000);
+        const cappedAssets = sortedAssets.rows;
         const assetGroups = new Map<string, typeof cappedAssets>();
         for (const a of cappedAssets) {
           const key = assetGroupBy === "region" ? a.region_name : assetGroupBy === "location" ? a.location_name : a.group_name;
@@ -1347,22 +1383,37 @@ function CharacterDetail({
                             <table className="data-table">
                               <thead>
                                 <tr>
-                                  <th>Item</th>
-                                  <th className="data-table-numeric">Qty</th>
-                                  <th className="data-table-numeric">Value</th>
-                                  <th>Location</th>
-                                  <th>Flag</th>
+                                  <SortableTh label="Item" sortKey="type_name" activeKey={sortedAssets.sortKey} dir={sortedAssets.sortDir} onSort={sortedAssets.sort} defaultDir="asc" />
+                                  <SortableTh label="Category" sortKey="category_name" activeKey={sortedAssets.sortKey} dir={sortedAssets.sortDir} onSort={sortedAssets.sort} defaultDir="asc" />
+                                  <SortableTh label="Qty" sortKey="quantity" activeKey={sortedAssets.sortKey} dir={sortedAssets.sortDir} onSort={sortedAssets.sort} numeric />
+                                  <SortableTh label="Value" sortKey="value" activeKey={sortedAssets.sortKey} dir={sortedAssets.sortDir} onSort={sortedAssets.sort} numeric />
+                                  <SortableTh label="Location" sortKey="location_name" activeKey={sortedAssets.sortKey} dir={sortedAssets.sortDir} onSort={sortedAssets.sort} defaultDir="asc" />
+                                  <SortableTh label="Flag" sortKey="location_flag" activeKey={sortedAssets.sortKey} dir={sortedAssets.sortDir} onSort={sortedAssets.sort} defaultDir="asc" />
                                 </tr>
                               </thead>
                               <tbody>
-                                {groupAssets.map((a) => (
+                                {groupAssets.map((a) => {
+                                  const contents = childrenByLocation.get(a.item_id);
+                                  return (
                                   <tr key={a.item_id}>
                                     <td>
                                       <span className="asset-item-cell">
                                         <img className="asset-item-icon" src={typeIconUrl(a.type_id, 32, a.type_name)} alt="" />
                                         {a.type_name}
+                                        {contents && contents.length > 0 && (
+                                          <button
+                                            type="button"
+                                            className="asset-view-fit-btn"
+                                            onClick={() => setViewingFit(a)}
+                                            title={`View what's fitted/stowed on this ${a.type_name}`}
+                                          >
+                                            <Rocket size={11} strokeWidth={2} />
+                                            View Fit
+                                          </button>
+                                        )}
                                       </span>
                                     </td>
+                                    <td>{a.category_name}</td>
                                     <td className="data-table-numeric">{fmtCount(a.quantity)}</td>
                                     <td className="data-table-numeric market-stat-value-isk">
                                       {assetPrices.has(a.type_id) ? formatIsk((assetPrices.get(a.type_id) ?? 0) * a.quantity) : "—"}
@@ -1399,7 +1450,8 @@ function CharacterDetail({
                                     <td>{a.location_name}</td>
                                     <td>{a.location_flag}</td>
                                   </tr>
-                                ))}
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>
@@ -2152,21 +2204,28 @@ function CharacterDetail({
           )}
 
           <div className="character-tabs">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={`character-tab${tab === t.id ? " character-tab-active" : ""}`}
-                onClick={() => setTab(t.id)}
-              >
-                {t.label}
-              </button>
+            {TAB_ROWS.map((row, i) => (
+              <div key={i} className="character-tabs-row">
+                {row.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`character-tab${tab === t.id ? " character-tab-active" : ""}`}
+                    onClick={() => setTab(t.id)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
 
           <div className="detail-panel character-tab-panel">{renderTabContent()}</div>
         </div>
       </div>
+      {viewingFit && (
+        <ShipFitPanel ship={viewingFit} modules={childrenByLocation.get(viewingFit.item_id) ?? []} onClose={() => setViewingFit(null)} />
+      )}
     </main>
   );
 }
