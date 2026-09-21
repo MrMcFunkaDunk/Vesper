@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Copy, Send, Save, Trash2, ChevronDown, Check, X, Swords } from "lucide-react";
 import { isCombatOverlayOpen, openCombatOverlay, closeCombatOverlay } from "../lib/combatOverlay";
+import { useIsWindows } from "../hooks/usePlatform";
 import { exportFitEft, exportFitDna, type Fit, type FitItem } from "../lib/fittings";
 import {
   searchMarketTypes,
@@ -202,6 +203,7 @@ function FitBuilder({
   const [jumpCounts, setJumpCounts] = useState<Map<number, number>>(new Map());
 
   const [combatOverlayOn, setCombatOverlayOn] = useState(false);
+  const isWindows = useIsWindows();
 
   useEffect(() => {
     isCombatOverlayOpen()
@@ -956,15 +958,17 @@ function FitBuilder({
         </div>
         <p className="fittings-export-hint">Paste EFT text into EVE's in-game "Import Fitting" dialog.</p>
 
-        <button
-          type="button"
-          className={`overlay-toggle-btn${combatOverlayOn ? " overlay-toggle-btn-active" : ""}`}
-          onClick={handleToggleCombatOverlay}
-          title="A small always-on-top window showing live DPS/rep in and out, read from EVE's own combat log - undock with it open."
-        >
-          <Swords size={13} strokeWidth={2} />
-          {combatOverlayOn ? "Close Combat Overlay" : "Open Combat Overlay"}
-        </button>
+        {isWindows && (
+          <button
+            type="button"
+            className={`overlay-toggle-btn${combatOverlayOn ? " overlay-toggle-btn-active" : ""}`}
+            onClick={handleToggleCombatOverlay}
+            title="A small always-on-top window showing live DPS/rep in and out, read from EVE's own combat log - undock with it open."
+          >
+            <Swords size={13} strokeWidth={2} />
+            {combatOverlayOn ? "Close Combat Overlay" : "Open Combat Overlay"}
+          </button>
+        )}
 
         {characters.length > 0 && (
           <div className="fittings-send-card">

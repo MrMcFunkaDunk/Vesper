@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { usePersistentState } from "./usePersistentState";
 import { getMultiboxClients, isMultiboxOverlayOpen, openMultiboxOverlay } from "../lib/multibox";
 import { useErrorReporter } from "./useErrorReporter";
+import { useIsWindows } from "./usePlatform";
 
 const STORAGE_KEY = "vesper.settings.multiboxAutoDetect";
 const POLL_MS = 3000;
@@ -29,9 +30,13 @@ export function useMultiboxAutoDetect() {
   const [enabled, setEnabled] = usePersistentState<boolean>(STORAGE_KEY, true);
   const reportError = useErrorReporter();
   const armed = useRef(true);
+  const isWindows = useIsWindows();
 
   useEffect(() => {
-    if (!enabled) return;
+    // No EVE clients can ever be detected without the Windows-only DWM
+    // thumbnail implementation - polling forever on other platforms would
+    // just waste an IPC round trip every 3s for nothing.
+    if (!enabled || !isWindows) return;
     let cancelled = false;
 
     async function poll() {
@@ -58,7 +63,7 @@ export function useMultiboxAutoDetect() {
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, isWindows]);
 
   return [enabled, setEnabled] as const;
 }

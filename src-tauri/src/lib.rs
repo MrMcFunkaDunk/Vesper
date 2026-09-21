@@ -2,6 +2,7 @@ mod abyssal;
 mod asset_history;
 mod auth;
 mod characters;
+#[cfg(windows)]
 mod combat_overlay;
 mod commands;
 mod config;
@@ -15,6 +16,7 @@ mod market;
 mod multibox;
 mod news;
 mod pi;
+#[cfg(windows)]
 mod price_widget;
 mod route;
 mod scout;
@@ -260,6 +262,7 @@ pub fn run() {
             commands::is_combat_overlay_open,
             commands::open_combat_overlay,
             commands::close_combat_overlay,
+            commands::get_platform,
             commands::get_default_eve_settings_path,
             commands::list_eve_settings_servers,
             commands::list_eve_settings_profiles,

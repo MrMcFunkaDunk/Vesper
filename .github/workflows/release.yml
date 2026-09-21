@@ -1,9 +1,17 @@
 name: Release
 
-# Builds a Windows installer and attaches it to a GitHub Release whenever a
-# version tag (e.g. v1.2.0) is pushed. VESPER has only been built and tested
-# on Windows this far, so this workflow is scoped to windows-latest rather
-# than also claiming macOS/Linux support that hasn't actually been verified.
+# Builds installers for Windows, macOS, and Linux and attaches them all to
+# one GitHub Release whenever a version tag (e.g. v1.2.0) is pushed.
+#
+# Multibox, the Combat Overlay, and the Price Widget are native Win32/GDI
+# overlays with no cross-platform equivalent yet - they compile out to
+# harmless no-ops on macOS/Linux (see src-tauri/src/multibox.rs and the
+# #[cfg(not(windows))] stubs in src-tauri/src/commands.rs) rather than
+# blocking the rest of the app from building there.
+#
+# The macOS build targets the runner's native architecture (Apple Silicon
+# on macos-latest) rather than a universal binary - Intel Mac support can
+# be added later via `--target universal-apple-darwin` if needed.
 
 on:
   push:
@@ -13,7 +21,11 @@ on:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
     steps:
@@ -24,6 +36,12 @@ jobs:
           node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev libxdo-dev patchelf rpm
 
       - name: Install frontend dependencies
         run: npm ci
