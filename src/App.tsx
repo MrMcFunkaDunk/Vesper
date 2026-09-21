@@ -6,6 +6,7 @@ import Dashboard from "./components/Dashboard";
 import ProximityFlashOverlay from "./components/ProximityFlashOverlay";
 import UpdateBanner from "./components/UpdateBanner";
 import WhatsNewModal from "./components/WhatsNewModal";
+import { useWhatsNew } from "./hooks/useWhatsNew";
 
 // Every other page is lazy-loaded - each one only needs its (often
 // substantial, e.g. React Flow for the wormhole finder) code once the user
@@ -95,6 +96,7 @@ function App() {
   // noticed and the floating preview opens regardless of which tab is
   // active - see the hook's own comment for why.
   const [multiboxAutoDetect, setMultiboxAutoDetect] = useMultiboxAutoDetect();
+  const whatsNew = useWhatsNew();
 
   // Whichever sub-tab was active belongs to the PREVIOUS page - clear it the
   // moment the active page itself changes so the TopBar star doesn't briefly
@@ -235,8 +237,8 @@ function App() {
       <TrackedEntityEventsEffect />
       <div className="shell">
         <ProximityFlashOverlay />
-        <UpdateBanner />
-        <WhatsNewModal />
+        <UpdateBanner onPreviewUpdate={whatsNew.preview} />
+        <WhatsNewModal entry={whatsNew.entry} open={whatsNew.open} onClose={whatsNew.close} />
         <ToastStack />
         <Sidebar activeId={activeId} activeSubTab={activeSubTab} onSelect={handleSelectNav} />
         <TopBar
@@ -247,6 +249,7 @@ function App() {
           onAdd={handleAdd}
           onLogout={handleLogout}
           onOpenKillmail={handleOpenKillmail}
+          onOpenWhatsNew={whatsNew.reopen}
         />
         <Suspense fallback={<div className="app-loading">Loading...</div>}>
         {activeId === "dashboard" ? (

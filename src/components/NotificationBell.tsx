@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, ExternalLink, Skull } from "lucide-react";
+import { Bell, ExternalLink, Skull, Sparkles } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useNotificationCenter } from "../hooks/useNotificationCenter";
 import { formatNotificationTime } from "../lib/format";
@@ -12,12 +12,15 @@ interface NotificationBellProps {
    * ever mounted somewhere that hasn't wired it up yet - every notification
    * with a killmailId set is expected to have this in practice. */
   onOpenKillmail?: (killmailId: number) => void;
+  /** Reopens the What's New modal - passed down from App.tsx's useWhatsNew,
+   * for a notification with action "open-whats-new". */
+  onOpenWhatsNew?: () => void;
 }
 
 /** The notification bell in the top bar - a general-purpose in-app feed,
  * separate from OS desktop notifications. Empty today; features push into
  * it via useNotificationCenter().addNotification(...) as they're built. */
-function NotificationBell({ onOpenKillmail }: NotificationBellProps) {
+function NotificationBell({ onOpenKillmail, onOpenWhatsNew }: NotificationBellProps) {
   const { notifications, unreadCount, markRead, markAllRead } = useNotificationCenter();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -34,7 +37,21 @@ function NotificationBell({ onOpenKillmail }: NotificationBellProps) {
 
   return (
     <div className="notification-bell" ref={containerRef}>
-      <button type="button" className="notification-bell-trigger" onClick={() => setOpen((v) => !v)} title="Notifications">
+      <button
+        type="button"
+        className="notification-bell-trigger"
+        onClick={() =>
+          setOpen((v) => {
+            const next = !v;
+            // Clears the red badge the moment the panel opens, not only
+            // once every item's been individually clicked or "Mark all
+            // read" pressed - seeing the list at all counts as noticing it.
+            if (next) markAllRead();
+            return next;
+          })
+        }
+        title="Notifications"
+      >
         <Bell size={16} strokeWidth={2} />
         {unreadCount > 0 && <span className="notification-bell-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>}
       </button>
@@ -56,10 +73,11 @@ function NotificationBell({ onOpenKillmail }: NotificationBellProps) {
                 <button
                   key={n.id}
                   type="button"
-                  className={`notification-bell-item${n.read ? "" : " notification-bell-item-unread"}`}
+                  className={`notification-bell-item${n.read ? "" : " notification-bell-item-unread"}${n.kind ? ` notification-bell-item-kind-${n.kind}` : ""}`}
                   onClick={() => {
                     markRead(n.id);
-                    if (n.killmailId != null) onOpenKillmail?.(n.killmailId);
+                    if (n.action === "open-whats-new") onOpenWhatsNew?.();
+                    else if (n.killmailId != null) onOpenKillmail?.(n.killmailId);
                     // openUrl throws if the URL is somehow malformed - not
                     // worth a whole error-reporter round trip over a
                     // notification click, so just swallow it silently.
@@ -68,7 +86,9 @@ function NotificationBell({ onOpenKillmail }: NotificationBellProps) {
                 >
                   <span className="notification-bell-item-title">
                     {n.title}
-                    {n.killmailId != null ? (
+                    {n.action === "open-whats-new" ? (
+                      <Sparkles size={11} strokeWidth={2} className="notification-bell-item-link-icon" />
+                    ) : n.killmailId != null ? (
                       <Skull size={11} strokeWidth={2} className="notification-bell-item-link-icon" />
                     ) : (
                       n.url && <ExternalLink size={11} strokeWidth={2} className="notification-bell-item-link-icon" />

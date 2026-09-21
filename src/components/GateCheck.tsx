@@ -76,9 +76,16 @@ function dotlanName(name: string): string {
 interface GateCheckProps {
   onSelectSystem: (system: SystemSummary) => void;
   onSelectGate: (gate: GateSummary) => void;
+  /** Set by the Map tab's "Send Route to Gate Check" button - pre-fills the
+   * waypoint slots with these systems and immediately runs the check, so
+   * the whole point (quickly seeing if a route you're about to fly has
+   * camps on it) doesn't need a second manual "Check!" click. One-shot,
+   * consumed via onConsumeInitialWaypoints once applied. */
+  initialWaypoints?: MapSystem[] | null;
+  onConsumeInitialWaypoints?: () => void;
 }
 
-function GateCheck({ onSelectSystem, onSelectGate }: GateCheckProps) {
+function GateCheck({ onSelectSystem, onSelectGate, initialWaypoints, onConsumeInitialWaypoints }: GateCheckProps) {
   const [mapSystems, setMapSystems] = useState<MapSystem[]>([]);
   const [waypoints, setWaypoints] = useState<Slot[]>([emptySlot(0), emptySlot(1)]);
   const [avoids, setAvoids] = useState<Slot[]>([emptySlot(100)]);
@@ -203,17 +210,18 @@ function GateCheck({ onSelectSystem, onSelectGate }: GateCheckProps) {
     });
   }
 
-  async function handleCheck() {
-    const waypointIds = waypoints.filter((s) => s.system).map((s) => s.system!.id);
-    const avoidIds = avoids.filter((s) => s.system).map((s) => s.system!.id);
+  // Extracted from handleCheck so the initialWaypoints effect below can run
+  // a check against explicit ids immediately, rather than relying on
+  // `waypoints` state that a just-called setWaypoints hasn't applied yet
+  // within the same effect.
+  async function runGateCheck(waypointIds: number[], avoidIds: number[], routePreference: RoutePreference) {
     if (waypointIds.length < 2) {
       reportError("Pick at least a start and destination system.");
       return;
     }
-
     setChecking(true);
     try {
-      const result = await planGateCheck(waypointIds, avoidIds, preference);
+      const result = await planGateCheck(waypointIds, avoidIds, routePreference);
       const routeSystemIds = result.systems.map((s) => s.id);
       const events = await getGateActivity(routeSystemIds).catch(() => []);
       setRouteSystems(result.systems);
@@ -225,6 +233,36 @@ function GateCheck({ onSelectSystem, onSelectGate }: GateCheckProps) {
       setChecking(false);
     }
   }
+
+  async function handleCheck() {
+    const waypointIds = waypoints.filter((s) => s.system).map((s) => s.system!.id);
+    const avoidIds = avoids.filter((s) => s.system).map((s) => s.system!.id);
+    await runGateCheck(waypointIds, avoidIds, preference);
+  }
+
+  // One-shot: a route sent over from the Map tab pre-fills the waypoint
+  // slots (so it's visible/editable exactly like a manually-typed route)
+  // and runs immediately, rather than making the user click Check! again
+  // for something they just asked to check.
+  useEffect(() => {
+    if (!initialWaypoints || initialWaypoints.length < 2) return;
+    const slots: Slot[] = initialWaypoints.map((sys) => ({
+      key: ++keyCounterRef.current,
+      query: sys.name,
+      system: sys,
+      results: [],
+    }));
+    slots.push(emptySlot(++keyCounterRef.current));
+    setWaypoints(slots);
+    setRouteSystems(null);
+    onConsumeInitialWaypoints?.();
+    runGateCheck(
+      initialWaypoints.map((s) => s.id),
+      [],
+      preference,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialWaypoints]);
 
   function openLink(url: string) {
     openUrl(url).catch((err) => reportError(`Failed to open link: ${String(err)}`));

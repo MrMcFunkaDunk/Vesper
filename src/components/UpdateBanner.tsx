@@ -6,10 +6,15 @@ import { useErrorReporter } from "../hooks/useErrorReporter";
 import { useNotificationCenter } from "../hooks/useNotificationCenter";
 import { usePersistentState } from "../hooks/usePersistentState";
 import { WHATS_NEW_PENDING_KEY, type PendingWhatsNew } from "../lib/whatsNew";
+import type { WhatsNewEntry } from "../hooks/useWhatsNew";
 
-/** Where the release itself (installers, sig files, release notes) actually
- * lives - releases.yml publishes every tagged build here as "v<version>". */
-const RELEASES_URL = "https://github.com/MrMcFunkaDunk/Vesper/releases/tag";
+interface UpdateBannerProps {
+  /** Primes the shared What's New modal with this pending update's own
+   * notes (already in hand from the update check) so its bell notification
+   * can open a preview in-app - installing itself here means there's no
+   * real reason to send anyone out to the GitHub release page anymore. */
+  onPreviewUpdate?: (entry: WhatsNewEntry) => void;
+}
 
 /**
  * Checks for a new VESPER release once per app launch (silent - nothing
@@ -17,7 +22,7 @@ const RELEASES_URL = "https://github.com/MrMcFunkaDunk/Vesper/releases/tag";
  * restart if there is. Never installs without the user clicking - an
  * early-build hobby app shouldn't force a surprise restart mid-session.
  */
-function UpdateBanner() {
+function UpdateBanner({ onPreviewUpdate }: UpdateBannerProps) {
   const [update, setUpdate] = useState<Update | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -30,10 +35,14 @@ function UpdateBanner() {
       .then((result) => {
         if (result) {
           setUpdate(result);
+          onPreviewUpdate?.({ version: result.version, body: result.body ?? "" });
           addNotification(
             "Vesper: New update available",
-            `Version ${result.version} is ready (you're on ${result.currentVersion}).`,
-            `${RELEASES_URL}/v${result.version}`,
+            `Version ${result.version} is ready (you're on ${result.currentVersion}) - click to see what's new.`,
+            undefined,
+            undefined,
+            "update",
+            "open-whats-new",
           );
         }
       })

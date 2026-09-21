@@ -35,6 +35,12 @@
      not a severity level that should blend with each theme's own palette. */
   --wormhole: #b389f5;
   --wormhole-glow: rgba(179, 137, 245, 0.55);
+  /* Abyssal Deadspace's own fixed identity, same "not a severity level,
+     doesn't get reskinned per theme's palette hue" reasoning as --wormhole
+     above - just its own hue (rose/magenta) so the two "off the map"
+     categories never read as the same thing at a glance. */
+  --abyssal: #e0459a;
+  --abyssal-glow: rgba(224, 69, 154, 0.55);
 
   /* Kill-row entity colors - corp/alliance/ship each get their own resting
      color so the two are tellable apart at a glance (character names stay
@@ -182,6 +188,10 @@
      out rather than legible, so this leans on the color itself instead. */
   --wormhole: #7c3fd1;
   --wormhole-glow: rgba(124, 63, 209, 0.25);
+  /* Same deeper/more-saturated, fainter-glow light-theme treatment as
+     --wormhole above, applied to abyssal's own rose/magenta hue instead. */
+  --abyssal: #a8266b;
+  --abyssal-glow: rgba(168, 38, 107, 0.25);
 
   --kill-corp: #3f6fa8;
   --kill-alliance: #8551b3;
@@ -1928,12 +1938,41 @@ body[data-reduce-motion="true"] .proximity-flash-overlay {
   gap: 2px;
   align-items: flex-start;
   width: 100%;
-  padding: 8px;
+  padding: 8px 8px 8px 9px;
   border: none;
+  border-left: 3px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+/* Kind-tinted rows - a glance at the bell tells an app update (gold, same
+   token as Split Price) from a tracked kill (green) from a tracked death
+   (red) apart from everything else, which stays untinted. !important is
+   needed here: premium themes' own
+   ":root[data-tier=premium] button:not(.nav-item):not(.mechanical-button)"
+   rule (0-3-1 specificity, for the instrument-panel button frame) otherwise
+   silently wins over this single-class rule (0-1-0) and resets the whole
+   border, colour included - confirmed live via the matched-styles inspector
+   before reaching for !important rather than guessing. */
+.notification-bell-item-kind-update,
+.notification-bell-item-kind-kill,
+.notification-bell-item-kind-death {
+  border-left-width: 3px !important;
+  border-left-style: solid !important;
+}
+
+.notification-bell-item-kind-update {
+  border-left-color: var(--isk) !important;
+}
+
+.notification-bell-item-kind-kill {
+  border-left-color: var(--success) !important;
+}
+
+.notification-bell-item-kind-death {
+  border-left-color: var(--danger) !important;
 }
 
 .notification-bell-item:hover {
@@ -8016,12 +8055,81 @@ img.fit-wheel-clickable:hover {
   justify-content: stretch;
 }
 
+/* Fills the whole app window - above the sidebar and top bar, below modals
+   (see MapPageV2.tsx's fullscreen toggle) - opaque background so nothing
+   behind it (the wallpaper, other pages) shows through. !important on
+   position because every premium theme's :root[data-tier="premium"] .main
+   rule (its own page-mount flicker effect) sets position:relative at
+   higher specificity than a plain single class can beat - same fix this
+   file already uses elsewhere for the identical premium-vs-plain-class
+   conflict. */
+.main-map-fullscreen {
+  position: fixed !important;
+  padding: 0;
+  inset: 0;
+  z-index: 500;
+  background: var(--bg);
+}
+
+/* !important: .map-page-header-with-activity also sets display (flex) at
+   the same specificity and is defined later in this file, so without it
+   that rule would win the tie and this element would never actually hide. */
+.map-page-header-hidden,
+.map-page-tabs-hidden {
+  display: none !important;
+}
+
 .map-page-shell {
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  min-height: 0;
+}
+
+/* Map-tab-only layout: the page header and tab bar move into a right-hand
+   column that sits only above the canvas, instead of spanning the full
+   page width above the ticker too - freeing the ticker to run the full
+   height of the page instead of starting below both of them. A grid
+   (not flex) because the ticker needs to span two rows' worth of height
+   that the header and tabs occupy individually - .map-page (MapViewV2's
+   own wrapper div) is flattened out of the layout with display:contents so
+   its two real children (.map-ticker, .map-main) become direct grid items
+   here, sitting beside the header/tabs as if they'd always been siblings.
+   Scoped to when the Map sub-tab is active (see MapPageV2.tsx) - the other
+   5 sub-tabs (Gate Check, D-Scan, etc.) have no ticker to make room for,
+   so they keep the plain stacked layout above. */
+.map-page-shell-map {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas:
+    "ticker header"
+    "ticker tabs"
+    "ticker content";
+}
+
+.map-page-shell-map > .map-page-header {
+  grid-area: header;
+}
+
+.map-page-shell-map > .map-page-tabs {
+  grid-area: tabs;
+}
+
+.map-page-shell-map > .map-page {
+  display: contents;
+}
+
+.map-page-shell-map .map-ticker {
+  grid-area: ticker;
+  height: 100%;
+}
+
+.map-page-shell-map .map-main {
+  grid-area: content;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -8242,6 +8350,16 @@ img.fit-wheel-clickable:hover {
   gap: 6px;
 }
 
+/* Refresh/fullscreen aren't filters - pushed to the far right of the search
+   bar (margin-left: auto consumes the row's remaining space) so they read
+   as standalone actions, not part of the FW/Sov/Incursion/Heat toggle
+   group they used to sit flush against. */
+.map-action-toggles {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
 .map-icons-toggle {
   display: flex;
   align-items: center;
@@ -8324,6 +8442,63 @@ img.fit-wheel-clickable:hover {
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   overflow: hidden;
+}
+
+/* Top Active Systems/Regions, folded into the ticker panel itself instead
+   of sitting in the page header (see MapPageV2.tsx) - both are "last-hour
+   kill intelligence" derived from the exact same heat data, so this reads
+   as one panel's own stats rather than two unrelated widgets. Collapsed by
+   default behind the toggle button below it, though - the ticker's own
+   real estate is for the live feed, and this is a real but secondary
+   stat that shouldn't permanently cost the feed its own height. */
+.map-ticker-top-activity-toggle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  font-family: var(--font-label);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.map-ticker-top-activity-toggle:hover {
+  color: var(--text);
+}
+
+.map-ticker-top-activity-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.map-ticker-top-activity-toggle svg.map-ticker-chevron-open {
+  transform: rotate(180deg);
+}
+
+/* Stacked (not the header's original side-by-side columns) since 300px
+   isn't enough width for two columns without truncating longer region
+   names like "Vale of the Silent". */
+.map-ticker-top-activity {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.map-ticker-top-activity-col p {
+  margin: 0 0 4px;
+  font-family: var(--font-label);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .map-ticker-proximity {
@@ -8425,6 +8600,33 @@ img.fit-wheel-clickable:hover {
 .map-ticker-row-alert-system:hover,
 .map-ticker-row-alert-nearby:hover {
   filter: brightness(1.15);
+}
+
+/* A tracked character's own death - independent of severity above (that's
+   about proximity to your current location, this is about who died), so it
+   gets its own color rather than overloading red/amber with a third
+   meaning. Declared after the alert rules so it wins the rare case a kill
+   is both nearby/in-system AND a tracked friend - worth knowing either way,
+   but "someone I track just died" is the one worth surfacing first. */
+.map-ticker-row-tracked {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--accent-soft);
+}
+
+.map-ticker-row-tracked:hover {
+  filter: brightness(1.15);
+}
+
+.map-ticker-tracked-victim {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-label);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* Generalized version of the map ticker's own row-tint recipe above, as a
@@ -8646,6 +8848,22 @@ img.fit-wheel-clickable:hover {
     0 0 10px var(--wormhole-glow);
 }
 
+/* Same slot/type/glow treatment as the wormhole badge above, but its own
+   fixed color (see --abyssal/--abyssal-glow) - abyssal kills used to share
+   the wormhole badge's purple, which read as "this is a wormhole kill"
+   when it's actually a different "can't be shown on the map" category. */
+.map-ticker-abyssal-badge {
+  font-family: var(--font-label);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--abyssal);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-shadow:
+    0 0 5px var(--abyssal-glow),
+    0 0 10px var(--abyssal-glow);
+}
+
 /* Same slot, type, and neon-glow treatment as the wormhole badge, but the
    colour comes inline from securityColor() (the --sec-N scale, per-0.1) so
    the tag and that system's dot on the map are always the same colour - the
@@ -8710,13 +8928,20 @@ img.fit-wheel-clickable:hover {
   font-size: 15px;
 }
 
+/* Lives in the page header (see MapPage.tsx) rather than overlaid on the
+   canvas, so the map itself stays completely clean and never has anything
+   drawn on top of it in a corner. */
 .map-top-activity {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
   display: flex;
   gap: 8px;
-  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.map-page-header-with-activity {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .map-legend {

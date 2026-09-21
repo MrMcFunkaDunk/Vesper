@@ -41,7 +41,7 @@ export function useTrackedEntityEvents() {
   useEffect(() => {
     const unlistenPromise = listen<TrackedEntityEvent>("tracked-player-event", (e) => {
       const { title, message } = describe(e.payload);
-      addNotification(title, message, undefined, e.payload.killmail_id);
+      addNotification(title, message, undefined, e.payload.killmail_id, e.payload.event === "died" ? "death" : "kill");
       showToast(title, message);
       const prefs = readNotificationPreferences();
       if (prefs.enabled && prefs.trackedPlayerKills) {

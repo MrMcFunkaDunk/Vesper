@@ -1,6 +1,8 @@
 use crate::esi::public_get;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Deserialize)]
 struct EsiFaction {
@@ -38,7 +40,28 @@ pub struct IncursionSystem {
     pub state: String,
 }
 
+/// ESI's own `incursion` rate-limit group is a tight 150 requests per 15
+/// minutes, shared across the whole app - confirmed live against ESI's
+/// response headers (`X-Ratelimit-Group: incursion`, `X-Ratelimit-Limit:
+/// 150/15m`). The map polls this every 30s AND on every window focus/
+/// visibility change (incursions relocate over hours, not seconds, so
+/// staying maximally fresh isn't the goal - see get_fw_systems below for
+/// the same reasoning), and with more than one map view mounted at once
+/// that's easily enough real ESI calls to exhaust the budget and start
+/// getting 429s. Caching in memory for a couple of minutes means any
+/// number of callers, any number of mounted map views, cost at most one
+/// real ESI call per window.
+static INCURSIONS_CACHE: LazyLock<Mutex<Option<(i64, Vec<IncursionSystem>)>>> = LazyLock::new(|| Mutex::new(None));
+const INCURSIONS_CACHE_SECONDS: i64 = 120;
+
 pub async fn fetch_incursions(client: &reqwest::Client) -> Result<Vec<IncursionSystem>, String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    if let Some((cached_at, cached)) = INCURSIONS_CACHE.lock().unwrap().clone() {
+        if now - cached_at < INCURSIONS_CACHE_SECONDS {
+            return Ok(cached);
+        }
+    }
+
     let raw: Vec<EsiIncursion> = public_get(client, "/incursions/").await?;
     let factions = fetch_faction_names(client).await;
     let mut result = Vec::new();
@@ -54,6 +77,7 @@ pub async fn fetch_incursions(client: &reqwest::Client) -> Result<Vec<IncursionS
             });
         }
     }
+    *INCURSIONS_CACHE.lock().unwrap() = Some((now, result.clone()));
     Ok(result)
 }
 
@@ -119,8 +143,24 @@ pub struct SovEntry {
     pub faction_id: Option<i64>,
 }
 
+/// Same reasoning and pattern as INCURSIONS_CACHE above - the `sovereignty`
+/// rate-limit group has a much roomier 600/15m budget, but sov ownership
+/// itself only ever changes after a multi-day campaign, so there's no
+/// reason to spend any of that budget polling it every 30s per mounted map
+/// view either.
+static SOV_MAP_CACHE: LazyLock<Mutex<Option<(i64, Vec<SovEntry>)>>> = LazyLock::new(|| Mutex::new(None));
+const SOV_MAP_CACHE_SECONDS: i64 = 300;
+
 pub async fn fetch_sovereignty_map(client: &reqwest::Client) -> Result<Vec<SovEntry>, String> {
-    public_get(client, "/sovereignty/map/").await
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    if let Some((cached_at, cached)) = SOV_MAP_CACHE.lock().unwrap().clone() {
+        if now - cached_at < SOV_MAP_CACHE_SECONDS {
+            return Ok(cached);
+        }
+    }
+    let result: Vec<SovEntry> = public_get(client, "/sovereignty/map/").await?;
+    *SOV_MAP_CACHE.lock().unwrap() = Some((now, result.clone()));
+    Ok(result)
 }
 
 #[derive(Serialize)]

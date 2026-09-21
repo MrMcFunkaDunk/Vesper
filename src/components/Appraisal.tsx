@@ -178,8 +178,8 @@ function Appraisal() {
             // whole region rather than reporting a false zero.
             const buyBook = buySide.length > 0 ? buySide : buySideAll;
             const sellBook = sellSide.length > 0 ? sellSide : sellSideAll;
-            const sellWalk = walkBook(buyBook, item.quantity);
-            const buyWalk = walkBook(sellBook, item.quantity);
+            const sellWalk = walkBook(sellBook, item.quantity);
+            const buyWalk = walkBook(buyBook, item.quantity);
             return {
               ...item,
               sellUnit: sellWalk.filled > 0 ? sellWalk.total / sellWalk.filled : null,
@@ -295,11 +295,11 @@ function Appraisal() {
               <div className="market-browser-stats appraisal-summary">
                 <div className="market-stat-card">
                   <span className="market-stat-label">Total Sell Value</span>
-                  <span className="market-stat-value wallet-amount-positive">{formatIsk(totalSell)}</span>
+                  <span className="market-stat-value wallet-amount-negative">{formatIsk(totalSell)}</span>
                 </div>
                 <div className="market-stat-card">
                   <span className="market-stat-label">Total Buy Value</span>
-                  <span className="market-stat-value wallet-amount-negative">{formatIsk(totalBuy)}</span>
+                  <span className="market-stat-value wallet-amount-positive">{formatIsk(totalBuy)}</span>
                 </div>
                 <div className="market-stat-card" title="The midpoint between Total Sell Value and Total Buy Value - the fair price for handing this whole list off in a single direct trade.">
                   <span className="market-stat-label">Split</span>
@@ -340,18 +340,18 @@ function Appraisal() {
                               {r.name}
                               {r.typeId == null && <span className="data-table-tag data-table-tag-danger">unresolved</span>}
                               {r.typeId != null && r.sellFilled < r.quantity && (
-                                <span className="data-table-tag data-table-tag-neutral" title="Not enough buy-order depth to fill the full quantity">
+                                <span className="data-table-tag data-table-tag-neutral" title="Not enough sell-order depth to fill the full quantity">
                                   thin liquidity
                                 </span>
                               )}
                             </span>
                           </td>
                           <td className="data-table-numeric">{r.quantity.toLocaleString()}</td>
-                          <td className="data-table-numeric wallet-amount-positive">{r.sellUnit != null ? formatIsk(r.sellUnit) : "—"}</td>
-                          <td className="data-table-numeric wallet-amount-negative">{r.buyUnit != null ? formatIsk(r.buyUnit) : "—"}</td>
-                          <td className="data-table-numeric wallet-amount-positive">{formatIsk(r.sellTotal)}</td>
+                          <td className="data-table-numeric wallet-amount-negative">{r.sellUnit != null ? formatIsk(r.sellUnit) : "—"}</td>
+                          <td className="data-table-numeric wallet-amount-positive">{r.buyUnit != null ? formatIsk(r.buyUnit) : "—"}</td>
+                          <td className="data-table-numeric wallet-amount-negative">{formatIsk(r.sellTotal)}</td>
                           <td className="data-table-numeric market-stat-value-isk">{formatIsk(splitTotal(r.sellTotal, r.buyTotal))}</td>
-                          <td className="data-table-numeric wallet-amount-negative">{formatIsk(r.buyTotal)}</td>
+                          <td className="data-table-numeric wallet-amount-positive">{formatIsk(r.buyTotal)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -359,8 +359,8 @@ function Appraisal() {
                 </div>
                 <div className="appraisal-footer">
                   <p className="price-checker-total">
-                    Sell: <span className="wallet-amount-positive">{formatIsk(totalSell)}</span> · Buy:{" "}
-                    <span className="wallet-amount-negative">{formatIsk(totalBuy)}</span>
+                    Sell: <span className="wallet-amount-negative">{formatIsk(totalSell)}</span> · Buy:{" "}
+                    <span className="wallet-amount-positive">{formatIsk(totalBuy)}</span>
                     {unresolvedCount > 0 && ` · ${unresolvedCount} item(s) couldn't be matched`}
                   </p>
                   <button type="button" className="gatecheck-save-button" onClick={copySummary}>

@@ -5,6 +5,7 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
@@ -772,9 +773,23 @@ pub struct SovStructureStatus {
 /// system's TCU/iHub can actually be reinforced right now, not just who
 /// owns it (see get_sovereignty_map for ownership alone). Public ESI, one
 /// call for the whole universe.
+/// Shares the `sovereignty` ESI rate-limit group (600/15m) with
+/// get_sovereignty_map in threats.rs - see INCURSIONS_CACHE there for why
+/// every uncached map overlay fetch got its own in-memory cache this pass.
+/// Vulnerability windows are set well ahead of time, so a couple of
+/// minutes of staleness is never user-visible.
+static SOV_STRUCTURES_CACHE: LazyLock<Mutex<Option<(i64, Vec<SovStructureStatus>)>>> = LazyLock::new(|| Mutex::new(None));
+const SOV_STRUCTURES_CACHE_SECONDS: i64 = 120;
+
 pub async fn get_sov_structures(client: &reqwest::Client) -> Result<Vec<SovStructureStatus>, String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    if let Some((cached_at, cached)) = SOV_STRUCTURES_CACHE.lock().unwrap().clone() {
+        if now - cached_at < SOV_STRUCTURES_CACHE_SECONDS {
+            return Ok(cached);
+        }
+    }
     let entries: Vec<SovStructureEntry> = esi::public_get(client, "/sovereignty/structures/").await?;
-    Ok(entries
+    let result: Vec<SovStructureStatus> = entries
         .into_iter()
         .map(|e| SovStructureStatus {
             solar_system_id: e.solar_system_id,
@@ -783,7 +798,9 @@ pub async fn get_sov_structures(client: &reqwest::Client) -> Result<Vec<SovStruc
             vulnerable_start_time: e.vulnerable_start_time,
             vulnerable_end_time: e.vulnerable_end_time,
         })
-        .collect())
+        .collect();
+    *SOV_STRUCTURES_CACHE.lock().unwrap() = Some((now, result.clone()));
+    Ok(result)
 }
 
 #[derive(Serialize, Clone)]
@@ -840,9 +857,26 @@ pub async fn get_system_activity(client: &reqwest::Client) -> Result<Vec<SystemA
 /// tiny, decades-stable set (the 4 empires), so that mapping lives in the
 /// frontend rather than costing an extra ESI name-resolution round trip
 /// here for values that never change.
+/// ESI's `factional-warfare` rate-limit group is just as tight as
+/// `incursion` - 150 requests per 15 minutes, confirmed live against ESI's
+/// own response headers - and was hitting real 429s for the same reason
+/// (see INCURSIONS_CACHE in threats.rs): no cache at all, polled every 30s
+/// per mounted map view. Front lines do move faster than incursions or
+/// sovereignty, so this gets the shortest TTL of the bunch rather than
+/// going uncached, balancing "stays reasonably live" against "can't ever
+/// burn through the budget no matter how many views are open".
+static FW_SYSTEMS_CACHE: LazyLock<Mutex<Option<(i64, Vec<FwSystemStatus>)>>> = LazyLock::new(|| Mutex::new(None));
+const FW_SYSTEMS_CACHE_SECONDS: i64 = 60;
+
 pub async fn get_fw_systems(client: &reqwest::Client) -> Result<Vec<FwSystemStatus>, String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    if let Some((cached_at, cached)) = FW_SYSTEMS_CACHE.lock().unwrap().clone() {
+        if now - cached_at < FW_SYSTEMS_CACHE_SECONDS {
+            return Ok(cached);
+        }
+    }
     let entries: Vec<FwSystemEntry> = esi::public_get(client, "/fw/systems/").await?;
-    Ok(entries
+    let result: Vec<FwSystemStatus> = entries
         .into_iter()
         .map(|e| FwSystemStatus {
             solar_system_id: e.solar_system_id,
@@ -852,7 +886,9 @@ pub async fn get_fw_systems(client: &reqwest::Client) -> Result<Vec<FwSystemStat
             victory_points: e.victory_points,
             victory_points_threshold: e.victory_points_threshold,
         })
-        .collect())
+        .collect();
+    *FW_SYSTEMS_CACHE.lock().unwrap() = Some((now, result.clone()));
+    Ok(result)
 }
 
 /// Loads the universe map (systems/jumps/regions/station services) from the

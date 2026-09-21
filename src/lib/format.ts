@@ -229,6 +229,20 @@ export function isWSpaceSystemName(name: string): boolean {
   return /^J\d{6}$/.test(name);
 }
 
+/** Real, unchanging EVE naming convention for Abyssal Deadspace pockets -
+ * always "AD" followed by exactly 3 digits (AD001-AD200 across the 5 abyssal
+ * "regions"). These aren't part of the persistent stargate network - no
+ * fixed universe position, no jumps, entered only via a filament and always
+ * exited before its timer runs out - so they're absent from the map's own
+ * system list (which needs a real 2D map position to place a dot) even
+ * though ESI will happily resolve the id/name for a kill that happened
+ * there. Their reported security_status (-0.99 for all of them) is a
+ * placeholder, not a real value, so treat this the same as w-space: carve
+ * it out by name before falling back to a numeric security band. */
+export function isAbyssalSystemName(name: string): boolean {
+  return /^AD\d{3}$/.test(name);
+}
+
 /** Four-way security-band classification for kill-feed filtering - w-space
  * carved out by name (see isWSpaceSystemName) since its security_status
  * doesn't reliably separate from nullsec, everything else falls back to

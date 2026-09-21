@@ -44,6 +44,12 @@
      deck's own weathered-indicator-light feel rather than a clean neon. */
   --wormhole: #b8628f;
   --wormhole-glow: rgba(184, 98, 143, 0.4);
+  /* This deck's own --wormhole fix already claimed rose-magenta, so abyssal
+     gets a warm rust-orange instead - stays in the deck's weathered
+     industrial palette while staying clearly distinct from both wormhole
+     and --danger. */
+  --abyssal: #c96a35;
+  --abyssal-glow: rgba(201, 106, 53, 0.4);
 
   --kill-corp: #6f8a9e;
   --kill-alliance: #9c7a5e;
@@ -346,6 +352,12 @@
      distinct from Bulkhead's own rose-magenta fix. */
   --wormhole: #c9689e;
   --wormhole-glow: rgba(201, 104, 158, 0.45);
+  /* Wormhole/danger/warning already cover magenta/red/orange in this deck,
+     so abyssal gets a deep gold instead - still reads as "this brass
+     terminal's own warm palette", just a genuinely different hue from the
+     other three rather than a fourth shade of red. */
+  --abyssal: #d4af1f;
+  --abyssal-glow: rgba(212, 175, 31, 0.45);
 
   --kill-corp: #6fa8d9;
   --kill-alliance: #a98ae0;

@@ -23,6 +23,14 @@ export interface NotificationItem {
    * kill/death notification. Handled separately from `url` above since this
    * is in-app React navigation, not something the opener plugin can do. */
   killmailId?: number;
+  /** A third in-app click action, alongside url/killmailId above - only
+   * "open-whats-new" exists today (reopens the What's New modal), handled
+   * by NotificationBell's onOpenWhatsNew callback rather than navigation. */
+  action?: "open-whats-new";
+  /** Tints the row so a glance at the bell tells kill (green) from death
+   * (red) from an app update (gold, matching the Split Price/ISK color)
+   * apart from everything else, which stays untinted. */
+  kind?: "update" | "kill" | "death";
   /** ISO timestamp. */
   time: string;
   read: boolean;
@@ -31,7 +39,14 @@ export interface NotificationItem {
 interface NotificationCenterState {
   notifications: NotificationItem[];
   unreadCount: number;
-  addNotification: (title: string, message?: string, url?: string, killmailId?: number) => void;
+  addNotification: (
+    title: string,
+    message?: string,
+    url?: string,
+    killmailId?: number,
+    kind?: NotificationItem["kind"],
+    action?: NotificationItem["action"],
+  ) => void;
   markRead: (id: string) => void;
   markAllRead: () => void;
   clear: () => void;
@@ -58,13 +73,22 @@ export function NotificationCenterProvider({ children }: { children: ReactNode }
   const [notifications, setNotifications] = usePersistentState<NotificationItem[]>(STORAGE_KEY, []);
   const [notificationVolume] = useNotificationSoundVolume();
 
-  function addNotification(title: string, message?: string, url?: string, killmailId?: number) {
+  function addNotification(
+    title: string,
+    message?: string,
+    url?: string,
+    killmailId?: number,
+    kind?: NotificationItem["kind"],
+    action?: NotificationItem["action"],
+  ) {
     const item: NotificationItem = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       title,
       message,
       url,
       killmailId,
+      kind,
+      action,
       time: new Date().toISOString(),
       read: false,
     };

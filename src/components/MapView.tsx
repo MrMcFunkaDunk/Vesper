@@ -1,35 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Crosshair, MapPin, BarChart3, RefreshCw } from "lucide-react";
+import { Search, X, Crosshair, MapPin, BarChart3, RefreshCw, Radar, Maximize2, Minimize2, ChevronDown, Skull } from "lucide-react";
 import SystemStatsPanel from "./SystemStatsPanel";
+import { useTrackedEntities } from "../hooks/useTrackedEntities";
 import {
   getMapData,
   getCharacterHomeSystems,
   getPlayerStructures,
   getFwSystems,
-  fwFactionColor,
-  FW_FACTION_LIST,
   getSovereigntyMap,
-  getSovStructures,
-  isSovVulnerableNow,
   getIncursions,
   getSystemActivity,
   colorForId,
   type MapData,
   type MapSystem,
+  type MapJump,
   type PlayerStructureInfo,
   type FwSystemStatus,
   type SovEntry,
-  type SovStructureStatus,
   type IncursionSystem,
   type SystemActivityCounts,
 } from "../lib/map";
-import { useTrackedEntities } from "../hooks/useTrackedEntities";
 import { useErrorReporter } from "../hooks/useErrorReporter";
 import {
   securityColor,
   securityColorResolved,
   securityBand,
   isWSpaceSystemName,
+  isAbyssalSystemName,
   formatSecurity,
   formatUtcTime,
   formatIskCompact,
@@ -77,6 +74,119 @@ const MIN_ZOOM_RATIO = 0.5;
 const MAX_ZOOM_RATIO = 400;
 const LABEL_ZOOM_RATIO = 12;
 const LABEL_MAX_VISIBLE = 200;
+/** Cap on how many systems get the per-node glow gradient (see draw()) -
+ * more generous than LABEL_MAX_VISIBLE since a small radial gradient is far
+ * cheaper than a text label, but a full-universe zoom-out (tens of
+ * thousands of systems) still needs a safety valve. */
+// Pre-rendered glow sprites (one per security tenth, blitted via drawImage
+// and scaled to whatever radius a given frame needs) replace building a
+// fresh createRadialGradient + fill per system per frame - the same
+// point-sprite idea the EVE Frontier Map project's WebGL renderer uses for
+// its own star glow, adapted to Canvas2D. Cheap enough that the visible-
+// system cap below could be raised well past the old gradient-per-node
+// budget without the glow costing a stutter.
+const GLOW_SPRITE_SIZE = 128;
+
+function buildGlowSprite(rgb: string): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = GLOW_SPRITE_SIZE;
+  canvas.height = GLOW_SPRITE_SIZE;
+  const c = canvas.getContext("2d")!;
+  const r = GLOW_SPRITE_SIZE / 2;
+  const gradient = c.createRadialGradient(r, r, 0, r, r, r);
+  gradient.addColorStop(0, `rgba(${rgb}, 0.3)`);
+  gradient.addColorStop(0.5, `rgba(${rgb}, 0.08)`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+  c.fillStyle = gradient;
+  c.beginPath();
+  c.arc(r, r, r, 0, Math.PI * 2);
+  c.fill();
+  return canvas;
+}
+
+function getGlowSprite(cache: Map<number, HTMLCanvasElement>, secTenth: number, rgb: string): HTMLCanvasElement {
+  let sprite = cache.get(secTenth);
+  if (!sprite) {
+    sprite = buildGlowSprite(rgb);
+    cache.set(secTenth, sprite);
+  }
+  return sprite;
+}
+
+/** Same pre-rendered-sprite trick as buildGlowSprite/getGlowSprite above,
+ * for the node's own "glassy disc" fill - a different gradient shape (a
+ * hard edge at the circle boundary rather than a soft falloff well beyond
+ * it), so it gets its own sprite/cache rather than reusing the glow's. */
+function buildDiscSprite(rgb: string): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = GLOW_SPRITE_SIZE;
+  canvas.height = GLOW_SPRITE_SIZE;
+  const c = canvas.getContext("2d")!;
+  const r = GLOW_SPRITE_SIZE / 2;
+  const gradient = c.createRadialGradient(r, r, 0, r, r, r);
+  gradient.addColorStop(0, `rgba(${rgb}, 0.1)`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0.55)`);
+  c.fillStyle = gradient;
+  c.beginPath();
+  c.arc(r, r, r, 0, Math.PI * 2);
+  c.fill();
+  return canvas;
+}
+
+function getDiscSprite(cache: Map<number, HTMLCanvasElement>, secTenth: number, rgb: string): HTMLCanvasElement {
+  let sprite = cache.get(secTenth);
+  if (!sprite) {
+    sprite = buildDiscSprite(rgb);
+    cache.set(secTenth, sprite);
+  }
+  return sprite;
+}
+
+/** Same sprite-caching idea again for the kill/traffic/NPC heat glows -
+ * these were still building a fresh createRadialGradient per active system
+ * per frame. Unlike security tier (11 fixed values), heat intensity is a
+ * continuous 0-1 float, so color/alpha are quantized into a small number of
+ * buckets for caching purposes while glowRadius itself stays a smooth,
+ * unquantized function of the real intensity (drawImage scaling is
+ * continuous, so only the color has to step). Keyed by "family" (kill/
+ * traffic/npc) since each has its own color ramp. */
+const HEAT_GLOW_BUCKETS = 24;
+
+function buildHeatGlowSprite(intensity: number, stops: [number, number, number, number][]): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = GLOW_SPRITE_SIZE;
+  canvas.height = GLOW_SPRITE_SIZE;
+  const c = canvas.getContext("2d")!;
+  const r = GLOW_SPRITE_SIZE / 2;
+  const [hr, hg, hb] = heatColor(intensity, stops);
+  const gradient = c.createRadialGradient(r, r, 0, r, r, r);
+  gradient.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${clamp(intensity * 0.95, 0.05, 0.95)})`);
+  gradient.addColorStop(0.45, `rgba(${hr}, ${hg}, ${hb}, ${clamp(intensity * 0.5, 0.03, 0.55)})`);
+  gradient.addColorStop(1, `rgba(${hr}, ${hg}, ${hb}, 0)`);
+  c.fillStyle = gradient;
+  c.beginPath();
+  c.arc(r, r, r, 0, Math.PI * 2);
+  c.fill();
+  return canvas;
+}
+
+function getHeatGlowSprite(
+  cache: Map<string, HTMLCanvasElement>,
+  family: string,
+  intensity: number,
+  stops: [number, number, number, number][],
+): HTMLCanvasElement {
+  const bucket = clamp(Math.round(intensity * HEAT_GLOW_BUCKETS), 0, HEAT_GLOW_BUCKETS);
+  const key = `${family}-${bucket}`;
+  let sprite = cache.get(key);
+  if (!sprite) {
+    sprite = buildHeatGlowSprite(bucket / HEAT_GLOW_BUCKETS, stops);
+    cache.set(key, sprite);
+  }
+  return sprite;
+}
+
+const GLOW_MAX_VISIBLE = 2500;
 
 interface ServiceIcon {
   abbr: string;
@@ -160,6 +270,45 @@ function drawPin(ctx: CanvasRenderingContext2D, tipX: number, tipY: number, head
   ctx.arc(tipX, headCenterY, headRadius * 0.4, 0, Math.PI * 2);
   ctx.fillStyle = "rgba(10, 10, 12, 0.55)";
   ctx.fill();
+}
+
+/** A targeting reticle - a ring plus 4 short tick marks standing off from
+ * it on each side - for the selected system, in place of the plain drop-pin
+ * every other marker on this map already uses (current location, home
+ * base, destination). With three different pin-shaped markers now possible
+ * on the same map, "selected" needs a shape that reads as clearly distinct
+ * at a glance rather than just another pin in a different color.
+ *
+ * `progress` (0-1, eased outside this function) drives a brief "locking on"
+ * assembly: the 4 ticks start further out and snap inward to their resting
+ * position while the whole reticle fades in, rather than simply appearing
+ * at full strength the instant a system is clicked. Callers pass 1 outright
+ * under reduced motion, skipping the animation entirely rather than easing
+ * toward it. */
+function drawSelectionReticle(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string, progress: number) {
+  ctx.globalAlpha = 0.3 + 0.7 * progress;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  const gap = 4;
+  const arm = 7;
+  const spread = 10 * (1 - progress);
+  const g = gap + spread;
+  const a = arm + spread;
+  ctx.beginPath();
+  ctx.moveTo(x - radius - a, y);
+  ctx.lineTo(x - radius - g, y);
+  ctx.moveTo(x + radius + g, y);
+  ctx.lineTo(x + radius + a, y);
+  ctx.moveTo(x, y - radius - a);
+  ctx.lineTo(x, y - radius - g);
+  ctx.moveTo(x, y + radius + g);
+  ctx.lineTo(x, y + radius + a);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 /** A character's portrait clipped to a circle, for the map's home-base pins
@@ -313,10 +462,6 @@ const NPC_COLOR_STOPS: [number, number, number, number][] = [
   [1, 255, 190, 40],
 ];
 
-/** Sansha is the only faction that runs incursions - one fixed color, no
- * palette needed the way FW's 4 factions or sov's arbitrary owners need. */
-const INCURSION_COLOR = "#c23b8a";
-
 function heatColor(intensity: number, stops: [number, number, number, number][] = HEAT_COLOR_STOPS): [number, number, number] {
   let lo = stops[0];
   let hi = stops[stops.length - 1];
@@ -334,6 +479,56 @@ function heatColor(intensity: number, stops: [number, number, number, number][] 
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+/** ESI's /sovereignty/map/ (see getSovereigntyMap) returns a row for every
+ * system in the game, not just player-held null-sec - highsec/lowsec
+ * systems get one too, owned by their NPC empire faction via faction_id.
+ * "Sovereignty" in the map-filter/dimming sense means real player alliance
+ * or corp ownership specifically, so every check needs alliance_id/
+ * corporation_id, never just "is there an entry at all" (sovRef.has(id) is
+ * true for nearly the whole map and would barely dim anything). */
+function hasSovOwner(sov: SovEntry | undefined): boolean {
+  return (sov?.alliance_id ?? sov?.corporation_id) != null;
+}
+
+/** One "focus" filter's (FW / Sov / Incursion) own jump-line geometry - see
+ * the *GatePathsRef comments where this is called from. `colored` mirrors
+ * gateBucketPathsRef's own local/distant-then-security-tenth bucketing, but
+ * only for connections touching at least one relevant system; `dimmed`
+ * flattens every other connection into a single grey path per tier, since
+ * they all render in the same flat color regardless of security. */
+interface FocusGatePaths {
+  colored: Map<string, Path2D>;
+  dimmed: { local: Path2D; distant: Path2D };
+}
+
+function buildFocusGatePaths(systemById: Map<number, MapSystem>, jumps: MapJump[], isRelevant: (systemId: number) => boolean): FocusGatePaths {
+  const colored = new Map<string, Path2D>();
+  const dimmedLocal = new Path2D();
+  const dimmedDistant = new Path2D();
+  for (const jump of jumps) {
+    const a = systemById.get(jump.from);
+    const b = systemById.get(jump.to);
+    if (!a || !b) continue;
+    const isLocal = a.constellation_id === b.constellation_id;
+    if (isRelevant(a.id) || isRelevant(b.id)) {
+      const secTenth = clamp(Math.round(a.security * 10), 0, 10);
+      const key = `${isLocal ? "s" : "d"}${secTenth}`;
+      let path = colored.get(key);
+      if (!path) {
+        path = new Path2D();
+        colored.set(key, path);
+      }
+      path.moveTo(a.x, a.y);
+      path.lineTo(b.x, b.y);
+    } else {
+      const path = isLocal ? dimmedLocal : dimmedDistant;
+      path.moveTo(a.x, a.y);
+      path.lineTo(b.x, b.y);
+    }
+  }
+  return { colored, dimmed: { local: dimmedLocal, distant: dimmedDistant } };
 }
 
 /** Turns a resolved "#rrggbb" custom-property value into an "r, g, b" triple
@@ -357,6 +552,22 @@ interface MapThemeColors {
   gateHex: string;
   homeRoofBg: string;
   homeBodyBg: string;
+  /** Neutral, theme-consistent grey (--text-secondary) for systems dimmed
+   * out of relevance by an active map filter - e.g. every non-Faction-
+   * Warfare system once the FW overlay is on, the same "everything else
+   * fades to grey" treatment EVE's own client uses so the systems that
+   * actually matter don't have to compete with ~5,000 normally-colored
+   * dots for attention. */
+  mutedRgb: string;
+  mutedHex: string;
+  /** One entry per security tenth (index 0 = 0.0/"min" through index 10 =
+   * 1.0), resolved once per theme change rather than per system per frame -
+   * same "getComputedStyle is expensive inside draw()" reasoning as the
+   * other colors above, just not yet applied to security color until this
+   * (securityColorResolved was still being called per visible system every
+   * frame). */
+  securityHexByTenth: string[];
+  securityRgbByTenth: string[];
 }
 
 /** Every value draw() needs from the active theme, resolved in one batch.
@@ -372,6 +583,8 @@ function resolveThemeColors(): MapThemeColors {
   const rootStyle = getComputedStyle(document.documentElement);
   const accentHex = rootStyle.getPropertyValue("--accent").trim() || "#6fc3d9";
   const gateHex = rootStyle.getPropertyValue("--gate").trim() || "#f0c04a";
+  const mutedHex = rootStyle.getPropertyValue("--text-secondary").trim() || "#808080";
+  const securityHexByTenth = Array.from({ length: 11 }, (_, tenth) => securityColorResolved(tenth / 10));
   return {
     inkColor: rootStyle.getPropertyValue("--text").trim() || "#e6ecf5",
     accentHex,
@@ -381,6 +594,10 @@ function resolveThemeColors(): MapThemeColors {
     gateHex,
     homeRoofBg: rootStyle.getPropertyValue("--bg-elevated-2").trim() || "#1a1c21",
     homeBodyBg: rootStyle.getPropertyValue("--bg-elevated").trim() || "#131418",
+    mutedRgb: hexToRgbTriple(mutedHex),
+    mutedHex,
+    securityHexByTenth,
+    securityRgbByTenth: securityHexByTenth.map(hexToRgbTriple),
   };
 }
 
@@ -445,7 +662,7 @@ interface SystemHeat {
    * drops one kill at a time as each individual kill's own hour elapses. */
   count: number;
   /** Timestamp of the system's single most recent kill - drives whether it's
-   * actively pulsing (see PULSE_RECENCY_MS) independently of the count. */
+   * actively pulsing (see PULSE_ANIMATION_MS) independently of the count. */
   mostRecentAt: number;
 }
 
@@ -453,7 +670,7 @@ interface SystemHeat {
  * glow, bigger rings, bigger dot, brighter color) even between individual
  * kills, so it reads as "what to avoid" rather than just "what just
  * happened" - but only actively *pulses* while something's happening right
- * now (see PULSE_RECENCY_MS), so a still-hot-but-quiet-for-a-while system
+ * now (see PULSE_ANIMATION_MS), so a still-hot-but-quiet-for-a-while system
  * doesn't look identical to one where kills are landing this second.
  * Built from the backend's own last-hour aggregate (getSystemKillHeat)
  * rather than the live ticker feed - that feed is capped at 150 kills New
@@ -469,41 +686,57 @@ function computeSystemHeat(heat: SystemKillHeat[]): Map<number, SystemHeat> {
   return result;
 }
 
-/** How recently a system's last kill has to have landed for its heat to
- * actively pulse - older than this, it still glows at the same brightness
- * (the rolling-hour count hasn't changed) but holds steady instead of
- * breathing, since nothing is actually happening there right now. */
-const PULSE_RECENCY_MS = 2 * 60 * 1000;
-
-function hasRecentHeat(heat: Map<number, SystemHeat>, now: number): boolean {
-  for (const entry of heat.values()) {
-    if (now - entry.mostRecentAt < PULSE_RECENCY_MS) return true;
-  }
-  return false;
-}
+/** How long a system's heat actively *pulses* once this client first
+ * notices a new kill there - older than this, it still glows at the same
+ * brightness (the rolling-hour count hasn't changed) but holds steady
+ * instead of breathing, since nothing is actually happening there right
+ * now. Also gates how long the animation loop keeps redrawing at full
+ * display refresh rate for a visible kill - a system that's been busy
+ * stays visibly hot for the whole hour regardless, it just stops costing a
+ * continuous 60fps+ redraw once the pulse window passes.
+ *
+ * Deliberately measured from heatFirstNoticedAtRef (when THIS client first
+ * saw the kill), never from the kill's own mostRecentAt timestamp - a
+ * killmail has to be reported, fetched, and enriched by killmail.stream/
+ * zKillboard before it ever reaches this app, and that pipeline's own
+ * delay (confirmed live: routinely 50+ seconds) can already exceed a short
+ * pulse window before the data even arrives, silently making the pulse a
+ * no-op despite kills flowing in correctly. Anchoring to first-noticed
+ * instead guarantees the full window is always available, independent of
+ * how stale the upstream data was by the time it got here. */
+const PULSE_ANIMATION_MS = 15_000;
 
 /** Shared breathing wave for anything tied to a system's active-kill pulse
  * (the heat glow/rings and the system dot itself) - phase-offset per
  * system (via systemId) so a cluster of active systems doesn't throb in
  * lockstep, and using the same now/systemId inputs in both places keeps
  * them visibly in sync with each other. Returns a value from `floor` up
- * to 1. */
-function pulseWave(now: number, systemId: number, floor: number): number {
+ * to 1. reducedMotion skips the oscillation entirely and holds at the
+ * brightest/fully-visible end (1) - the information ("this is actively
+ * pulsing") stays legible, only the motion itself is removed, matching
+ * prefers-reduced-motion's own intent rather than just dimming things. */
+function pulseWave(now: number, systemId: number, floor: number, reducedMotion: boolean): number {
+  if (reducedMotion) return 1;
   const phase = (systemId % 1000) * 0.31;
   const wave = 0.5 + 0.5 * Math.sin(now / 300 + phase);
   return floor + (1 - floor) * wave;
 }
 
 
-interface TopActivityEntry {
+export interface TopActivityEntry {
   name: string;
   count: number;
 }
 
+export interface TopActivity {
+  systems: TopActivityEntry[];
+  regions: TopActivityEntry[];
+}
+
 /** Ranks systems and regions by kill count within the last hour, for the
- * "Top Active" overlay panel - same backend aggregate as computeSystemHeat
- * above, already scoped to the rolling hour server-side. */
-function computeTopActivity(heat: SystemKillHeat[]): { systems: TopActivityEntry[]; regions: TopActivityEntry[] } {
+ * "Top Active" panel - same backend aggregate as computeSystemHeat above,
+ * already scoped to the rolling hour server-side. */
+function computeTopActivity(heat: SystemKillHeat[]): TopActivity {
   const regionCounts = new Map<string, number>();
   for (const entry of heat) {
     if (entry.region_name) {
@@ -590,6 +823,157 @@ function computeRegionCenters(systems: MapSystem[]): Map<number, { x: number; y:
   return centers;
 }
 
+/** Same shape as computeRegionCenters, one level down - used to find which
+ * constellation the camera is actually looking at for the close-zoom
+ * region/constellation watermark below, the same way DOTLAN's region maps
+ * (and the in-game 2D map itself) always show "where you are" text even
+ * zoomed in past the point individual region boundaries mean anything. */
+function computeConstellationCenters(systems: MapSystem[]): Map<number, { x: number; y: number }> {
+  const sums = new Map<number, { sumX: number; sumY: number; count: number }>();
+  for (const s of systems) {
+    const entry = sums.get(s.constellation_id) ?? { sumX: 0, sumY: 0, count: 0 };
+    entry.sumX += s.x;
+    entry.sumY += s.y;
+    entry.count += 1;
+    sums.set(s.constellation_id, entry);
+  }
+  const centers = new Map<number, { x: number; y: number }>();
+  for (const [constellationId, { sumX, sumY, count }] of sums) {
+    centers.set(constellationId, { x: sumX / count, y: sumY / count });
+  }
+  return centers;
+}
+
+/** "Sinq Laison" -> "S I N Q   L A I S O N" - Canvas2D fillText has no
+ * letter-spacing property, so the wide-tracked look the in-game 2D map uses
+ * for its background region watermark is built by hand, word gaps doubled
+ * so they still read as separate words once every letter is spaced out. */
+function letterSpaced(text: string): string {
+  return text.toUpperCase().split(" ").map((word) => word.split("").join(" ")).join("   ");
+}
+
+/** Repositions a tooltip by mutating the DOM directly instead of through
+ * React state - see the tooltip refs' own comment for why. */
+function moveTooltip(ref: { current: HTMLDivElement | null }, clientX: number, clientY: number) {
+  if (ref.current) {
+    ref.current.style.left = `${clientX + 16}px`;
+    ref.current.style.top = `${clientY + 16}px`;
+  }
+}
+
+/** Bidirectional stargate adjacency list, built once when the map loads -
+ * the graph-index groundwork the route-planning rewrite needs. Kept
+ * separate from gateBucketPathsRef (that one is rendering geometry, keyed
+ * by tier/security for drawing; this one is pure topology, keyed by system
+ * id, for BFS). */
+function buildAdjacency(jumps: MapJump[]): Map<number, number[]> {
+  const adjacency = new Map<number, number[]>();
+  for (const jump of jumps) {
+    const from = adjacency.get(jump.from);
+    if (from) from.push(jump.to);
+    else adjacency.set(jump.from, [jump.to]);
+    const to = adjacency.get(jump.to);
+    if (to) to.push(jump.from);
+    else adjacency.set(jump.to, [jump.from]);
+  }
+  return adjacency;
+}
+
+/** Unweighted BFS shortest path over the stargate graph - same "shortest"
+ * semantics as every other route-finding in this codebase (see
+ * threats.rs's find_nearest_threat, wormholes.rs's find_chain_route), just
+ * origin-to-a-specific-destination instead of origin-to-nearest-match.
+ * Returns the full path (origin through destination inclusive), or an
+ * empty array if no path exists (e.g. destination is wormhole-only). */
+function findShortestRoute(originId: number, destinationId: number, adjacency: Map<number, number[]>): number[] {
+  if (originId === destinationId) return [originId];
+  const previous = new Map<number, number | null>([[originId, null]]);
+  const queue = [originId];
+  for (let head = 0; head < queue.length; head++) {
+    const current = queue[head];
+    if (current === destinationId) break;
+    for (const next of adjacency.get(current) ?? []) {
+      if (previous.has(next)) continue;
+      previous.set(next, current);
+      queue.push(next);
+    }
+  }
+  if (!previous.has(destinationId)) return [];
+  const route: number[] = [];
+  for (let current: number | null = destinationId; current !== null; current = previous.get(current) ?? null) {
+    route.push(current);
+  }
+  return route.reverse();
+}
+
+/** Anchor candidates a label tries in order - right first (today's only
+ * option), then above/left/below - each expressed as which side of the dot
+ * the label sits on. Same 4-direction set the rewrite plan calls for, sized
+ * to what a small system-name label actually needs (no diagonal anchors -
+ * dense clusters didn't need them in testing, and they'd double the
+ * candidate count for little gain). */
+const LABEL_ANCHOR_SIDES = ["right", "top", "left", "bottom"] as const;
+type LabelAnchorSide = (typeof LABEL_ANCHOR_SIDES)[number];
+
+interface LabelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function rectsOverlap(a: LabelRect, b: LabelRect): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+/** The label's fillText anchor point (left edge, vertical middle - textAlign
+ * stays "left"/textBaseline "middle" for every side, only the starting
+ * point moves) and its bounding rect for collision testing, for one
+ * candidate side around a dot at (sx, sy). */
+function labelRectForSide(
+  side: LabelAnchorSide,
+  sx: number,
+  sy: number,
+  dotRadius: number,
+  gap: number,
+  width: number,
+  height: number,
+): { textX: number; textY: number; rect: LabelRect } {
+  const offset = dotRadius + gap;
+  if (side === "right") {
+    const textX = sx + offset;
+    const textY = sy;
+    return { textX, textY, rect: { x: textX, y: textY - height / 2, width, height } };
+  }
+  if (side === "left") {
+    const textX = sx - offset - width;
+    const textY = sy;
+    return { textX, textY, rect: { x: textX, y: textY - height / 2, width, height } };
+  }
+  const textX = sx - width / 2;
+  const textY = side === "top" ? sy - offset - height / 2 : sy + offset + height / 2;
+  return { textX, textY, rect: { x: textX, y: textY - height / 2, width, height } };
+}
+
+/** Whichever id's centroid is closest to (x, y) - used to find "which
+ * region/constellation is the camera actually looking at" for the
+ * close-zoom watermark, since the camera's current viewport rarely lines up
+ * with any one region's true geometric center. */
+function nearestCenterId(centers: Map<number, { x: number; y: number }>, x: number, y: number): number | null {
+  let bestId: number | null = null;
+  let bestDist = Infinity;
+  for (const [id, c] of centers) {
+    const dx = c.x - x;
+    const dy = c.y - y;
+    const dist = dx * dx + dy * dy;
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestId = id;
+    }
+  }
+  return bestId;
+}
+
 interface MapViewProps {
   /** Called with a killmail id when a ticker row is clicked, so the app can jump to its detail view in Kills & Intel. */
   onSelectKill: (killmailId: number) => void;
@@ -597,6 +981,17 @@ interface MapViewProps {
   onSelectSystem: (system: SystemSummary) => void;
   /** Logged-in characters, used to place home-base portrait pins. */
   characters: SessionCharacter[];
+  /** Called with [origin, destination] when "Send Route to Gate Check" is
+   * clicked, so the page shell can switch to the Gate Check sub-tab and
+   * pre-fill/auto-run it against the same two endpoints - quickly checking
+   * for camps along a route you're about to fly, not just planning it. */
+  onSendRouteToGateCheck?: (systems: MapSystem[]) => void;
+  /** Whether the page shell is currently rendering this component as a
+   * full-viewport overlay (covering the sidebar, top bar, and the map
+   * page's own header/tabs) instead of its normal place in the layout -
+   * drives the toolbar's expand/collapse icon and title. */
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 interface HoverInfo {
@@ -610,11 +1005,67 @@ interface CharacterPin {
   image: HTMLImageElement | null;
 }
 
-function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
+function MapView({
+  onSelectKill,
+  onSelectSystem,
+  characters,
+  onSendRouteToGateCheck,
+  isFullscreen,
+  onToggleFullscreen,
+}: MapViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataRef = useRef<MapData | null>(null);
   const regionCentersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const constellationHullsRef = useRef<Map<number, { x: number; y: number }[]>>(new Map());
+  const constellationCentersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  // Rebuilding this ~8,000-entry lookup from scratch was happening on every
+  // single animation frame (draw() runs at up to 60fps while a kill pulse
+  // is active) even though the underlying system list only ever changes
+  // once per load - cached here instead, alongside the other data-derived
+  // lookups that already follow this pattern.
+  const systemByIdRef = useRef<Map<number, MapSystem>>(new Map());
+  const adjacencyRef = useRef<Map<number, number[]>>(new Map());
+  // The last frame's on-screen system list, kept for hover hit-testing (see
+  // pickSystem) - scanning only what's actually visible instead of every
+  // system in New Eden (~8,000) on every single mousemove.
+  const visibleSystemsRef = useRef<MapSystem[]>([]);
+  // Jump-line geometry in raw data-space, bucketed by tier x security-tenth
+  // (see the draw()-time comment where this is stroked) - built once here
+  // instead of being rebuilt with fresh screen-space moveTo/lineTo calls on
+  // every single animation frame, which was one of draw()'s most expensive
+  // per-frame costs given New Eden's full stargate graph.
+  const gateBucketPathsRef = useRef<Map<string, Path2D>>(new Map());
+  // Each "focus" filter (FW / Sov / Incursion) gets its own line geometry,
+  // parallel to gateBucketPathsRef above but split by "does this connection
+  // touch a system relevant to this filter" - rebuilt (see
+  // buildFocusGatePaths/rebuild*GatePaths) whenever that filter's own data
+  // refreshes, since gateBucketPathsRef's single security-tiered path per
+  // bucket has no way to selectively grey out just the non-relevant
+  // segments without rebuilding it. The *GateBucketPathsRef half keeps the
+  // normal per-tenth colors for relevant connections; the *DimmedGatePathsRef
+  // half flattens every other connection into one grey path per
+  // local/distant tier (no need for 11 separate grey buckets when they all
+  // render in the same flat color). Kept as three independent pairs rather
+  // than one merged "is this relevant to ANY active filter" set so multiple
+  // filters can be on at once - draw() draws every active filter's dimmed
+  // pass first and its colored pass after, so a connection relevant to any
+  // one of them ends up colored regardless of what another filter's own
+  // (unaware) dimmed pass painted first.
+  const emptyFocusGatePaths = (): FocusGatePaths => ({ colored: new Map(), dimmed: { local: new Path2D(), distant: new Path2D() } });
+  const fwGatePathsRef = useRef<FocusGatePaths>(emptyFocusGatePaths());
+  const sovGatePathsRef = useRef<FocusGatePaths>(emptyFocusGatePaths());
+  const incursionGatePathsRef = useRef<FocusGatePaths>(emptyFocusGatePaths());
+  const glowSpriteCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const discSpriteCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  // Not cleared on theme change like the two above - kill/traffic/NPC heat
+  // colors are fixed constants (HEAT_COLOR_STOPS etc.), not theme-derived.
+  const heatGlowSpriteCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  // All constellation hull outlines merged into one Path2D, in data-space,
+  // built once when the map loads - every hull shares the exact same
+  // fill/stroke style, so they can all be drawn with a single fill()/
+  // stroke() call per frame instead of a per-point screen-space rebuild
+  // (moveTo/lineTo through toScreenX/Y for every hull, every frame) the
+  // way this used to work.
+  const constellationHullPathRef = useRef<Path2D>(new Path2D());
   const systemIconsRef = useRef<Map<number, ServiceIcon[]>>(new Map());
   const transformRef = useRef<Transform>({ scale: 1, translateX: 0, translateY: 0 });
   const fitScaleRef = useRef(1);
@@ -625,16 +1076,19 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * size the moment the map first loads. */
   const hasInteractedRef = useRef(false);
   const selectedIdRef = useRef<number | null>(null);
+  // When the current selection was made - drives the reticle's brief
+  // assemble-in animation (see drawSelectionReticle's call site), set
+  // alongside every selectedIdRef assignment.
+  const selectedAtRef = useRef(0);
   const hoveredIdRef = useRef<number | null>(null);
   const tickerHoveredIdRef = useRef<number | null>(null);
   const currentSystemIdRef = useRef<number | null>(null);
+  const destinationIdRef = useRef<number | null>(null);
   const showServiceIconsRef = useRef(true);
   const showFwContestedRef = useRef(false);
   const fwSystemsRef = useRef<Map<number, FwSystemStatus>>(new Map());
   const showSovRef = useRef(false);
   const sovRef = useRef<Map<number, SovEntry>>(new Map());
-  const sovStructuresRef = useRef<Map<number, SovStructureStatus>>(new Map());
-  const trackedSovIdsRef = useRef<Set<number>>(new Set());
   /** Alliance/corp logo images for the Sov filter's ownership badge, keyed
    * by alliance or corp id (EVE ids are unique across every entity type, so
    * one shared cache is safe) - loaded lazily the first time a given owner
@@ -662,10 +1116,52 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * character's marker" apart from "over the system dot" without redoing
    * the pin layout math a second time outside the render loop. */
   const renderedPinsRef = useRef<{ px: number; py: number; radius: number; character: SessionCharacter; kind: "home" | "location" }[]>([]);
+  // Where each system's label actually landed this frame (if it landed at
+  // all - a low-priority label can lose every anchor to collision and be
+  // skipped entirely) - pickSystemForClick reads this instead of assuming
+  // every label sits to a dot's right, now that collision placement can put
+  // one above/left/below instead.
+  const renderedLabelRectsRef = useRef<Map<number, LabelRect>>(new Map());
   const structuresBySystemRef = useRef<Map<number, PlayerStructureInfo[]>>(new Map());
   const heatMapRef = useRef<Map<number, SystemHeat>>(new Map());
+  // When THIS client first observed each system's current mostRecentAt
+  // value (not the kill's own timestamp - see the resync() comment where
+  // this is populated for why the two can differ by a lot). The pulse
+  // check below reads this instead of heatEntry.mostRecentAt directly.
+  const heatFirstNoticedAtRef = useRef<Map<number, number>>(new Map());
   const animFrameRef = useRef<number | null>(null);
   const rafPulseIdRef = useRef<number | null>(null);
+  // Whether any CURRENTLY VISIBLE system is actively pulsing, set once per
+  // draw() by the main node loop below (which already checks this per
+  // system for the dot-pulse itself, so tracking it here is free) - the
+  // animation loop's own continuation checks read this instead of a
+  // universe-wide "is anything recent" check, which is true almost
+  // permanently (EVE has thousands of concurrent players, so some kill
+  // somewhere in New Eden is essentially always "recent") and was keeping
+  // the map redrawing at full display refresh rate nearly all the time
+  // regardless of whether anything on screen was actually changing.
+  const hasVisiblePulseRef = useRef(false);
+  // Last frame's label-visibility decision - see the hysteresis comment
+  // where this is read/written in draw().
+  const showLabelsRef = useRef(false);
+  // Checked once on mount and kept live via the media query's own change
+  // event (an OS-level setting can change without a page reload) - every
+  // pulseWave() call reads this so the kill/FW/sov breathing animations
+  // hold at a steady, fully-visible state instead of oscillating when the
+  // pilot has asked their OS for less motion.
+  const prefersReducedMotionRef = useRef(
+    typeof window !== "undefined" ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handleChange = () => {
+      prefersReducedMotionRef.current = query.matches;
+      requestDraw();
+    };
+    query.addEventListener("change", handleChange);
+    return () => query.removeEventListener("change", handleChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const drawScheduledRef = useRef(false);
   const themeColorsRef = useRef<MapThemeColors>(resolveThemeColors());
   /** Premium-only targeting HUD: the live grid-position readout is written
@@ -692,6 +1188,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * pinned. Cleared by clicking the same system again or clicking
    * elsewhere on the map. */
   const [pinnedHover, setPinnedHover] = useState<HoverInfo | null>(null);
+  // The mouse-event-handling effect below only re-runs when mapData changes
+  // (see its dependency array), so reading pinnedHover state directly inside
+  // handleMouseMove would see a stale, permanently-null closure - mirrored
+  // here instead, updated at every setPinnedHover call site, matching how
+  // selectedIdRef/hoveredIdRef already do this for the same reason.
+  const pinnedHoverRef = useRef<HoverInfo | null>(null);
   /** A lightweight name tag shown while hovering a character's home or
    * live-location marker directly - separate from the system tooltip above
    * since it only needs to answer "whose pin is this", not show a
@@ -704,6 +1206,17 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * the badge's logo alone can't tell you. */
   const [sovHover, setSovHover] = useState<{ name: string; kind: "alliance" | "corporation"; clientX: number; clientY: number } | null>(null);
   const hoveredSovKeyRef = useRef<number | null>(null);
+  // Tooltip DOM nodes, for moveTooltip below - repositioning a tooltip while
+  // the mouse moves over the SAME target used to go through React state
+  // (setXxxHover((prev) => ({...prev, clientX, clientY}))) on every single
+  // mousemove, re-rendering this whole ~2,900-line component just to slide a
+  // tooltip a few pixels. State still carries clientX/clientY for the
+  // INITIAL position when a new target is first hovered (so the tooltip
+  // mounts in the right place); every subsequent move to the same target
+  // mutates the DOM directly through these refs instead.
+  const hoverTooltipRef = useRef<HTMLDivElement | null>(null);
+  const pinTooltipRef = useRef<HTMLDivElement | null>(null);
+  const sovTooltipRef = useRef<HTMLDivElement | null>(null);
   /** Premium-only "target lock" HUD - four bracket corners that snap onto
    * whatever system was just clicked, at the exact screen position of the
    * click (the same clientX/clientY the pinned tooltip above already
@@ -711,10 +1224,14 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
    * increments on every click so re-selecting the same system still
    * restarts the converge animation instead of it silently no-op'ing. */
   const [lockOn, setLockOn] = useState<{ clientX: number; clientY: number; key: number } | null>(null);
-  const [topActivity, setTopActivity] = useState<{ systems: TopActivityEntry[]; regions: TopActivityEntry[] }>({
+  const [topActivity, setTopActivity] = useState<TopActivity>({
     systems: [],
     regions: [],
   });
+  // Collapsed by default - the ticker's own real estate is for the live
+  // kill feed; Top Active is a real but secondary "last hour at a glance"
+  // stat that doesn't need to permanently cost the feed its own height.
+  const [topActivityOpen, setTopActivityOpen] = useState(false);
   /** Same data as heatMapRef, just in React state - the ref alone (updated
    * inside resync, read by the 150ms draw loop) doesn't trigger a re-render,
    * so the hover tooltip's reactive kill-count memo below needs its own
@@ -735,7 +1252,6 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     heatMode,
     setHeatMode,
   } = useMapDisplayPrefs();
-  const { entities: trackedEntities } = useTrackedEntities();
   // Ticks forward periodically purely to force the nearby-feed expiry check
   // below to re-run even when no new kill has arrived - otherwise a kill
   // sitting past PROXIMITY_EXPIRY_MS would only actually drop out of the
@@ -753,6 +1269,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   useEffect(() => {
     function handleThemeChange() {
       themeColorsRef.current = resolveThemeColors();
+      // Cached sprites bake in the OLD theme's security colors - stale
+      // once the palette changes, so they're dropped and lazily rebuilt
+      // from the freshly-resolved colors above on the next draw().
+      glowSpriteCacheRef.current.clear();
+      discSpriteCacheRef.current.clear();
       requestDraw();
     }
     window.addEventListener(THEME_CHANGE_EVENT, handleThemeChange);
@@ -762,8 +1283,52 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   const reportError = useErrorReporter();
   const { kills } = useRecentActivity();
   const { alertKillIds, currentSystem, setCurrentSystem, radius, setRadius } = useLocationTracking();
+  // A tracked friend's own death belongs in the same "surface this above
+  // everything else" box as a nearby kill, regardless of where in New Eden
+  // it happened - see proximityTickerKills below, which folds this into the
+  // same feed rather than leaving it to show up wherever it falls in the
+  // full general ticker underneath.
+  const { entities: trackedEntities } = useTrackedEntities();
+  const trackedCharacterIds = useMemo(
+    () => new Set(trackedEntities.filter((e) => e.kind === "character").map((e) => e.entity_id)),
+    [trackedEntities],
+  );
+
+  // Route planning - first piece of the map rewrite. Origin is whatever
+  // useLocationTracking already treats as "my current system" (shared with
+  // the rest of the app, not map-local state); destination is picked here.
+  // The route itself is plain BFS over the same stargate graph the map
+  // already renders (see findShortestRoute/adjacencyRef) - unweighted, same
+  // "shortest" semantics as every other route-finding already in this
+  // codebase, entirely client-side since the full jump graph is already
+  // loaded for rendering.
+  const [destinationSystem, setDestinationSystem] = useState<MapSystem | null>(null);
+  const route = useMemo(() => {
+    if (!currentSystem || !destinationSystem) return [];
+    return findShortestRoute(currentSystem.id, destinationSystem.id, adjacencyRef.current);
+    // mapData (not adjacencyRef itself, which isn't reactive) signals when
+    // adjacencyRef.current has actually been freshly populated.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSystem, destinationSystem, mapData]);
+  const routeRef = useRef<number[]>([]);
+  useEffect(() => {
+    routeRef.current = route;
+    requestDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route]);
 
   const regionsById = mapData ? new Map(mapData.regions.map((r) => [r.id, r.name])) : new Map<number, string>();
+
+  // Escape exits fullscreen - the standard expectation for anything that
+  // takes over the whole window, on top of the toolbar button itself.
+  useEffect(() => {
+    if (!isFullscreen || !onToggleFullscreen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onToggleFullscreen!();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen, onToggleFullscreen]);
 
   useEffect(() => {
     getMapData()
@@ -775,8 +1340,43 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         const flipped: MapData = { ...data, systems: data.systems.map((s) => ({ ...s, y: -s.y })) };
         dataRef.current = flipped;
         regionCentersRef.current = computeRegionCenters(flipped.systems);
-        constellationHullsRef.current = computeConstellationHulls(flipped.systems);
+        constellationCentersRef.current = computeConstellationCenters(flipped.systems);
+        systemByIdRef.current = new Map(flipped.systems.map((s) => [s.id, s]));
+        adjacencyRef.current = buildAdjacency(flipped.jumps);
+
+        const buckets = new Map<string, Path2D>();
+        for (const jump of flipped.jumps) {
+          const a = systemByIdRef.current.get(jump.from);
+          const b = systemByIdRef.current.get(jump.to);
+          if (!a || !b) continue;
+          const isLocal = a.constellation_id === b.constellation_id;
+          const secTenth = clamp(Math.round(a.security * 10), 0, 10);
+          const key = `${isLocal ? "s" : "d"}${secTenth}`;
+          let path = buckets.get(key);
+          if (!path) {
+            path = new Path2D();
+            buckets.set(key, path);
+          }
+          path.moveTo(a.x, a.y);
+          path.lineTo(b.x, b.y);
+        }
+        gateBucketPathsRef.current = buckets;
+        const hullPath = new Path2D();
+        for (const hull of computeConstellationHulls(flipped.systems).values()) {
+          if (hull.length < 3) continue;
+          hullPath.moveTo(hull[0].x, hull[0].y);
+          for (let i = 1; i < hull.length; i++) hullPath.lineTo(hull[i].x, hull[i].y);
+          hullPath.closePath();
+        }
+        constellationHullPathRef.current = hullPath;
         systemIconsRef.current = computeSystemIcons(flipped);
+        // In case FW data (see resync()'s getFwSystems call) already arrived
+        // before the jump graph did - rebuildFwGatePaths no-ops until both
+        // are ready, so whichever of the two loads second is what actually
+        // triggers the real build.
+        rebuildFwGatePaths();
+        rebuildSovGatePaths();
+        rebuildIncursionGatePaths();
         setMapData(flipped);
       })
       .catch((err) => reportError(`Failed to load map data: ${String(err)}`))
@@ -933,14 +1533,20 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     // exact right effect ever fire again after a fresh mount.
     if (
       animFrameRef.current === null &&
-      (hasRecentHeat(heatMapRef.current, Date.now()) ||
-        (showFwContestedRef.current && [...fwSystemsRef.current.values()].some((s) => s.contested)) ||
-        (showSovRef.current && [...sovStructuresRef.current.values()].some((s) => isSovVulnerableNow(s))))
+      ([...heatMapRef.current.keys()].some(
+        (systemId) => Date.now() - (heatFirstNoticedAtRef.current.get(systemId) ?? 0) < PULSE_ANIMATION_MS,
+      ) ||
+        (selectedIdRef.current != null && !prefersReducedMotionRef.current && Date.now() - selectedAtRef.current < 150))
     ) {
       ensureAnimating();
     }
 
-    const dpr = window.devicePixelRatio || 1;
+    // Capped rather than using the display's real devicePixelRatio directly
+    // - on a 4K+ monitor that can mean an enormous canvas backing store
+    // (e.g. 2x DPR at 4K is ~33M pixels per redraw), and the extra sharpness
+    // past 1.5x is barely perceptible on a map that's mostly thin lines and
+    // small dots anyway.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
@@ -955,7 +1561,21 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     const toScreenX = (x: number) => x * scale + translateX;
     const toScreenY = (y: number) => y * scale + translateY;
 
-    const systemById = new Map(data.systems.map((s) => [s.id, s]));
+    // Hysteresis around the label/system-detail threshold - without it, a
+    // zoom value hovering right at LABEL_ZOOM_RATIO (a mouse wheel's natural
+    // resting point when zooming in/out by hand) flips every dependent
+    // effect (labels, constellation hulls, the background watermark, sov
+    // logos) on and off every other frame. Once shown, needs a real 15%
+    // zoom-out to hide again; once hidden, needs the full normal threshold
+    // to show - a single computed boolean instead of the 5 separate
+    // `zoomRatio >= LABEL_ZOOM_RATIO` checks below re-deciding independently
+    // (and potentially inconsistently with each other) every frame.
+    const showLabels = showLabelsRef.current
+      ? zoomRatio >= LABEL_ZOOM_RATIO * 0.85
+      : zoomRatio >= LABEL_ZOOM_RATIO;
+    showLabelsRef.current = showLabels;
+
+    const systemById = systemByIdRef.current;
 
     const marginPx = 60;
     const dataMinX = (-translateX - marginPx) / scale;
@@ -981,7 +1601,20 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     // marker used to have hardcoded to the original dark theme's own
     // cyan/red/gold - visibly wrong (a cyan ring on an amber-and-rust
     // Bulkhead map) on every other theme.
-    const { inkColor, accentHex, accentRgb, dangerRgb, gateRgb, gateHex, homeRoofBg, homeBodyBg } = themeColorsRef.current;
+    const {
+      inkColor,
+      accentHex,
+      accentRgb,
+      dangerRgb,
+      gateRgb,
+      gateHex,
+      homeRoofBg,
+      homeBodyBg,
+      mutedRgb,
+      mutedHex,
+      securityHexByTenth,
+      securityRgbByTenth,
+    } = themeColorsRef.current;
     // Dark-on-light reads far fainter than the equivalent light-on-dark at
     // the same alpha (the original 0.08/0.75/0.85 numbers were tuned by eye
     // against the dark theme's near-black canvas) - low enough on Light that
@@ -990,46 +1623,190 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     // as actual flicker. Bumped for Light specifically rather than changing
     // the numbers everyone else already looks right at.
     const isLightTheme = document.documentElement.dataset.theme === "light";
-    const jumpLineAlpha = isLightTheme ? 0.22 : 0.08;
     const nameLabelAlpha = isLightTheme ? 0.92 : 0.75;
     const regionLabelAlpha = isLightTheme ? 1 : 0.85;
 
-    ctx.strokeStyle = inkColor;
-    ctx.globalAlpha = jumpLineAlpha;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (const jump of data.jumps) {
-      const a = systemById.get(jump.from);
-      const b = systemById.get(jump.to);
-      if (!a || !b) continue;
-      if (!inView(a.x, a.y) && !inView(b.x, b.y)) continue;
-      ctx.moveTo(toScreenX(a.x), toScreenY(a.y));
-      ctx.lineTo(toScreenX(b.x), toScreenY(b.y));
+    // Background region/constellation watermark - the in-game 2D map keeps
+    // "where you are" spelled out big and faint behind the systems even
+    // zoomed in close enough to read individual system names (see the real
+    // Sinq Laison reference: "SINQ LAISON" wide-tracked across the middle,
+    // a small italic "Algintal" constellation name above it) rather than
+    // only showing a region name as a fallback once zoomed too far out for
+    // system labels. Anchored on the region/constellation nearest the
+    // viewport's own center, not a fixed geometric centroid that could sit
+    // far outside the current view - and drawn here, before every other
+    // layer, so lines/nodes/labels all paint over it exactly like the
+    // reference's own layering.
+    if (showLabels && data.regions.length > 0) {
+      const viewCenterX = (dataMinX + dataMaxX) / 2;
+      const viewCenterY = (dataMinY + dataMaxY) / 2;
+      const regionId = nearestCenterId(regionCentersRef.current, viewCenterX, viewCenterY);
+      const constellationId = nearestCenterId(constellationCentersRef.current, viewCenterX, viewCenterY);
+      const regionName = regionId != null ? data.regions.find((r) => r.id === regionId)?.name : null;
+      const constellationName = constellationId != null ? data.constellations.find((c) => c.id === constellationId)?.name : null;
+      const cx = width / 2;
+      const cy = height / 2;
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      if (constellationName) {
+        ctx.font = `italic 500 13px Inter, sans-serif`;
+        ctx.fillStyle = inkColor;
+        ctx.globalAlpha = (isLightTheme ? 0.4 : 0.32) * regionLabelAlpha;
+        ctx.fillText(constellationName, cx, cy - 34);
+      }
+      if (regionName) {
+        ctx.font = `600 26px Inter, sans-serif`;
+        ctx.fillStyle = inkColor;
+        ctx.globalAlpha = (isLightTheme ? 0.16 : 0.12) * regionLabelAlpha;
+        ctx.fillText(letterSpaced(regionName), cx, cy);
+      }
+      ctx.restore();
     }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+
+    // Colored by security tier (matching the in-game 2D map exactly) rather
+    // than a flat grey ink wash - solid lines for tight, same-constellation
+    // links, small round dots for every longer haul (same-region or
+    // cross-region collapsed into one dotted tier, matching the reference:
+    // the game doesn't visually distinguish those two, it's just "local
+    // cluster" vs "everything else"). The paths themselves are cached once,
+    // in data-space, when the map loads (see gateBucketPathsRef) rather than
+    // rebuilt with fresh screen-space moveTo/lineTo calls every frame -
+    // drawn here through a temporary transform instead, so pan/zoom is just
+    // a matrix change, not a full re-walk of New Eden's stargate graph.
+    // lineWidth/dash lengths are divided by scale to compensate, since
+    // they're interpreted in the transform's own coordinate space once it's
+    // applied, not screen pixels.
+    const localLineAlpha = isLightTheme ? 0.62 : 0.5;
+    const distantLineAlpha = isLightTheme ? 0.48 : 0.36;
+    // Every currently-active "focus" filter's own geometry (see
+    // buildFocusGatePaths/*GatePathsRef) - empty when nothing is toggled on,
+    // in which case the plain security-tiered gateBucketPathsRef below draws
+    // exactly as it always has.
+    const activeFocusPaths: FocusGatePaths[] = [];
+    if (showFwContestedRef.current) activeFocusPaths.push(fwGatePathsRef.current);
+    if (showSovRef.current) activeFocusPaths.push(sovGatePathsRef.current);
+    if (showIncursionsRef.current) activeFocusPaths.push(incursionGatePathsRef.current);
+    const focusActive = activeFocusPaths.length > 0;
+    ctx.save();
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * translateX, dpr * translateY);
+    ctx.lineWidth = 1 / scale;
+    ctx.setLineDash([]);
+    ctx.globalAlpha = localLineAlpha;
+    if (focusActive) {
+      // Every dimmed pass first, so a connection any ONE active filter
+      // considers relevant - drawn in its real color in the colored pass
+      // below - always ends up on top, even though each filter's own
+      // dimmed pass has no idea another filter thinks this connection
+      // matters.
+      ctx.strokeStyle = mutedHex;
+      for (const paths of activeFocusPaths) ctx.stroke(paths.dimmed.local);
+      for (const paths of activeFocusPaths) {
+        for (const [key, path] of paths.colored) {
+          if (key[0] !== "s") continue;
+          ctx.strokeStyle = securityHexByTenth[Number(key.slice(1))];
+          ctx.stroke(path);
+        }
+      }
+    } else {
+      for (const [key, path] of gateBucketPathsRef.current) {
+        if (key[0] !== "s") continue;
+        ctx.strokeStyle = securityHexByTenth[Number(key.slice(1))];
+        ctx.stroke(path);
+      }
+    }
+    // Round-capped near-zero dashes draw as small dots rather than short
+    // dashes - the dense, colored dotted haze of long-haul connections is
+    // most of what makes the in-game map read as "busy but clean" instead
+    // of empty space.
+    ctx.lineCap = "round";
+    ctx.lineWidth = 1.6 / scale;
+    ctx.setLineDash([0.1 / scale, 6 / scale]);
+    ctx.globalAlpha = distantLineAlpha;
+    if (focusActive) {
+      ctx.strokeStyle = mutedHex;
+      for (const paths of activeFocusPaths) ctx.stroke(paths.dimmed.distant);
+      for (const paths of activeFocusPaths) {
+        for (const [key, path] of paths.colored) {
+          if (key[0] !== "d") continue;
+          ctx.strokeStyle = securityHexByTenth[Number(key.slice(1))];
+          ctx.stroke(path);
+        }
+      }
+    } else {
+      for (const [key, path] of gateBucketPathsRef.current) {
+        if (key[0] !== "d") continue;
+        ctx.strokeStyle = securityHexByTenth[Number(key.slice(1))];
+        ctx.stroke(path);
+      }
+    }
+    ctx.restore();
+
+    // Active route - the first piece of the map rewrite, independent of the
+    // colored-vs-neutral connections debate: drawn as the single boldest
+    // line on the canvas so it reads as "the answer" over the busy
+    // backdrop, matching every other map/nav tool's own convention for an
+    // active route regardless of how the base geography is styled.
+    if (routeRef.current.length > 1) {
+      const routePath = new Path2D();
+      let started = false;
+      for (const systemId of routeRef.current) {
+        const system = systemById.get(systemId);
+        if (!system) continue;
+        const sx = toScreenX(system.x);
+        const sy = toScreenY(system.y);
+        if (!started) {
+          routePath.moveTo(sx, sy);
+          started = true;
+        } else {
+          routePath.lineTo(sx, sy);
+        }
+      }
+      ctx.setLineDash([]);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 3;
+      ctx.globalAlpha = 0.95;
+      ctx.strokeStyle = accentHex;
+      ctx.stroke(routePath);
+      ctx.lineCap = "butt";
+      ctx.globalAlpha = 1;
+    }
 
     // Constellation boundaries - a faint hull behind everything else, only
     // once zoomed in enough that individual systems (not just region names)
     // are visible, so it reads as texture/wayfinding rather than clutter at
-    // the whole-region view where it'd just be noise on top of noise.
-    if (zoomRatio >= LABEL_ZOOM_RATIO) {
-      for (const hull of constellationHullsRef.current.values()) {
-        if (hull.length < 3 || !hull.some((p) => inView(p.x, p.y))) continue;
-        ctx.beginPath();
-        ctx.moveTo(toScreenX(hull[0].x), toScreenY(hull[0].y));
-        for (let i = 1; i < hull.length; i++) ctx.lineTo(toScreenX(hull[i].x), toScreenY(hull[i].y));
-        ctx.closePath();
-        ctx.fillStyle = `rgba(${accentRgb}, 0.035)`;
-        ctx.fill();
-        ctx.strokeStyle = `rgba(${accentRgb}, 0.16)`;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
+    // the whole-region view where it'd just be noise on top of noise. One
+    // cached data-space Path2D covering every constellation (built on load,
+    // see constellationHullPathRef), drawn through a temporary transform -
+    // same technique as the jump lines above, replacing a per-point
+    // screen-space rebuild of ~1,150 hulls every single frame.
+    if (showLabels) {
+      ctx.save();
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * translateX, dpr * translateY);
+      ctx.fillStyle = `rgba(${accentRgb}, 0.035)`;
+      ctx.fill(constellationHullPathRef.current);
+      ctx.strokeStyle = `rgba(${accentRgb}, 0.16)`;
+      ctx.lineWidth = 1 / scale;
+      ctx.stroke(constellationHullPathRef.current);
+      ctx.restore();
     }
 
     const dotRadius = Math.min(6, Math.max(1.4, 1.4 * Math.sqrt(zoomRatio)));
     const now = Date.now();
+
+    // Whether ANY "focus" filter (FW / Sov / Incursion) is on - hoisted up
+    // here (not just computed per-system below) because the heat glow block
+    // right below needs it too. Under an active filter, color alone should
+    // mark what's relevant (see the per-system dimming logic further down);
+    // the heat/traffic/NPC glow is a real, useful, but entirely UNRELATED
+    // signal ("where's the action"), and it happens to often coincide with
+    // owned/contested space (that's where the fighting is) - which reads as
+    // "some relevant systems have this decoration and others don't" rather
+    // than the intended "grey vs color is the only distinction". So it's
+    // suppressed the same way the per-system security glow is, whenever a
+    // filter is active, and both come back exactly as before once it's off.
+    const isFocusFilterActive = showFwContestedRef.current || showSovRef.current || showIncursionsRef.current;
 
     // Persistent heat: a soft glow plus two concentric rings, colored along
     // the classic dim-red -> red -> orange -> yellow ramp EVE's own old
@@ -1040,12 +1817,14 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     // happened"), and a genuinely hot system (dozens/hundreds of kills)
     // reads as unmistakably hotter than a system with just one or two.
     // Only actively pulses (both brightness and size) while a kill has
-    // landed there in the last PULSE_RECENCY_MS - older-but-still-within-
+    // landed there in the last PULSE_ANIMATION_MS - older-but-still-within-
     // the-hour heat holds rock steady instead, so "fighting right now" and
     // "was busy a while ago" read as visibly different states, not the
     // same static glow. draw() keeps re-running every animation frame
     // while anything is actively pulsing (see ensureAnimating below).
-    if (heatModeRef.current === "kills") {
+    if (isFocusFilterActive) {
+      // Skip both heat-glow branches below entirely.
+    } else if (heatModeRef.current === "kills") {
       for (const [systemId, entry] of heatMapRef.current) {
         if (entry.count <= 0) continue;
         const system = systemById.get(systemId);
@@ -1054,23 +1833,14 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         const sy = toScreenY(system.y);
 
         const intensity = heatIntensity(entry.count);
-        const [hr, hg, hb] = heatColor(intensity);
         // Purely a function of kill count - no pulse/wave here at all. Only
         // the system dot itself (drawn later below) pulses; the heat glow is
         // a steady "how hot has this system been" read that never animates.
-        const alpha = intensity;
-
         const glowRadius = dotRadius * (4.5 + intensity * 11);
-        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowRadius);
-        glow.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.95, 0.05, 0.95)})`);
-        glow.addColorStop(0.45, `rgba(${hr}, ${hg}, ${hb}, ${clamp(alpha * 0.5, 0.03, 0.55)})`);
-        glow.addColorStop(1, `rgba(${hr}, ${hg}, ${hb}, 0)`);
+        const sprite = getHeatGlowSprite(heatGlowSpriteCacheRef.current, "kill", intensity, HEAT_COLOR_STOPS);
         ctx.save();
         ctx.globalCompositeOperation = "screen";
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(sx, sy, glowRadius, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.drawImage(sprite, sx - glowRadius, sy - glowRadius, glowRadius * 2, glowRadius * 2);
         ctx.restore();
       }
     } else {
@@ -1092,18 +1862,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         const sy = toScreenY(system.y);
 
         const intensity = heatIntensity(count, divisor);
-        const [hr, hg, hb] = heatColor(intensity, stops);
         const glowRadius = dotRadius * (4.5 + intensity * 11);
-        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, glowRadius);
-        glow.addColorStop(0, `rgba(${hr}, ${hg}, ${hb}, ${clamp(intensity * 0.95, 0.05, 0.95)})`);
-        glow.addColorStop(0.45, `rgba(${hr}, ${hg}, ${hb}, ${clamp(intensity * 0.5, 0.03, 0.55)})`);
-        glow.addColorStop(1, `rgba(${hr}, ${hg}, ${hb}, 0)`);
+        const sprite = getHeatGlowSprite(heatGlowSpriteCacheRef.current, heatModeRef.current, intensity, stops);
         ctx.save();
         ctx.globalCompositeOperation = "screen";
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(sx, sy, glowRadius, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.drawImage(sprite, sx - glowRadius, sy - glowRadius, glowRadius * 2, glowRadius * 2);
         ctx.restore();
       }
     }
@@ -1113,14 +1876,25 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
     const visible: MapSystem[] = [];
     for (const system of data.systems) {
-      if (!inView(system.x, system.y)) continue;
-      visible.push(system);
+      if (inView(system.x, system.y)) visible.push(system);
+    }
+    visibleSystemsRef.current = visible;
+    // A soft glow behind every node's ring (see below) reads great at a
+    // constellation/region view but adds a radial gradient per system - skip
+    // it past this many on screen at once (a whole-cluster/full-universe
+    // zoom-out, where individual glows wouldn't be legible at that density
+    // anyway) so panning around a busy area of space never drops frames.
+    const showGlow = visible.length <= GLOW_MAX_VISIBLE;
+    let anyVisiblePulse = false;
+
+    for (const system of visible) {
       const sx = toScreenX(system.x);
       const sy = toScreenY(system.y);
       const isSelected = system.id === selectedIdRef.current;
       const isHovered = !isSelected && system.id === hoveredIdRef.current;
       const isTickerHovered = system.id === tickerHoveredIdRef.current;
       const isCurrentLocation = system.id === currentSystemIdRef.current;
+      const isDestination = system.id === destinationIdRef.current;
       const heatEntryForDot = heatMapRef.current.get(system.id);
       const heatBump = heatIntensity(heatEntryForDot?.count ?? 0) * 3.4;
       // The dot itself pulses too while a kill's actively landing here -
@@ -1128,24 +1902,100 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       // not swapping color, so "which system is this" (security status)
       // never gets lost underneath "something's happening here right now".
       // Same now/systemId pulse as the glow above, so they breathe together.
-      const isDotActive = heatEntryForDot != null && now - heatEntryForDot.mostRecentAt < PULSE_RECENCY_MS;
-      ctx.fillStyle = securityColorResolved(system.security);
-      ctx.globalAlpha = isDotActive ? pulseWave(now, system.id, 0.04) : 1;
-      ctx.beginPath();
-      ctx.arc(
-        sx,
-        sy,
-        (isSelected ? dotRadius * 2.2 : isCurrentLocation ? dotRadius * 2 : isHovered ? dotRadius * 1.7 : dotRadius) + heatBump,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
+      // Keyed off heatFirstNoticedAtRef (when THIS client first saw this
+      // kill), not heatEntryForDot.mostRecentAt (the kill's own timestamp,
+      // which can already be a minute or more old by the time the
+      // killmail.stream/zKillboard enrichment pipeline delivers it) - see
+      // resync()'s own comment for why the two can differ so much.
+      const isDotActive =
+        heatEntryForDot != null && now - (heatFirstNoticedAtRef.current.get(system.id) ?? 0) < PULSE_ANIMATION_MS;
+      // Reduced motion means there's nothing left to animate frame-to-frame
+      // (pulseWave holds steady at 1 throughout) - the continuous redraw
+      // loop can stay off entirely rather than spinning at full refresh
+      // rate to redraw an unchanging steady state.
+      if (isDotActive && !prefersReducedMotionRef.current) anyVisiblePulse = true;
+      // Keeps the loop alive just long enough for the selection reticle's
+      // brief assemble-in animation (see drawSelectionReticle) to actually
+      // play, rather than only ever redrawing on the next unrelated event.
+      if (isSelected && !prefersReducedMotionRef.current && now - selectedAtRef.current < 150) anyVisiblePulse = true;
+      const dotAlpha = isDotActive ? pulseWave(now, system.id, 0.04, prefersReducedMotionRef.current) : 1;
+      const baseRadius =
+        (isSelected ? dotRadius * 2.2 : isCurrentLocation ? dotRadius * 2 : isHovered ? dotRadius * 1.7 : dotRadius) + heatBump;
+      const secTenth = clamp(Math.round(system.security * 10), 0, 10);
+      // "Focus" filters (FW / Sov / Incursion): with any of them on,
+      // everything that isn't relevant to at least one active one fades to
+      // a flat neutral grey, the same "grey out what doesn't matter right
+      // now" treatment EVE's own client uses for its FW map - a system's
+      // normal security color is real information, but with ~5,000 of them
+      // lit up at once it drowns out the handful of systems a given filter
+      // exists to show. Two or more active at once compose with OR - a
+      // system relevant to any one of them stays lit. -1 is a sprite-cache
+      // key that can never collide with a real security tenth (0-10), so
+      // the grey sprite gets built once and reused for every dimmed system
+      // regardless of its actual security.
+      const isFwFilterOn = showFwContestedRef.current;
+      const isSovFilterOn = showSovRef.current;
+      const isIncursionFilterOn = showIncursionsRef.current;
+      const isFocusRelevant =
+        (isFwFilterOn && fwSystemsRef.current.has(system.id)) ||
+        (isSovFilterOn && hasSovOwner(sovRef.current.get(system.id))) ||
+        (isIncursionFilterOn && incursionsRef.current.has(system.id));
+      const focusDimmed = isFocusFilterActive && !isFocusRelevant;
+      const spriteKey = focusDimmed ? -1 : secTenth;
+      const secHex = focusDimmed ? mutedHex : securityHexByTenth[secTenth];
+      const secRgb = focusDimmed ? mutedRgb : securityRgbByTenth[secTenth];
+
+      // Soft halo behind the node - the in-game 2D map's systems read as
+      // glowing points of light, not flat dots, and this is the cheap
+      // Canvas2D approximation of that (a real bloom pass needs WebGL).
+      // Skipped entirely (for BOTH dimmed and undimmed systems) while any
+      // focus filter is active - not just for dimmed ones. A relevant
+      // system's own glow radius (baseRadius * 2.1) is over double the dot
+      // itself, and with many relevant systems packed into one cluster
+      // (e.g. a whole sov-owned null-sec region) their overlapping glows
+      // compound into a big blob of circles - while dimmed neighbors right
+      // next to them render as plain small dots with no glow at all, since
+      // dimming already skips it. That asymmetry reads as "some systems
+      // arbitrarily got extra decoration" rather than the intended "color
+      // alone marks what's relevant" - so under a filter, glow is off for
+      // everyone and color is the only thing doing the work.
+      if (showGlow && !isFocusFilterActive) {
+        const glowRadius = baseRadius * 2.1;
+        const sprite = getGlowSprite(glowSpriteCacheRef.current, spriteKey, secRgb);
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.globalAlpha = dotAlpha;
+        ctx.drawImage(sprite, sx - glowRadius, sy - glowRadius, glowRadius * 2, glowRadius * 2);
+        ctx.restore();
+      }
+
+      // The node itself: a dim glassy disc (radial gradient, darker at the
+      // center than the rim) inside a crisp full-brightness security-colour
+      // ring - closer to the in-game 2D map's "glowing ring" nodes than a
+      // single flat fill, while every existing pulse/selection/hover state
+      // still layers on top exactly as before. Same pre-rendered-sprite
+      // technique as the glow halo above (one per security tenth, blitted
+      // and scaled) instead of a fresh createRadialGradient per system per
+      // frame - this was the one gradient the earlier glow-sprite pass
+      // missed, and it ran for every visible node, not just glowing ones.
+      const discSprite = getDiscSprite(discSpriteCacheRef.current, spriteKey, secRgb);
+      ctx.globalAlpha = dotAlpha;
+      ctx.drawImage(discSprite, sx - baseRadius, sy - baseRadius, baseRadius * 2, baseRadius * 2);
       ctx.globalAlpha = 1;
-      if (isSelected) {
-        ctx.strokeStyle = inkColor;
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      } else if (isHovered) {
+
+      ctx.beginPath();
+      ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = secHex;
+      ctx.globalAlpha = dotAlpha;
+      ctx.lineWidth = isCurrentLocation ? 2 : 1.3;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Selected gets its own dedicated ring via the targeting reticle
+      // below instead of sharing this plain one with hover.
+      if (isHovered && !isSelected) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, baseRadius + 2, 0, Math.PI * 2);
         ctx.strokeStyle = inkColor;
         ctx.globalAlpha = 0.65;
         ctx.lineWidth = 1;
@@ -1159,9 +2009,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       // without its own border the dot's alpha-only pulse was too subtle to
       // notice at a glance.
       if (isDotActive) {
-        const borderWave = pulseWave(now, system.id, 0.15);
-        const baseRadius =
-          (isSelected ? dotRadius * 2.2 : isCurrentLocation ? dotRadius * 2 : isHovered ? dotRadius * 1.7 : dotRadius) + heatBump;
+        const borderWave = pulseWave(now, system.id, 0.15, prefersReducedMotionRef.current);
         ctx.beginPath();
         ctx.arc(sx, sy, baseRadius + 2.5, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(${dangerRgb}, ${clamp(borderWave, 0.15, 1)})`;
@@ -1186,26 +2034,6 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         ctx.stroke();
       }
 
-      // Faction-warfare contested ring - same fixed-pixel reasoning as the
-      // ticker-hover ring above, so a front-line system stands out even
-      // zoomed way out. Colored by the occupying faction (the one that wins
-      // it if it flips) and gently pulsing, so "actively contested right
-      // now" reads as distinctly different from the map's other static
-      // rings. Gated on the Faction Warfare toggle - see .map-layer-toggles.
-      if (showFwContestedRef.current) {
-        const fw = fwSystemsRef.current.get(system.id);
-        if (fw?.contested) {
-          const fwWave = pulseWave(now, system.id + 500_000, 0.35);
-          ctx.beginPath();
-          ctx.arc(sx, sy, 13, 0, Math.PI * 2);
-          ctx.strokeStyle = fwFactionColor(fw.occupier_faction_id);
-          ctx.globalAlpha = fwWave;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          ctx.globalAlpha = 1;
-        }
-      }
-
       // Sovereignty ownership - a static (non-pulsing) filled halo colored
       // by whichever alliance/corp holds it, a deterministic hash color
       // rather than a fixed palette since there's no small fixed set of
@@ -1216,14 +2044,13 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         const sov = sovRef.current.get(system.id);
         const ownerId = sov?.alliance_id ?? sov?.corporation_id;
         if (ownerId) {
+          // No plain ownership ring here any more - with the dimming above,
+          // an undimmed dot under the Sov filter already means "this is
+          // owned", the same way an undimmed FW system needs no ring of its
+          // own. sovColor still names the owner for the logo/tracked-ring
+          // below, which say WHO and WHICH owner respectively - real info
+          // dimming alone can't carry.
           const sovColor = colorForId(ownerId);
-          ctx.beginPath();
-          ctx.arc(sx, sy, 15, 0, Math.PI * 2);
-          ctx.strokeStyle = sovColor;
-          ctx.globalAlpha = 0.85;
-          ctx.lineWidth = 2.5;
-          ctx.stroke();
-          ctx.globalAlpha = 1;
 
           // The owner's actual alliance/corp logo, not just the hashed
           // ring color - "who" instead of just "someone consistent holds
@@ -1234,7 +2061,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           // across New Eden would be pure waste. Offset to the dot's
           // upper-left so it never collides with the home marker
           // (upper-right) or live location portrait (lower-right).
-          if (zoomRatio >= LABEL_ZOOM_RATIO) {
+          if (showLabels) {
             const isAlliance = sov!.alliance_id != null;
             const logoUrl = isAlliance ? allianceLogoUrl(sov!.alliance_id!) : corpLogoUrl(sov!.corporation_id!);
             const logo = getSovLogo(sovLogoCacheRef.current, ownerId, logoUrl, requestDraw);
@@ -1245,58 +2072,17 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
             renderedSovBadgesRef.current.push({ px: logoX, py: logoY, radius: logoRadius, ownerId, kind: isAlliance ? "alliance" : "corporation" });
           }
 
-          // A corp/alliance you're already tracking for kill alerts (see
-          // Kills & Intel) gets called out with the app's own accent color
-          // rather than needing a second, separate watchlist just for sov.
-          if (trackedSovIdsRef.current.has(ownerId)) {
-            ctx.beginPath();
-            ctx.arc(sx, sy, 19, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(${accentRgb}, 0.8)`;
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-          }
-
-          // The structure's vulnerability window is a real "can be attacked
-          // right now" signal, distinct from ownership itself - pulses like
-          // the FW ring above, in a fixed alert color rather than the
-          // owner's own (which could be anything and might not read as
-          // urgent) so "someone can flip this right now" always stands out.
-          const structure = sovStructuresRef.current.get(system.id);
-          if (structure && isSovVulnerableNow(structure, now)) {
-            const sovWave = pulseWave(now, system.id + 750_000, 0.35);
-            ctx.beginPath();
-            ctx.arc(sx, sy, 15, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(${dangerRgb}, ${sovWave})`;
-            ctx.lineWidth = 2;
-            ctx.stroke();
-          }
+          // No tracked-alliance ring or structure-vulnerability pulse ring
+          // here any more either - both used the same "extra ring on top of
+          // the dot" language as the ownership/FW/incursion rings already
+          // removed, and at any moment a real, large fraction of all null-
+          // sec structures can be inside their (multi-hour-long) real
+          // vulnerability window simultaneously - confirmed live: 561 of
+          // 2712 structures right now - which turned the pulse into a wall
+          // of overlapping rings across whole regions, not a rare callout.
         }
       }
 
-      // Active Sansha incursion - a fixed, always-the-same color (Sansha is
-      // the only faction that runs incursions, unlike FW's 4 empires) since
-      // there's nothing to differentiate by. The staging system gets a
-      // second, wider ring so it reads as "the one to go to", not just
-      // another infested system in the same constellation.
-      if (showIncursionsRef.current) {
-        const incursion = incursionsRef.current.get(system.id);
-        if (incursion) {
-          ctx.beginPath();
-          ctx.arc(sx, sy, 15, 0, Math.PI * 2);
-          ctx.strokeStyle = INCURSION_COLOR;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          if (incursion.is_staging) {
-            ctx.beginPath();
-            ctx.arc(sx, sy, 20, 0, Math.PI * 2);
-            ctx.strokeStyle = INCURSION_COLOR;
-            ctx.globalAlpha = 0.55;
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-            ctx.globalAlpha = 1;
-          }
-        }
-      }
 
       // The tracked "current location" marker - an actual pin, always drawn
       // (not gated by hover/zoom like the rings above) so it's visible at a
@@ -1304,6 +2090,23 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       // jumps to the new system the moment the location changes (see the
       // currentSystemIdRef effect below).
       if (isCurrentLocation) {
+        // A warm bloom behind the ring - always drawn regardless of
+        // showGlow, since there's only ever one of these on screen at once,
+        // matching the soft white/gold halo the in-game 2D map puts on
+        // wherever your ship actually is.
+        const haloRadius = baseRadius * 6.5;
+        const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, haloRadius);
+        halo.addColorStop(0, `rgba(${gateRgb}, 0.32)`);
+        halo.addColorStop(0.4, `rgba(${gateRgb}, 0.1)`);
+        halo.addColorStop(1, `rgba(${gateRgb}, 0)`);
+        ctx.save();
+        ctx.globalCompositeOperation = "screen";
+        ctx.fillStyle = halo;
+        ctx.beginPath();
+        ctx.arc(sx, sy, haloRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
         ctx.beginPath();
         ctx.arc(sx, sy, 9, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(${gateRgb}, 0.6)`;
@@ -1312,11 +2115,30 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         drawPin(ctx, sx, sy - dotRadius * 2 - 3, 7, gateHex);
       }
 
-      // An actual pin (not just the ring above) so the clicked/selected
-      // system is unmistakable at a glance, distinct from the tracked
-      // current-location marker.
+      // The route destination - same accent color as the route line itself
+      // so the two read as one connected idea ("this line leads here"), a
+      // distinct ring shape (square-ish flag ring, not the current-location
+      // pin's rounded halo) so the two markers are never confused even when
+      // a destination and the current location happen to be the same
+      // system briefly mid-route-edit.
+      if (isDestination) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, 10, 0, Math.PI * 2);
+        ctx.strokeStyle = accentHex;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        drawPin(ctx, sx, sy - dotRadius * 2 - 3, 7, accentHex);
+      }
+
+      // A targeting reticle (not a pin) for the selected system - with
+      // current-location, home-base, and destination all using pin shapes
+      // now, "selected" needs its own distinct silhouette rather than a
+      // fourth pin in a different color.
       if (isSelected) {
-        drawPin(ctx, sx, sy - dotRadius * 2.2 - 2, 6, inkColor);
+        const selectionProgress = prefersReducedMotionRef.current
+          ? 1
+          : 1 - Math.pow(1 - clamp((now - selectedAtRef.current) / 150, 0, 1), 3);
+        drawSelectionReticle(ctx, sx, sy, baseRadius + 2, inkColor, selectionProgress);
       }
 
       // Home-base house markers - always drawn (not gated by zoom) so you
@@ -1355,26 +2177,109 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       }
 
     }
+    hasVisiblePulseRef.current = anyVisiblePulse;
 
-    if (zoomRatio >= LABEL_ZOOM_RATIO && visible.length <= LABEL_MAX_VISIBLE) {
+    if (showLabels) {
       const { fontSize: labelFontSize, gap: labelGap } = labelMetricsForZoom(zoomRatio);
+      const labelHeight = labelFontSize * 1.2;
 
+      // Priority-ordered collision placement, replacing the old all-or-
+      // nothing "hide every label past LABEL_MAX_VISIBLE systems on
+      // screen" cutoff - the most important systems (selected, your
+      // destination, current location, on your active route, hovered) now
+      // always claim a label first and try 4 anchor sides around their dot
+      // before giving up, so a busy cluster drops its least important
+      // labels instead of losing every label at once, including the one
+      // you're actually looking for. Same cap as before on how many
+      // candidates are even attempted, to keep worst-case collision-testing
+      // cost bounded regardless of how zoomed out the view is.
+      const routeSet = routeRef.current.length > 1 ? new Set(routeRef.current) : null;
+      const candidates = visible.map((system) => {
+        let priority = 100;
+        if (heatMapRef.current.get(system.id)?.count) priority = 500;
+        if (routeSet?.has(system.id)) priority = 800;
+        if (system.id === tickerHoveredIdRef.current || system.id === hoveredIdRef.current) priority = 650;
+        if (system.id === currentSystemIdRef.current) priority = 900;
+        if (system.id === destinationIdRef.current) priority = 950;
+        if (system.id === selectedIdRef.current) priority = 1000;
+        return { system, priority };
+      });
+      candidates.sort((a, b) => b.priority - a.priority);
+
+      const placedRects: LabelRect[] = [];
+      const acceptedRects = new Map<number, LabelRect>();
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      for (const system of visible) {
-        const labelX = toScreenX(system.x) + dotRadius + labelGap;
-        const labelY = toScreenY(system.y);
 
+      let attempted = 0;
+      for (const { system } of candidates) {
+        if (attempted >= LABEL_MAX_VISIBLE) break;
+        attempted++;
+
+        const sx = toScreenX(system.x);
+        const sy = toScreenY(system.y);
         const secText = formatSecurity(system.security);
         ctx.font = `600 ${labelFontSize}px Inter, sans-serif`;
-        ctx.fillStyle = securityColorResolved(system.security);
-        ctx.fillText(secText, labelX, labelY);
         const secWidth = ctx.measureText(secText).width;
+        ctx.font = `${labelFontSize}px Inter, sans-serif`;
+        const nameWidth = ctx.measureText(system.name).width;
+        const labelWidth = secWidth + labelGap + nameWidth;
+
+        let placement: { textX: number; textY: number; rect: LabelRect } | null = null;
+        for (const side of LABEL_ANCHOR_SIDES) {
+          const candidate = labelRectForSide(side, sx, sy, dotRadius, labelGap, labelWidth, labelHeight);
+          if (!placedRects.some((p) => rectsOverlap(p, candidate.rect))) {
+            placement = candidate;
+            break;
+          }
+        }
+
+        // Kill count inside the dot itself, matching the real in-game
+        // starmap's big colored "pip with a number in it" once you're
+        // zoomed in close enough to read it - drawn regardless of whether
+        // this system's label found room, since it's anchored to the dot
+        // itself, not to the label.
+        const heatEntry = heatMapRef.current.get(system.id);
+        if (heatEntry && heatEntry.count > 0) {
+          const numFontSize = Math.max(11, labelFontSize * 0.95);
+          const [hr, hg, hb] = heatColor(heatIntensity(heatEntry.count));
+          const text = String(heatEntry.count);
+          ctx.font = `700 ${numFontSize}px Inter, sans-serif`;
+          const textWidth = ctx.measureText(text).width;
+          const pipRadius = Math.max(dotRadius + 5, textWidth / 2 + 5);
+
+          ctx.beginPath();
+          ctx.arc(sx, sy, pipRadius, 0, Math.PI * 2);
+          ctx.fillStyle = `rgb(${hr}, ${hg}, ${hb})`;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(10, 8, 8, 0.55)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          ctx.textAlign = "center";
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = "rgba(10, 8, 8, 0.85)";
+          ctx.strokeText(text, sx, sy + 0.5);
+          ctx.fillStyle = "#ffffff";
+          ctx.fillText(text, sx, sy + 0.5);
+          ctx.textAlign = "left";
+        }
+
+        // No anchor had room - this label loses out to higher-priority
+        // neighbors this frame. The dot, ring, and heat pip above still
+        // render; only the name/security text and its icon row are skipped.
+        if (!placement) continue;
+        placedRects.push(placement.rect);
+        acceptedRects.set(system.id, placement.rect);
+
+        ctx.font = `600 ${labelFontSize}px Inter, sans-serif`;
+        ctx.fillStyle = securityHexByTenth[clamp(Math.round(system.security * 10), 0, 10)];
+        ctx.fillText(secText, placement.textX, placement.textY);
 
         ctx.font = `${labelFontSize}px Inter, sans-serif`;
         ctx.fillStyle = inkColor;
         ctx.globalAlpha = nameLabelAlpha;
-        ctx.fillText(system.name, labelX + secWidth + labelGap, labelY);
+        ctx.fillText(system.name, placement.textX + secWidth + labelGap, placement.textY);
         ctx.globalAlpha = 1;
 
         // DOTLAN-style key icons (Refinery/Factory/Cloning/etc) - a row of
@@ -1382,6 +2287,9 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         // gate as the labels themselves. Player structures join the same
         // row here (rather than their own always-visible marker) so they
         // only ever show at the same zoom level as everything else in it.
+        // Always tucked under the label's own text start regardless of
+        // which side it landed on, so the icon row never drifts away from
+        // the name it belongs to.
         const baseIcons = systemIconsRef.current.get(system.id);
         const hasPlayerStructures = structuresBySystemRef.current.has(system.id);
         const icons = hasPlayerStructures ? [...(baseIcons ?? []), PLAYER_STRUCTURE_ICON] : baseIcons;
@@ -1391,8 +2299,8 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           // icons stay legible rather than staying small and cramped.
           const iconSize = Math.max(13, labelFontSize * 1.15);
           const iconGap = Math.max(2, iconSize * 0.18);
-          const iconY = labelY + labelFontSize * 0.85;
-          let iconX = labelX;
+          const iconY = placement.textY + labelFontSize * 0.85;
+          let iconX = placement.textX;
           ctx.textAlign = "center";
           ctx.font = `700 ${Math.max(9, iconSize * 0.6)}px Inter, sans-serif`;
           for (const icon of icons) {
@@ -1404,44 +2312,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
           }
           ctx.textAlign = "left";
         }
-
-        // Kill count inside the dot itself, matching the real in-game
-        // starmap's big colored "pip with a number in it" once you're
-        // zoomed in close enough to read it - a solid heat-colored disc
-        // sized to the text (not the tiny security dot's radius), with
-        // halo-stroked white text so it stays legible across the whole
-        // dim-red-to-yellow color ramp.
-        const heatEntry = heatMapRef.current.get(system.id);
-        if (heatEntry && heatEntry.count > 0) {
-          const dotX = toScreenX(system.x);
-          const dotY = labelY;
-          const numFontSize = Math.max(11, labelFontSize * 0.95);
-          const [hr, hg, hb] = heatColor(heatIntensity(heatEntry.count));
-          const text = String(heatEntry.count);
-          ctx.font = `700 ${numFontSize}px Inter, sans-serif`;
-          const textWidth = ctx.measureText(text).width;
-          const pipRadius = Math.max(dotRadius + 5, textWidth / 2 + 5);
-
-          ctx.beginPath();
-          ctx.arc(dotX, dotY, pipRadius, 0, Math.PI * 2);
-          ctx.fillStyle = `rgb(${hr}, ${hg}, ${hb})`;
-          ctx.fill();
-          ctx.strokeStyle = "rgba(10, 8, 8, 0.55)";
-          ctx.lineWidth = 1;
-          ctx.stroke();
-
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.lineWidth = 2.5;
-          ctx.strokeStyle = "rgba(10, 8, 8, 0.85)";
-          ctx.strokeText(text, dotX, dotY + 0.5);
-          ctx.fillStyle = "#ffffff";
-          ctx.fillText(text, dotX, dotY + 0.5);
-          ctx.textAlign = "left";
-          ctx.textBaseline = "middle";
-        }
       }
+      renderedLabelRectsRef.current = acceptedRects;
     } else {
+      // No system labels at this zoom - clear so pickSystemForClick doesn't
+      // hit-test against stale rectangles from the last time labels showed.
+      if (renderedLabelRectsRef.current.size > 0) renderedLabelRectsRef.current = new Map();
       // Zoomed out too far for individual system names to stay readable -
       // show each region's name at its centroid instead, so there's never
       // a gap where the map has no labels at all.
@@ -1520,9 +2396,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   function ensureAnimating() {
     if (animFrameRef.current === null) {
       animFrameRef.current = window.setInterval(() => {
-        const now = Date.now();
         draw();
-        if (!hasRecentHeat(heatMapRef.current, now)) {
+        // Viewport-aware, not a universe-wide check - see
+        // hasVisiblePulseRef's own comment for why that check almost never
+        // returns false and was keeping this loop running near-permanently.
+        if (!hasVisiblePulseRef.current) {
           window.clearInterval(animFrameRef.current!);
           animFrameRef.current = null;
         }
@@ -1532,7 +2410,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     if (rafPulseIdRef.current === null) {
       const tick = () => {
         draw();
-        if (hasRecentHeat(heatMapRef.current, Date.now())) {
+        if (hasVisiblePulseRef.current) {
           rafPulseIdRef.current = requestAnimationFrame(tick);
         } else {
           rafPulseIdRef.current = null;
@@ -1540,6 +2418,34 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       };
       rafPulseIdRef.current = requestAnimationFrame(tick);
     }
+  }
+
+  /** Rebuilds one "focus" filter's own line geometry (see fwGatePathsRef/
+   * sovGatePathsRef/incursionGatePathsRef) from the current jump graph and
+   * that filter's own relevant-system set - called whenever that filter's
+   * data refreshes (see resync() below), not every frame, the same "cache
+   * the geometry, redraw from the cache" approach gateBucketPathsRef itself
+   * uses. A no-op if the jump graph hasn't loaded yet; the next refresh
+   * will pick it up. */
+  function rebuildFwGatePaths() {
+    const data = dataRef.current;
+    const systemById = systemByIdRef.current;
+    if (!data || systemById.size === 0) return;
+    fwGatePathsRef.current = buildFocusGatePaths(systemById, data.jumps, (id) => fwSystemsRef.current.has(id));
+  }
+
+  function rebuildSovGatePaths() {
+    const data = dataRef.current;
+    const systemById = systemByIdRef.current;
+    if (!data || systemById.size === 0) return;
+    sovGatePathsRef.current = buildFocusGatePaths(systemById, data.jumps, (id) => hasSovOwner(sovRef.current.get(id)));
+  }
+
+  function rebuildIncursionGatePaths() {
+    const data = dataRef.current;
+    const systemById = systemByIdRef.current;
+    if (!data || systemById.size === 0) return;
+    incursionGatePathsRef.current = buildFocusGatePaths(systemById, data.jumps, (id) => incursionsRef.current.has(id));
   }
 
   /** Recomputes heat/top-activity off the backend's own last-hour aggregate
@@ -1557,9 +2463,28 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       .then((heat) => {
         const now = Date.now();
         const nextHeatMap = computeSystemHeat(heat);
+        // The pulse can't reliably key off a kill's own timestamp - a
+        // killmail has to be reported, fetched, and enriched by
+        // killmail.stream/zKillboard before it ever reaches this app, and
+        // that pipeline's own delay (confirmed live: routinely 50+ seconds,
+        // sometimes much more) already ate most or all of a short pulse
+        // window before the data even arrived. Tracked here instead: the
+        // first time THIS client sees a given mostRecentAt value for a
+        // system (i.e. it differs from what the PREVIOUS heat map had),
+        // that's when its pulse clock actually starts, so the window
+        // always has its full length available regardless of how stale
+        // the kill was by the time it got here.
+        const previousHeatMap = heatMapRef.current;
+        for (const [systemId, entry] of nextHeatMap) {
+          if (previousHeatMap.get(systemId)?.mostRecentAt !== entry.mostRecentAt) {
+            heatFirstNoticedAtRef.current.set(systemId, now);
+          }
+        }
         heatMapRef.current = nextHeatMap;
         setSystemHeat(nextHeatMap);
-        if (hasRecentHeat(nextHeatMap, now)) ensureAnimating();
+        if ([...nextHeatMap.keys()].some((systemId) => now - (heatFirstNoticedAtRef.current.get(systemId) ?? 0) < PULSE_ANIMATION_MS)) {
+          ensureAnimating();
+        }
         setTopActivity(computeTopActivity(heat));
         requestDraw();
       })
@@ -1572,12 +2497,14 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     getFwSystems()
       .then((systems) => {
         fwSystemsRef.current = new Map(systems.map((s) => [s.solar_system_id, s]));
+        rebuildFwGatePaths();
         requestDraw();
       })
       .catch((err) => reportError(`Failed to load faction warfare status: ${String(err)}`));
     getSovereigntyMap()
       .then((entries) => {
         sovRef.current = new Map(entries.map((e) => [e.system_id, e]));
+        rebuildSovGatePaths();
         requestDraw();
 
         // Bulk-resolve every not-yet-cached owner's name in one call, so
@@ -1604,15 +2531,10 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         }
       })
       .catch((err) => reportError(`Failed to load sovereignty map: ${String(err)}`));
-    getSovStructures()
-      .then((structures) => {
-        sovStructuresRef.current = new Map(structures.map((s) => [s.solar_system_id, s]));
-        requestDraw();
-      })
-      .catch((err) => reportError(`Failed to load sovereignty structure timers: ${String(err)}`));
     getIncursions()
       .then((systems) => {
         incursionsRef.current = new Map(systems.map((s) => [s.system_id, s]));
+        rebuildIncursionGatePaths();
         requestDraw();
       })
       .catch((err) => reportError(`Failed to load incursions: ${String(err)}`));
@@ -1670,6 +2592,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
   }, [currentSystem]);
 
   useEffect(() => {
+    destinationIdRef.current = destinationSystem?.id ?? null;
+    requestDraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destinationSystem]);
+
+  useEffect(() => {
     showServiceIconsRef.current = showServiceIcons;
     requestDraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1698,18 +2626,6 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     requestDraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heatMode]);
-
-  // Cross-references sov ownership against the same tracked corp/alliance
-  // list Kills & Intel already uses for kill/death alerts - a corp or
-  // alliance you're already tracking gets its sov space visually called out
-  // without needing a separate watchlist just for the map.
-  useEffect(() => {
-    trackedSovIdsRef.current = new Set(
-      trackedEntities.filter((e) => e.kind === "corporation" || e.kind === "alliance").map((e) => e.entity_id),
-    );
-    requestDraw();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackedEntities]);
 
   useEffect(() => {
     if (!mapData) return;
@@ -1760,15 +2676,18 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     }
 
     function pickSystem(clientX: number, clientY: number): MapSystem | null {
-      const data = dataRef.current;
-      if (!canvas || !data) return null;
+      if (!canvas) return null;
       const rect = canvas.getBoundingClientRect();
       const px = clientX - rect.left;
       const py = clientY - rect.top;
       const { scale, translateX, translateY } = transformRef.current;
       let closest: MapSystem | null = null;
       let closestDist = 12;
-      for (const system of data.systems) {
+      // Runs on every mousemove, so it scans only what's already on screen
+      // (visibleSystemsRef, refreshed each draw()) rather than every system
+      // in New Eden - a system that isn't visible can't be under the cursor
+      // anyway, so this never changes the result, only the search space.
+      for (const system of visibleSystemsRef.current) {
         const sx = system.x * scale + translateX;
         const sy = system.y * scale + translateY;
         const dist = Math.hypot(sx - px, sy - py);
@@ -1782,51 +2701,45 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
     /**
      * Click-only, more expensive version of pickSystem: also checks each
-     * system's rendered LABEL text, not just its dot. In a dense hub (Jita's
-     * neighborhood is the worst case), a neighboring system's dot can sit
-     * physically closer to a click than the labeled system's own dot does,
-     * even though the click landed squarely on that system's name - so a
-     * pure nearest-dot search picks the wrong system. Only used on mouseup
-     * (a single click), not on every mousemove, since it's O(systems) with
-     * canvas text measurement and would reintroduce the redraw-storm bug
-     * fixed earlier if run on hover.
+     * system's actual rendered label rectangle (renderedLabelRectsRef, built
+     * fresh by draw()'s label-collision placement every frame - see
+     * LABEL_ANCHOR_SIDES), not just its dot. A system's label can land on
+     * any of 4 sides of its dot depending on what collided with what this
+     * frame, so hit-testing has to use the SAME rectangles draw() actually
+     * placed rather than recomputing a fixed "always to the right"
+     * assumption that stopped being true the moment collision placement
+     * could choose a different side. Only used on mouseup (a single click),
+     * not on every mousemove, since it's O(systems) with canvas text
+     * measurement and would reintroduce the redraw-storm bug fixed earlier
+     * if run on hover.
      */
     function pickSystemForClick(clientX: number, clientY: number): MapSystem | null {
-      const data = dataRef.current;
-      if (!canvas || !data) return null;
+      if (!canvas) return null;
       const rect = canvas.getBoundingClientRect();
       const px = clientX - rect.left;
       const py = clientY - rect.top;
-      const { scale, translateX, translateY } = transformRef.current;
-      const zoomRatio = scale / (fitScaleRef.current || scale);
 
-      if (zoomRatio >= LABEL_ZOOM_RATIO) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          const dotRadius = Math.min(6, Math.max(1.4, 1.4 * Math.sqrt(zoomRatio)));
-          const { fontSize: labelFontSize, gap: labelGap } = labelMetricsForZoom(zoomRatio);
-          for (const system of data.systems) {
-            const sx = system.x * scale + translateX;
-            const sy = system.y * scale + translateY;
-            ctx.font = `600 ${labelFontSize}px Inter, sans-serif`;
-            const secWidth = ctx.measureText(formatSecurity(system.security)).width;
-            ctx.font = `${labelFontSize}px Inter, sans-serif`;
-            const nameWidth = ctx.measureText(system.name).width;
-            const labelX = sx + dotRadius + labelGap;
-            const labelY = sy;
-            const labelWidth = secWidth + labelGap + nameWidth;
-            const labelHalfHeight = labelFontSize * 0.6;
-            if (
-              px >= labelX - 2 &&
-              px <= labelX + labelWidth + 2 &&
-              py >= labelY - labelHalfHeight &&
-              py <= labelY + labelHalfHeight
-            ) {
-              return system;
-            }
-          }
+      // Overlapping label boxes can still both cover the same pixel (two
+      // high-priority systems sitting close together) - picking whichever
+      // matching candidate's own dot is closest to the click resolves that
+      // the same way pickSystem's plain dot-search already does.
+      let best: MapSystem | null = null;
+      let bestDist = Infinity;
+      const { scale, translateX, translateY } = transformRef.current;
+      for (const [systemId, labelRect] of renderedLabelRectsRef.current) {
+        if (px < labelRect.x - 2 || px > labelRect.x + labelRect.width + 2) continue;
+        if (py < labelRect.y - 2 || py > labelRect.y + labelRect.height + 2) continue;
+        const system = systemByIdRef.current.get(systemId);
+        if (!system) continue;
+        const sx = system.x * scale + translateX;
+        const sy = system.y * scale + translateY;
+        const dist = Math.hypot(sx - px, sy - py);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = system;
         }
       }
+      if (best) return best;
 
       return pickSystem(clientX, clientY);
     }
@@ -1920,7 +2833,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         hoveredPinKeyRef.current = pinKey;
         setPinHover(pin ? { characterName: pin.character.name, kind: pin.kind, clientX: e.clientX, clientY: e.clientY } : null);
       } else if (pin) {
-        setPinHover((prev) => (prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev));
+        moveTooltip(pinTooltipRef, e.clientX, e.clientY);
       }
 
       // A Sov badge sitting near a dot shouldn't compete with a character
@@ -1936,7 +2849,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
             : null,
         );
       } else if (sovBadge) {
-        setSovHover((prev) => (prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev));
+        moveTooltip(sovTooltipRef, e.clientX, e.clientY);
       }
 
       // A pin or sov badge sitting right next to its system's dot shouldn't
@@ -1949,8 +2862,11 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         hoveredIdRef.current = pickedId;
         setHoverInfo(picked ? { system: picked, clientX: e.clientX, clientY: e.clientY } : null);
         requestDraw();
-      } else if (picked) {
-        setHoverInfo((prev) => (prev ? { ...prev, clientX: e.clientX, clientY: e.clientY } : prev));
+      } else if (picked && !pinnedHoverRef.current) {
+        // Pinned takes priority over live hover (see activeHover below) - no
+        // point moving this tooltip while a pinned one is what's actually
+        // shown.
+        moveTooltip(hoverTooltipRef, e.clientX, e.clientY);
       }
     }
 
@@ -1973,12 +2889,14 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         if (onCanvas) {
           const picked = pickSystemForClick(e.clientX, e.clientY);
           selectedIdRef.current = picked?.id ?? null;
+          selectedAtRef.current = Date.now();
           setSelectedSystem(picked);
-          setPinnedHover((prev) => {
-            if (!picked) return null;
-            if (prev?.system.id === picked.id) return null;
-            return { system: picked, clientX: e.clientX, clientY: e.clientY };
-          });
+          const newPinnedHover =
+            picked && pinnedHoverRef.current?.system.id !== picked.id
+              ? { system: picked, clientX: e.clientX, clientY: e.clientY }
+              : null;
+          pinnedHoverRef.current = newPinnedHover;
+          setPinnedHover(newPinnedHover);
           lockOnKeyRef.current += 1;
           setLockOn(picked ? { clientX: e.clientX, clientY: e.clientY, key: lockOnKeyRef.current } : null);
           requestDraw();
@@ -2041,6 +2959,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
       translateY: height / 2 - system.y * targetScale,
     };
     selectedIdRef.current = system.id;
+    selectedAtRef.current = Date.now();
     setSelectedSystem(system);
     setQuery(system.name);
     setResults([]);
@@ -2074,9 +2993,17 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     const padding = 60;
+    // Extra clearance along the bottom specifically - the Legend
+    // (bottom-left) and Top Active Systems/Regions (bottom-right) panels
+    // are both fixed overlays living there (see .map-legend/.map-top-activity
+    // in App.css), and a uniform 60px padding isn't enough to guarantee the
+    // actual system that triggered this fit - which could sit anywhere in
+    // its region's bounding box, including the southern edge - doesn't land
+    // right behind one of them.
+    const bottomPadding = padding + 110;
     const dataWidth = maxX - minX || 1;
     const dataHeight = maxY - minY || 1;
-    const rawScale = Math.min((width - padding * 2) / dataWidth, (height - padding * 2) / dataHeight);
+    const rawScale = Math.min((width - padding * 2) / dataWidth, (height - padding - bottomPadding) / dataHeight);
     // Clamped so a very sparse/tiny region still zooms in meaningfully, and a
     // very large/dense one doesn't overshoot the "region level" feel this is
     // meant to give (goToSystem's 40x is the deep single-system close-up).
@@ -2085,9 +3012,10 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     transformRef.current = {
       scale,
       translateX: padding - minX * scale + (width - padding * 2 - dataWidth * scale) / 2,
-      translateY: padding - minY * scale + (height - padding * 2 - dataHeight * scale) / 2,
+      translateY: padding - minY * scale + (height - padding - bottomPadding - dataHeight * scale) / 2,
     };
     selectedIdRef.current = system.id;
+    selectedAtRef.current = Date.now();
     setSelectedSystem(system);
     setQuery(system.name);
     setResults([]);
@@ -2149,12 +3077,12 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
         .filter(
           (k) =>
             new Date(k.time).getTime() >= APP_LOADED_AT &&
-            alertKillIds.has(k.killmail_id) &&
-            proximityClock - new Date(k.time).getTime() < PROXIMITY_EXPIRY_MS,
+            ((alertKillIds.has(k.killmail_id) && proximityClock - new Date(k.time).getTime() < PROXIMITY_EXPIRY_MS) ||
+              (k.victim_character_id != null && trackedCharacterIds.has(k.victim_character_id))),
         )
         .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
         .slice(0, PROXIMITY_TICKER_LIMIT),
-    [kills, alertKillIds, proximityClock],
+    [kills, alertKillIds, proximityClock, trackedCharacterIds],
   );
   const proximityTickerIds = useMemo(() => new Set(proximityTickerKills.map((k) => k.killmail_id)), [proximityTickerKills]);
 
@@ -2171,9 +3099,45 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
     <>
       <div className="map-page">
         <aside className="map-ticker">
+          {(topActivity.systems.length > 0 || topActivity.regions.length > 0) && (
+            <>
+              <button
+                type="button"
+                className="map-ticker-top-activity-toggle"
+                onClick={() => setTopActivityOpen((v) => !v)}
+                aria-expanded={topActivityOpen}
+              >
+                <span>Top Activity (last hour)</span>
+                <ChevronDown size={14} strokeWidth={2} className={topActivityOpen ? "map-ticker-chevron-open" : undefined} />
+              </button>
+              {topActivityOpen && (
+                <div className="map-ticker-top-activity">
+                  <div className="map-ticker-top-activity-col">
+                    <p>Top Active Systems</p>
+                    {topActivity.systems.map((entry) => (
+                      <div key={entry.name} className="map-top-activity-row">
+                        <span>{entry.name}</span>
+                        <span>{entry.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="map-ticker-top-activity-col">
+                    <p>Top Active Regions</p>
+                    {topActivity.regions.map((entry) => (
+                      <div key={entry.name} className="map-top-activity-row">
+                        <span>{entry.name}</span>
+                        <span>{entry.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="map-ticker-divider" />
+            </>
+          )}
           <div className="map-ticker-proximity">
             <div className="map-ticker-proximity-header">
-              <span>Nearby</span>
+              <span>Nearby &amp; Tracked</span>
               {currentSystem ? (
                 <div className="location-tracker-radius map-ticker-radius-picker">
                   {RADIUS_OPTIONS.map((option) => (
@@ -2192,16 +3156,20 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                 <span className="map-ticker-proximity-radius">No location set</span>
               )}
             </div>
-            {!currentSystem ? (
-              <p className="map-ticker-empty">Set your current location to track nearby kills.</p>
-            ) : proximityTickerKills.length === 0 ? (
-              <p className="map-ticker-empty">No nearby kills yet.</p>
+            {proximityTickerKills.length === 0 ? (
+              <p className="map-ticker-empty">
+                {currentSystem
+                  ? "No nearby or tracked kills yet."
+                  : "Set your current location to track nearby kills - a tracked character's own kills show up here too."}
+              </p>
             ) : (
               proximityTickerKills.map((kill) => (
                 <TickerRow
                   key={kill.killmail_id}
                   kill={kill}
-                  severity={currentSystem?.id === kill.system_id ? "system" : "nearby"}
+                  severity={
+                    !alertKillIds.has(kill.killmail_id) ? null : currentSystem?.id === kill.system_id ? "system" : "nearby"
+                  }
                   isCurrentLocation={currentSystem?.id === kill.system_id}
                   onSelect={() => onSelectKill(kill.killmail_id)}
                   onSetLocation={() => setCurrentSystem({ id: kill.system_id, name: kill.system_name })}
@@ -2323,6 +3291,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
               >
                 Heat: {heatMode === "kills" ? "Kills" : heatMode === "traffic" ? "Traffic" : "NPC"}
               </button>
+            </div>
+
+            {/* Separate from the filter toggles above (pushed to the far
+               right via margin-left: auto - see .map-action-toggles) since
+               these two aren't filters at all, just standalone actions
+               ("refresh the data", "resize the window") that don't belong
+               in the same visual group as the FW/Sov/Incursion/Heat
+               buttons whose whole point is to stay pressed/toggled on. */}
+            <div className="map-action-toggles">
               <button
                 type="button"
                 className="map-icons-toggle"
@@ -2331,6 +3308,16 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
               >
                 <RefreshCw size={12} strokeWidth={2} />
               </button>
+              {onToggleFullscreen && (
+                <button
+                  type="button"
+                  className="map-icons-toggle"
+                  onClick={onToggleFullscreen}
+                  title={isFullscreen ? "Exit fullscreen" : "Fill the whole app window with the map"}
+                >
+                  {isFullscreen ? <Minimize2 size={12} strokeWidth={2} /> : <Maximize2 size={12} strokeWidth={2} />}
+                </button>
+              )}
             </div>
 
             {selectedSystem && (
@@ -2376,6 +3363,47 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                   <MapPin size={13} strokeWidth={2} />
                   {currentSystem?.id === selectedSystem.id ? "Current Location" : "Set as My Location"}
                 </button>
+                <button
+                  type="button"
+                  className={`map-selected-set-location${
+                    destinationSystem?.id === selectedSystem.id ? " map-selected-set-location-active" : ""
+                  }`}
+                  onClick={() => setDestinationSystem((prev) => (prev?.id === selectedSystem.id ? null : selectedSystem))}
+                  title={
+                    destinationSystem?.id === selectedSystem.id
+                      ? "Clear this destination"
+                      : "Set as my destination and plot a route from my current location"
+                  }
+                >
+                  <Crosshair size={13} strokeWidth={2} />
+                  {destinationSystem?.id === selectedSystem.id ? "Destination" : "Set as Destination"}
+                </button>
+                {destinationSystem && (
+                  <span className="map-selected-region">
+                    {!currentSystem
+                      ? "Set your current location to plot a route"
+                      : route.length === 0
+                        ? `No stargate route to ${destinationSystem.name}`
+                        : route.length === 1
+                          ? "You're already there"
+                          : `${route.length - 1} jump${route.length - 1 === 1 ? "" : "s"} to ${destinationSystem.name}`}
+                  </span>
+                )}
+                {onSendRouteToGateCheck && currentSystem && destinationSystem && route.length > 1 && (
+                  <button
+                    type="button"
+                    className="map-selected-stats-btn"
+                    onClick={() => {
+                      const origin = systemByIdRef.current.get(currentSystem.id);
+                      if (!origin) return;
+                      onSendRouteToGateCheck([origin, destinationSystem]);
+                    }}
+                    title="Check this route for gate camps in the Gate Check tab"
+                  >
+                    <Radar size={13} strokeWidth={2} />
+                    Send Route to Gate Check
+                  </button>
+                )}
                 <button
                   type="button"
                   className="map-selected-stats-btn"
@@ -2461,79 +3489,36 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
                 {homeSystemCount > 0 && (
                   <p className="map-legend-hint">Portraits mark each character's home station</p>
                 )}
-                {showFwContested && (
-                  <>
-                    <p>Faction Warfare (Contested)</p>
-                    {FW_FACTION_LIST.map((f) => (
-                      <div key={f.id} className="map-legend-row">
-                        <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: f.color }} />
-                        <span>{f.name}</span>
-                      </div>
-                    ))}
-                    <p className="map-legend-hint">Ring color is the faction occupying it - the one that wins it if it flips</p>
-                  </>
+                {(showFwContested || showSov || showIncursions) && (
+                  <p className="map-legend-hint">Everything not relevant to an active filter below fades to grey</p>
                 )}
                 {showSov && (
-                  <>
-                    <p>Sovereignty</p>
-                    <div className="map-legend-row">
-                      <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: "var(--accent)" }} />
-                      <span>Space held by a tracked alliance/corp</span>
-                    </div>
-                    <div className="map-legend-row">
-                      <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: "var(--danger)" }} />
-                      <span>Structure vulnerable (can flip) right now</span>
-                    </div>
-                    <p className="map-legend-hint">
-                      Every other ring color is a hash of the owning alliance/corp - same owner, same color, every
-                      session. Zoom in on a system to see the actual alliance/corp logo badged next to its dot.
-                    </p>
-                  </>
-                )}
-                {showIncursions && (
-                  <div className="map-legend-row">
-                    <span className="map-legend-swatch map-legend-swatch-ring" style={{ borderColor: INCURSION_COLOR }} />
-                    <span>Active Sansha incursion (wider ring = staging system)</span>
-                  </div>
+                  <p className="map-legend-hint">Sovereignty: zoom in on a system to see the owning alliance/corp logo badged next to its dot.</p>
                 )}
               </div>
             )}
 
-            {(topActivity.systems.length > 0 || topActivity.regions.length > 0) && (
-              <div className="map-top-activity">
-                <div className="map-top-activity-col">
-                  <p>Top Active Systems</p>
-                  {topActivity.systems.map((entry) => (
-                    <div key={entry.name} className="map-top-activity-row">
-                      <span>{entry.name}</span>
-                      <span>{entry.count}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="map-top-activity-col">
-                  <p>Top Active Regions</p>
-                  {topActivity.regions.map((entry) => (
-                    <div key={entry.name} className="map-top-activity-row">
-                      <span>{entry.name}</span>
-                      <span>{entry.count}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
 
       {pinHover && (
-        <div className="map-hover-tooltip map-pin-tooltip" style={{ left: pinHover.clientX + 16, top: pinHover.clientY + 16 }}>
+        <div
+          ref={pinTooltipRef}
+          className="map-hover-tooltip map-pin-tooltip"
+          style={{ left: pinHover.clientX + 16, top: pinHover.clientY + 16 }}
+        >
           <span className="map-hover-name">{pinHover.characterName}</span>
           <span className="map-hover-kills">{pinHover.kind === "home" ? "Home base" : "Currently here"}</span>
         </div>
       )}
 
       {sovHover && (
-        <div className="map-hover-tooltip map-pin-tooltip" style={{ left: sovHover.clientX + 16, top: sovHover.clientY + 16 }}>
+        <div
+          ref={sovTooltipRef}
+          className="map-hover-tooltip map-pin-tooltip"
+          style={{ left: sovHover.clientX + 16, top: sovHover.clientY + 16 }}
+        >
           <span className="map-hover-name">{sovHover.name}</span>
           <span className="map-hover-kills">{sovHover.kind === "alliance" ? "Alliance" : "Corporation"}</span>
         </div>
@@ -2550,6 +3535,7 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
 
       {activeHover && (
         <div
+          ref={hoverTooltipRef}
           className={`map-hover-tooltip${pinnedHover ? " map-hover-tooltip-pinned" : ""}`}
           style={{ left: activeHover.clientX + 16, top: activeHover.clientY + 16 }}
         >
@@ -2559,7 +3545,15 @@ function MapView({ onSelectKill, onSelectSystem, characters }: MapViewProps) {
             </span>
             <span className="map-hover-name">{activeHover.system.name}</span>
             {pinnedHover && (
-              <button type="button" className="map-hover-tooltip-close" onClick={() => setPinnedHover(null)} title="Unpin">
+              <button
+                type="button"
+                className="map-hover-tooltip-close"
+                onClick={() => {
+                  pinnedHoverRef.current = null;
+                  setPinnedHover(null);
+                }}
+                title="Unpin"
+              >
                 <X size={12} strokeWidth={2.5} />
               </button>
             )}
@@ -2636,16 +3630,41 @@ interface TickerRowProps {
 const SEC_BAND_LABEL = { high: "Highsec", low: "Lowsec", null: "Nullsec" } as const;
 
 function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation, onShowOnMap, onMouseEnter, onMouseLeave }: TickerRowProps) {
+  // A tracked character's own death, independent of severity (which is
+  // about proximity to your current location, not who died) - a tracked
+  // friend can die right next to you or ten regions away, and either way
+  // it's worth calling out by name, not just folded into the same red/
+  // amber proximity tint severity already uses.
+  const { entities: trackedEntities } = useTrackedEntities();
+  const trackedVictimName =
+    kill.victim_character_id != null &&
+    trackedEntities.some((e) => e.kind === "character" && e.entity_id === kill.victim_character_id)
+      ? kill.victim_character_name
+      : null;
   const isWormhole = isWSpaceSystemName(kill.system_name);
+  const isAbyssal = isAbyssalSystemName(kill.system_name);
   const secTag =
-    !isWormhole && kill.system_security != null
+    !isWormhole && !isAbyssal && kill.system_security != null
       ? { label: SEC_BAND_LABEL[securityBand(kill.system_security)], color: securityColor(kill.system_security) }
       : null;
+  // The system name itself gets the same color treatment as the badges
+  // above it - wormhole's fixed violet, abyssal's own fixed color, or the
+  // real per-0.1 security tier color for everything else, so the name
+  // reads as "what kind of space is this" at a glance, matching its dot
+  // on the map (for k-space) or its badge right above it (for w-space/
+  // abyssal) rather than sitting in the same flat muted color regardless.
+  const systemNameColor = isWormhole
+    ? "var(--wormhole)"
+    : isAbyssal
+      ? "var(--abyssal)"
+      : kill.system_security != null
+        ? securityColor(kill.system_security)
+        : undefined;
   return (
     <div
       role="button"
       tabIndex={0}
-      className={`map-ticker-row${severity ? ` map-ticker-row-alert-${severity}` : ""}`}
+      className={`map-ticker-row${severity ? ` map-ticker-row-alert-${severity}` : ""}${trackedVictimName ? " map-ticker-row-tracked" : ""}`}
       onClick={onSelect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -2660,6 +3679,11 @@ function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation,
         <div className="map-ticker-time-group">
           <span className="map-ticker-time">{formatUtcTime(kill.time)}</span>
           {isWormhole && <span className="map-ticker-wormhole-badge">Wormhole Kill</span>}
+          {isAbyssal && (
+            <span className="map-ticker-abyssal-badge" title="Abyssal Deadspace has no fixed position, so it can't be shown on the map">
+              Abyssal Kill
+            </span>
+          )}
           {secTag && (
             <span className="map-ticker-sec-badge" style={{ color: secTag.color }}>
               {secTag.label}
@@ -2693,13 +3717,21 @@ function TickerRow({ kill, severity, isCurrentLocation, onSelect, onSetLocation,
           </button>
         </div>
       </div>
+      {trackedVictimName && (
+        <div className="map-ticker-tracked-victim">
+          <Skull size={12} strokeWidth={2} />
+          <span>{trackedVictimName}</span>
+        </div>
+      )}
       <div className="map-ticker-row-body">
         <img src={`https://images.evetech.net/types/${kill.ship_type_id}/icon?size=64`} alt="" />
         <div className="map-ticker-row-text">
           <span className="map-ticker-title">{kill.ship_type_name}</span>
-          <span className="map-ticker-subtitle">
-            {kill.system_name} | {formatIskCompact(kill.total_value)} | {kill.attacker_count}{" "}
-            attacker{kill.attacker_count === 1 ? "" : "s"}
+          <span className="map-ticker-subtitle" style={{ color: systemNameColor }}>
+            {kill.system_name}
+          </span>
+          <span className="map-ticker-subtitle map-ticker-subtitle-meta">
+            {formatIskCompact(kill.total_value)} · {kill.attacker_count} attacker{kill.attacker_count === 1 ? "" : "s"}
           </span>
         </div>
       </div>
