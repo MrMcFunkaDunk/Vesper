@@ -132,7 +132,7 @@ impl PlatformCapture for LinuxCapture {
         let conn = self.conn.lock().unwrap();
         let (width, height, rgb) = capture_rgb(&conn, id as Window)?;
         let mut out = Vec::new();
-        let mut encoder = jpeg_encoder::Encoder::new(&mut out, 70);
+        let encoder = jpeg_encoder::Encoder::new(&mut out, 70);
         encoder.encode(&rgb, width, height, jpeg_encoder::ColorType::Rgb).ok()?;
         Some(out)
     }

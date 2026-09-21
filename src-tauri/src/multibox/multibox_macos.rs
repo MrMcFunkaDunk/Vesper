@@ -220,7 +220,7 @@ impl PlatformCapture for MacCapture {
     fn capture_jpeg(&self, id: isize) -> Option<Vec<u8>> {
         let (width, height, rgb) = capture_rgb(id as u32)?;
         let mut out = Vec::new();
-        let mut encoder = jpeg_encoder::Encoder::new(&mut out, 70);
+        let encoder = jpeg_encoder::Encoder::new(&mut out, 70);
         encoder.encode(&rgb, width as u16, height as u16, jpeg_encoder::ColorType::Rgb).ok()?;
         Some(out)
     }

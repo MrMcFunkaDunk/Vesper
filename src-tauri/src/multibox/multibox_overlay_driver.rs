@@ -126,7 +126,7 @@ pub(crate) fn open_overlay(app: tauri::AppHandle, settings: MultiboxSettings, ca
 
 fn close_preview_window(app: &tauri::AppHandle, id: isize) {
     let app = app.clone();
-    let _ = app.run_on_main_thread(move || {
+    let _ = app.clone().run_on_main_thread(move || {
         if let Some(win) = app.get_webview_window(&preview_label(id)) {
             let _ = win.close();
         }
@@ -137,7 +137,7 @@ fn spawn_preview_window(app: &tauri::AppHandle, client: &MultiboxClient, shared_
     let app = app.clone();
     let client = client.clone();
     let shared_settings = shared_settings.clone();
-    let _ = app.run_on_main_thread(move || {
+    let _ = app.clone().run_on_main_thread(move || {
         let label = preview_label(client.hwnd);
         if app.get_webview_window(&label).is_some() {
             return;
