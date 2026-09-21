@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Multibox Preview</title>
+<style>
+  /* No DWM thumbnail composition exists on Linux/macOS, so this page is the
+     entire "preview window" on those platforms: the backend pushes a
+     low-fps screenshot of the EVE client here, and this page draws the same
+     label/border/highlight chrome the native Windows implementation draws
+     with GDI. Everything platform-specific (capture, enumerate, focus) is
+     Rust; everything visual is this page. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #161310;
+    overflow: hidden;
+    cursor: default;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  #frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    display: block;
+  }
+  #label {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: #201812;
+    color: #6fc3d9;
+    font: 12px -apple-system, "Segoe UI", sans-serif;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #label.at-top { top: 0; }
+  #label.at-bottom { bottom: 0; }
+  #dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    display: none;
+  }
+  #border {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 0 solid transparent;
+  }
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7d91;
+    font: 12px -apple-system, "Segoe UI", sans-serif;
+  }
+</style>
+</head>
+<body data-tauri-drag-region>
+  <img id="frame" data-tauri-drag-region alt="" hidden />
+  <p id="empty">Waiting for frame…</p>
+  <div id="label" class="at-top" hidden>
+    <span id="dot"></span>
+    <span id="name"></span>
+  </div>
+  <div id="border"></div>
+
+  <script type="module">
+    // Loaded from public/ as a plain static file (no Vite bundling), so it
+    // uses Tauri's injected window.__TAURI__ global (app.withGlobalTauri in
+    // tauri.conf.json) instead of importing the npm package the rest of the
+    // app uses.
+    const { invoke } = window.__TAURI__.core;
+    const { getCurrentWindow } = window.__TAURI__.window;
+
+    const params = new URLSearchParams(location.search);
+    const clientId = params.get("client") ?? "";
+    const win = getCurrentWindow();
+
+    const frame = document.getElementById("frame");
+    const empty = document.getElementById("empty");
+    const label = document.getElementById("label");
+    const nameEl = document.getElementById("name");
+    const dot = document.getElementById("dot");
+    const border = document.getElementById("border");
+
+    let zoomFactor = 1;
+    let zoomAnchor = 4;
+    let zoomOnHover = false;
+    let hovering = false;
+    let dragging = false;
+
+    function applyZoom() {
+      if (!zoomOnHover || zoomFactor <= 1) {
+        document.body.style.transform = "";
+        return;
+      }
+      const originX = [0, 50, 100, 0, 50, 100, 0, 50, 100][zoomAnchor] ?? 50;
+      const originY = [0, 0, 0, 50, 50, 50, 100, 100, 100][zoomAnchor] ?? 50;
+      document.body.style.transformOrigin = `${originX}% ${originY}%`;
+      document.body.style.transform = hovering && !dragging ? `scale(${zoomFactor})` : "";
+    }
+
+    document.body.addEventListener("mouseenter", () => {
+      hovering = true;
+      applyZoom();
+    });
+    document.body.addEventListener("mouseleave", () => {
+      hovering = false;
+      applyZoom();
+    });
+
+    // A plain click (no drag) brings the real EVE client to the foreground -
+    // the same one-and-only interaction the Windows implementation allows.
+    // data-tauri-drag-region already starts a native window move on
+    // mousedown; a click event only fires afterwards if the pointer never
+    // actually moved, so this naturally distinguishes drag from click.
+    document.body.addEventListener("mousedown", () => {
+      dragging = true;
+      applyZoom();
+    });
+    window.addEventListener("mouseup", () => {
+      dragging = false;
+      applyZoom();
+    });
+    document.body.addEventListener("click", () => {
+      invoke("focus_multibox_client", { clientId }).catch(() => {});
+    });
+
+    win.listen("multibox-frame", (event) => {
+      const data = event.payload;
+      empty.hidden = true;
+      frame.hidden = false;
+      frame.src = `data:image/jpeg;base64,${data.image}`;
+      frame.style.opacity = String(data.opacity ?? 1);
+
+      if (data.showOverlay) {
+        label.hidden = false;
+        label.className = data.labelAtBottom ? "at-bottom" : "at-top";
+        label.style.fontSize = `${data.labelSize ?? 12}px`;
+        label.style.color = data.labelColor ?? "#6fc3d9";
+        nameEl.textContent = data.name ?? "";
+        dot.style.display = data.active && data.highlightActive ? "block" : "none";
+        dot.style.background = data.highlightColor ?? "#9ae63c";
+        dot.style.boxShadow = `0 0 6px ${data.highlightColor ?? "#9ae63c"}`;
+
+        const borderColor = data.active && data.highlightActive ? data.highlightColor : data.showFrames ? data.frameColor : null;
+        const thickness = data.active && data.highlightActive ? 3 : 2;
+        border.style.borderWidth = borderColor ? `${thickness}px` : "0";
+        border.style.borderColor = borderColor ?? "transparent";
+      } else {
+        label.hidden = true;
+        border.style.borderWidth = "0";
+      }
+
+      zoomFactor = data.zoomFactor ?? 1;
+      zoomAnchor = data.zoomAnchor ?? 4;
+      zoomOnHover = Boolean(data.zoomOnHover);
+      applyZoom();
+
+      document.body.style.display = data.hidden ? "none" : "";
+    });
+
+    // Persist the window's own geometry back into settings whenever the
+    // user finishes moving/resizing it, rather than polling - Tauri already
+    // fires these events natively on every platform.
+    let saveTimer = null;
+    function scheduleSave() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        const pos = await win.outerPosition();
+        const size = await win.outerSize();
+        invoke("save_multibox_client_layout", { clientId, x: pos.x, y: pos.y, width: size.width, height: size.height }).catch(() => {});
+      }, 300);
+    }
+    win.onMoved(scheduleSave);
+    win.onResized(scheduleSave);
+  </script>
+</body>
+</html>

@@ -20,10 +20,14 @@
 // thing keeps floating on the desktop regardless of which VESPER tab is
 // active or whether VESPER is minimized.
 //
-// The Windows implementation (DWM/GDI/Win32) lives in `multibox_windows`,
-// gated to that platform only - there is no cross-platform equivalent of
-// DWM thumbnail composition, so other platforms get the stub functions at
-// the bottom of this file instead.
+// The Windows implementation (DWM/GDI/Win32) lives in `multibox_windows`.
+// Linux and macOS have no equivalent to DWM thumbnail composition, so
+// `multibox_linux`/`multibox_macos` take a different shape entirely: each
+// just supplies enumerate/capture/focus primitives to the shared driver in
+// `multibox_overlay_driver`, which opens an ordinary Tauri webview window
+// per client and pushes it a periodic screenshot instead of a live
+// composited thumbnail. Any other platform gets the stub functions at the
+// bottom of this file.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -31,6 +35,12 @@ use std::path::PathBuf;
 
 #[cfg(windows)]
 mod multibox_windows;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod multibox_overlay_driver;
+#[cfg(target_os = "linux")]
+mod multibox_linux;
+#[cfg(target_os = "macos")]
+mod multibox_macos;
 
 #[derive(Serialize, Clone)]
 pub struct MultiboxClient {
@@ -167,24 +177,40 @@ fn save_settings(app: &tauri::AppHandle, settings: &MultiboxSettings) -> Result<
     std::fs::rename(&tmp_path, &path).map_err(|e| format!("could not save multibox settings: {e}"))
 }
 
+/// Whichever platform's overlay is currently running (if any) registers its
+/// live settings handle here - shared across all three implementations so
+/// `update_settings` doesn't need its own per-platform branch.
+static LIVE_SETTINGS: std::sync::OnceLock<std::sync::Mutex<Option<std::sync::Arc<std::sync::Mutex<MultiboxSettings>>>>> = std::sync::OnceLock::new();
+
+pub(crate) fn live_settings_cell() -> &'static std::sync::Mutex<Option<std::sync::Arc<std::sync::Mutex<MultiboxSettings>>>> {
+    LIVE_SETTINGS.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 /// Persists the settings, and if the overlay is currently running, pushes
 /// them into its live shared context too - the controller's own refresh
 /// tick (at most a second later) then applies anything that needs re-doing
-/// on existing windows (opacity, topmost, hidden state, highlight color).
-#[cfg(windows)]
+/// on existing windows/previews (opacity, topmost, hidden state, highlight
+/// color).
 pub fn update_settings(app: &tauri::AppHandle, settings: MultiboxSettings) -> Result<(), String> {
     save_settings(app, &settings)?;
-    if let Some(ctx) = multibox_windows::live_context_cell().lock().unwrap().as_ref() {
-        *ctx.settings.lock().unwrap() = settings;
+    if let Some(shared) = live_settings_cell().lock().unwrap().as_ref() {
+        *shared.lock().unwrap() = settings;
     }
     Ok(())
 }
 
-/// No live overlay exists on this platform yet, so there's nothing to push
-/// a settings update into - just persist it.
-#[cfg(not(windows))]
-pub fn update_settings(app: &tauri::AppHandle, settings: MultiboxSettings) -> Result<(), String> {
-    save_settings(app, &settings)
+/// Persists one client's remembered position/size, keyed by character name -
+/// shared by the Linux/macOS overlay drivers on window move/resize (Windows
+/// does the equivalent inline in its own WM_LBUTTONUP handler instead, since
+/// it already holds the settings lock there for other reasons).
+pub(crate) fn save_client_layout(app: &tauri::AppHandle, name: String, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+    let mut settings = load_settings(app);
+    let entry = settings.layouts.entry(name).or_default();
+    entry.x = x;
+    entry.y = y;
+    entry.width = width;
+    entry.height = height;
+    update_settings(app, settings)
 }
 
 /// A whole named snapshot of `MultiboxSettings` - lets a user swap between
@@ -235,21 +261,37 @@ pub fn delete_profile(app: &tauri::AppHandle, name: &str) -> Result<(), String> 
 
 #[cfg(windows)]
 pub(crate) use multibox_windows::{close_overlay, enumerate_eve_clients, is_overlay_open, open_overlay};
+#[cfg(target_os = "linux")]
+pub(crate) use multibox_linux::{close_overlay, enumerate_eve_clients, is_overlay_open, open_overlay};
+#[cfg(target_os = "macos")]
+pub(crate) use multibox_macos::{close_overlay, enumerate_eve_clients, is_overlay_open, open_overlay};
 
-/// No running EVE clients can be detected without DWM thumbnail composition
-/// (Windows-only), so this platform never has any.
-#[cfg(not(windows))]
+/// Best-effort focus request from a preview window's click handler - a
+/// no-op stub on Windows, which instead handles this as a direct window
+/// message inside multibox_windows.rs's own click handler.
+#[cfg(target_os = "linux")]
+pub(crate) use multibox_linux::focus_client;
+#[cfg(target_os = "macos")]
+pub(crate) use multibox_macos::focus_client;
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn focus_client(_id: &str) -> Result<(), String> {
+    Ok(())
+}
+
+/// No running EVE clients can be detected on a platform with neither a DWM
+/// equivalent nor the Linux/macOS screenshot-based overlay wired up.
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn enumerate_eve_clients() -> Vec<MultiboxClient> {
     Vec::new()
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn is_overlay_open() -> bool {
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn open_overlay(_app: tauri::AppHandle, _settings: MultiboxSettings) {}
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub fn close_overlay() {}

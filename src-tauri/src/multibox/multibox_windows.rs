@@ -110,12 +110,6 @@ fn vk_for_key(key: &str) -> Option<u32> {
     None
 }
 
-static LIVE_CONTEXT: OnceLock<Mutex<Option<Arc<SharedContext>>>> = OnceLock::new();
-
-pub(crate) fn live_context_cell() -> &'static Mutex<Option<Arc<SharedContext>>> {
-    LIVE_CONTEXT.get_or_init(|| Mutex::new(None))
-}
-
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -221,7 +215,7 @@ fn anchored_rect(original: RECT, new_w: i32, new_h: i32, anchor: u8) -> RECT {
 
 pub(crate) struct SharedContext {
     app: tauri::AppHandle,
-    pub(crate) settings: Mutex<MultiboxSettings>,
+    pub(crate) settings: Arc<Mutex<MultiboxSettings>>,
 }
 
 struct PreviewState {
@@ -902,8 +896,9 @@ pub(crate) fn open_overlay(app: tauri::AppHandle, settings: MultiboxSettings) {
         };
         RegisterClassExW(&preview_wc);
 
-        let ctx = Arc::new(SharedContext { app: app.clone(), settings: Mutex::new(settings) });
-        *live_context_cell().lock().unwrap() = Some(ctx.clone());
+        let shared_settings = Arc::new(Mutex::new(settings));
+        *super::live_settings_cell().lock().unwrap() = Some(shared_settings.clone());
+        let ctx = Arc::new(SharedContext { app: app.clone(), settings: shared_settings });
 
         let controller_title = to_wide("VESPER Multibox Controller");
         let Ok(controller_hwnd) = CreateWindowExW(
@@ -920,7 +915,7 @@ pub(crate) fn open_overlay(app: tauri::AppHandle, settings: MultiboxSettings) {
             Some(instance.into()),
             None,
         ) else {
-            *live_context_cell().lock().unwrap() = None;
+            *super::live_settings_cell().lock().unwrap() = None;
             return;
         };
 
@@ -946,6 +941,6 @@ pub(crate) fn open_overlay(app: tauri::AppHandle, settings: MultiboxSettings) {
         }
 
         *controller_hwnd_cell().lock().unwrap() = None;
-        *live_context_cell().lock().unwrap() = None;
+        *super::live_settings_cell().lock().unwrap() = None;
     });
 }

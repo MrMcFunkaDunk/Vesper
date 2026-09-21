@@ -57,3 +57,19 @@ chrono = "0.4"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Controls"] }
 
+# Multibox's Linux implementation: pure-protocol X11 (no libX11/libxcb
+# system dependency) for window enumeration, XComposite-based capture, and
+# EWMH focus requests.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["composite"] }
+jpeg-encoder = "0.6"
+
+# Multibox's macOS implementation: CGWindowListCopyWindowInfo/
+# CGWindowListCreateImage (hand-declared externs against the CoreGraphics
+# framework, in multibox_macos.rs) for enumeration/capture, plus
+# core-foundation for the CFArray/CFDictionary results they return.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+core-foundation-sys = "0.8"
+jpeg-encoder = "0.6"
+

@@ -1322,6 +1322,23 @@ pub fn delete_multibox_profile(app: AppHandle, name: String) -> Result<(), Strin
     multibox::delete_profile(&app, &name)
 }
 
+/// Called by the Linux/macOS preview window's own click handler - on
+/// Windows the equivalent click is handled natively inside
+/// multibox_windows.rs's own window procedure instead, so this command
+/// only ever does real work on the other two platforms.
+#[tauri::command]
+pub fn focus_multibox_client(client_id: String) -> Result<(), String> {
+    multibox::focus_client(&client_id)
+}
+
+/// Persists one Linux/macOS preview window's position/size after a move or
+/// resize - Windows does the equivalent inline in its own WM_LBUTTONUP
+/// handler instead, since it already holds the settings lock there.
+#[tauri::command]
+pub fn save_multibox_client_layout(app: AppHandle, label: String, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+    multibox::save_client_layout(&app, label, x, y, width, height)
+}
+
 #[cfg(windows)]
 #[tauri::command]
 pub fn is_price_widget_open() -> bool {

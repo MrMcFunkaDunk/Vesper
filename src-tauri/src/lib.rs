@@ -256,6 +256,8 @@ pub fn run() {
             commands::list_multibox_profiles,
             commands::save_multibox_profile,
             commands::delete_multibox_profile,
+            commands::focus_multibox_client,
+            commands::save_multibox_client_layout,
             commands::is_price_widget_open,
             commands::open_price_widget,
             commands::close_price_widget,
