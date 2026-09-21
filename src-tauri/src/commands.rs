@@ -1,6 +1,6 @@
 use crate::{abyssal, asset_history, auth, characters, config, esi, fittings, intel_feed, kill_history, kills, map, market, multibox, news, pi, route, scout, settings_sync, skillplans, threats, tracked_entities, wars, wormholes};
 #[cfg(windows)]
-use crate::{combat_overlay, price_widget};
+use crate::combat_overlay;
 use futures::stream::{self, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -1341,41 +1341,6 @@ pub fn save_multibox_client_layout(app: AppHandle, label: String, x: i32, y: i32
 
 #[cfg(windows)]
 #[tauri::command]
-pub fn is_price_widget_open() -> bool {
-    price_widget::is_widget_open()
-}
-
-#[cfg(not(windows))]
-#[tauri::command]
-pub fn is_price_widget_open() -> bool {
-    false
-}
-
-#[cfg(windows)]
-#[tauri::command]
-pub fn open_price_widget(app: AppHandle, state: State<'_, AppState>, region_id: i64) {
-    price_widget::open_widget(app, state.http_client.clone(), region_id);
-}
-
-/// The floating price-lookup widget is a native GDI popup, which only the
-/// Windows implementation has - a no-op elsewhere until a cross-platform
-/// rewrite exists.
-#[cfg(not(windows))]
-#[tauri::command]
-pub fn open_price_widget(_app: AppHandle, _state: State<'_, AppState>, _region_id: i64) {}
-
-#[cfg(windows)]
-#[tauri::command]
-pub fn close_price_widget() {
-    price_widget::close_widget();
-}
-
-#[cfg(not(windows))]
-#[tauri::command]
-pub fn close_price_widget() {}
-
-#[cfg(windows)]
-#[tauri::command]
 pub fn is_combat_overlay_open() -> bool {
     combat_overlay::is_widget_open()
 }
@@ -1392,8 +1357,7 @@ pub fn open_combat_overlay() {
     combat_overlay::open_widget();
 }
 
-/// Same story as the price widget: a native GDI popup, Windows-only until a
-/// cross-platform rewrite exists.
+/// A native GDI popup, Windows-only until a cross-platform rewrite exists.
 #[cfg(not(windows))]
 #[tauri::command]
 pub fn open_combat_overlay() {}
@@ -1409,8 +1373,8 @@ pub fn close_combat_overlay() {
 pub fn close_combat_overlay() {}
 
 /// "windows" | "macos" | "linux" - lets the frontend hide entry points for
-/// features that only have a Windows implementation (Multibox, Combat
-/// Overlay, Price Widget) instead of showing a button that silently no-ops.
+/// features that only have a Windows implementation (the Combat Overlay)
+/// instead of showing a button that silently no-ops.
 #[tauri::command]
 pub fn get_platform() -> &'static str {
     std::env::consts::OS

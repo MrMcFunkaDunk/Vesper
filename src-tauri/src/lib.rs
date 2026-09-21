@@ -16,8 +16,6 @@ mod market;
 mod multibox;
 mod news;
 mod pi;
-#[cfg(windows)]
-mod price_widget;
 mod route;
 mod scout;
 mod settings_sync;
@@ -258,9 +256,6 @@ pub fn run() {
             commands::delete_multibox_profile,
             commands::focus_multibox_client,
             commands::save_multibox_client_layout,
-            commands::is_price_widget_open,
-            commands::open_price_widget,
-            commands::close_price_widget,
             commands::is_combat_overlay_open,
             commands::open_combat_overlay,
             commands::close_combat_overlay,

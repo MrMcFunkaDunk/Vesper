@@ -27,7 +27,6 @@ import { useColorOverrides } from "../hooks/useColorOverrides";
 import { useNavOrder } from "../hooks/useNavOrder";
 import { useDragReorder } from "../hooks/useDragReorder";
 import { useFavouritePages } from "../hooks/useFavouritePages";
-import { useIsWindows } from "../hooks/usePlatform";
 import { splitFavouriteId, subTabLabel } from "../lib/subTabs";
 import dashboardIcon from "../assets/sidebar-icons/dashboard.png";
 import killsIntelIcon from "../assets/sidebar-icons/kills-intel.png";
@@ -238,8 +237,7 @@ function Sidebar({ activeId, activeSubTab, onSelect }: SidebarProps) {
    * again, managing characters, etc.), so it can't end up buried in the
    * middle of the list. Rendered as its own fixed row below, not through
    * this array. */
-  const isWindows = useIsWindows();
-  const draggableItems = orderedItems.filter((item) => item.id !== "settings" && (isWindows || item.id !== "multiboxing"));
+  const draggableItems = orderedItems.filter((item) => item.id !== "settings");
   const settingsItem = orderedItems.find((item) => item.id === "settings");
 
   interface FavouriteRow {

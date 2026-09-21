@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, Pin, PinOff, Star } from "lucide-react";
+import { ChevronRight, Star } from "lucide-react";
 import { getMapData, regionHubColor, regionLabelWithHub, TRADE_HUB_REGIONS, tradeHubName, type MapData } from "../lib/map";
-import { isPriceWidgetOpen, openPriceWidget, closePriceWidget } from "../lib/priceWidget";
-import { useIsWindows } from "../hooks/usePlatform";
-import { useErrorReporter } from "../hooks/useErrorReporter";
 import { toCsv, downloadCsv } from "../lib/csvExport";
 import MarketHistoryChart from "./MarketHistoryChart";
 import {
@@ -201,29 +198,6 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
   const [regionId, setRegionId] = useState(defaultTradeHub);
   const [hubTouched, setHubTouched] = useState(false);
   const [otherRegionTouched, setOtherRegionTouched] = useState(false);
-  const [widgetPinned, setWidgetPinned] = useState(false);
-  const isWindows = useIsWindows();
-  const reportError = useErrorReporter();
-
-  useEffect(() => {
-    isPriceWidgetOpen()
-      .then(setWidgetPinned)
-      .catch(() => {});
-  }, []);
-
-  async function handleTogglePriceWidget() {
-    try {
-      if (widgetPinned) {
-        await closePriceWidget();
-        setWidgetPinned(false);
-      } else {
-        await openPriceWidget(regionId);
-        setWidgetPinned(true);
-      }
-    } catch (err) {
-      reportError(`Failed to ${widgetPinned ? "close" : "open"} the price widget: ${String(err)}`);
-    }
-  }
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<TypeSearchMatch[]>([]);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -513,21 +487,6 @@ function MarketBrowser({ characters, initialItem, onConsumeInitialItem }: Market
               </option>
             ))}
         </select>
-        {isWindows && (
-          <button
-            type="button"
-            className={`overlay-toggle-btn${widgetPinned ? " overlay-toggle-btn-active" : ""}`}
-            onClick={handleTogglePriceWidget}
-            title={
-              widgetPinned
-                ? "Close the floating price widget"
-                : "Pin a small always-on-top window with a live price lookup for the current region"
-            }
-          >
-            {widgetPinned ? <PinOff size={13} strokeWidth={2} /> : <Pin size={13} strokeWidth={2} />}
-            {widgetPinned ? "Unpin Price Widget" : "Pin Price Widget"}
-          </button>
-        )}
       </div>
 
       <div className="market-browser-layout">

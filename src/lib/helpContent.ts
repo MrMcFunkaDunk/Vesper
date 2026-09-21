@@ -88,9 +88,9 @@ export const HELP_CONTENT: Record<string, HelpContent> = {
     what: "Full market data for any item in a region you pick - live order book, 90-day price history, and a category tree to browse instead of search.",
     how: [
       "Pick a region via either the five-hub quick-picker or the \"All Other Regions\" list (only one of the two is ever active at a time - whichever you touched last wins). Search an item by name, or drill through the category tree on the left (leaf categories lazy-load their items only once you actually expand them). Once an item's picked, stat cards show Avg Vol (7d), Spread, Best Sell, Best Buy, and Split Price - the ISK-per-unit midpoint between best sell and best buy, the conventional figure for splitting a direct player trade evenly, not a suggestion to place an order there.",
-      "Market Data and Price History tabs switch between the live order book (sellers cheapest-first, buyers highest-first, capped at 50 rows each) and a 90-day chart - Export CSV grabs whichever one you're currently looking at. \"Pin Price Widget\" opens a small separate always-on-top window with a live price lookup for the current region, independent of VESPER's own window.",
+      "Market Data and Price History tabs switch between the live order book (sellers cheapest-first, buyers highest-first, capped at 50 rows each) and a 90-day chart - Export CSV grabs whichever one you're currently looking at.",
     ],
-    gives: "A real, current order book and price history for anything in the game, plus a quick always-on-top price check you can leave open while doing something else.",
+    gives: "A real, current order book and price history for anything in the game.",
   },
   "wallet.marketcompare": {
     title: "Market Compare",

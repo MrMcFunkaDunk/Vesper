@@ -3,11 +3,12 @@ name: Release
 # Builds installers for Windows, macOS, and Linux and attaches them all to
 # one GitHub Release whenever a version tag (e.g. v1.2.0) is pushed.
 #
-# Multibox, the Combat Overlay, and the Price Widget are native Win32/GDI
-# overlays with no cross-platform equivalent yet - they compile out to
-# harmless no-ops on macOS/Linux (see src-tauri/src/multibox.rs and the
-# #[cfg(not(windows))] stubs in src-tauri/src/commands.rs) rather than
-# blocking the rest of the app from building there.
+# Multibox now has a real (screenshot-based) implementation on Linux/macOS
+# too - see src-tauri/src/multibox/multibox_linux.rs and multibox_macos.rs.
+# The Combat Overlay is still a native Win32/GDI overlay with no
+# cross-platform equivalent yet - it compiles out to a harmless no-op on
+# macOS/Linux (the #[cfg(not(windows))] stubs in src-tauri/src/commands.rs)
+# rather than blocking the rest of the app from building there.
 #
 # The macOS build targets the runner's native architecture (Apple Silicon
 # on macos-latest) rather than a universal binary - Intel Mac support can

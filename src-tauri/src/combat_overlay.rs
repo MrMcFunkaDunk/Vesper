@@ -1,8 +1,7 @@
 //! Live outgoing/incoming DPS, armor/shield/hull rep, and capacitor
 //! transfer tracking - reads EVE's own combat log (Gamelogs, a different
 //! folder and line format than the chat logs intel_feed.rs tails) and
-//! aggregates events into a small floating native overlay, the same
-//! native-window idiom price_widget.rs already established (WS_POPUP,
+//! aggregates events into a small floating native overlay (WS_POPUP,
 //! topmost, rounded + drop-shadowed, GDI-painted).
 //!
 //! Line format verified against a real, working open-source parser
@@ -533,9 +532,9 @@ unsafe fn create_widget_window() -> Option<HWND> {
 
 /// Opens the overlay (a no-op if already open) on a dedicated thread that
 /// owns its own Win32 message loop for as long as the window lives - same
-/// reason multibox's controller thread and the price widget both do this:
-/// a native window needs something pumping its message queue, and that
-/// can't be Tauri's own event loop for a window Tauri doesn't know about.
+/// reason multibox's controller thread does this: a native window needs
+/// something pumping its message queue, and that can't be Tauri's own
+/// event loop for a window Tauri doesn't know about.
 pub fn open_widget() {
     if is_widget_open() {
         return;

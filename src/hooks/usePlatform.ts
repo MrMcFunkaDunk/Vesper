@@ -33,10 +33,10 @@ export function usePlatform(): string | null {
 }
 
 /**
- * Multibox, the Combat Overlay, and the Price Widget are native Win32/GDI
- * overlays with no cross-platform implementation yet. Treat an unresolved
- * platform as Windows so the overwhelming majority of users (on Windows)
- * never see these entry points flash in and out while the check resolves.
+ * The Combat Overlay is a native Win32/GDI overlay with no cross-platform
+ * implementation yet. Treat an unresolved platform as Windows so the
+ * overwhelming majority of users (on Windows) never see this entry point
+ * flash in and out while the check resolves.
  */
 export function useIsWindows(): boolean {
   const platform = usePlatform();
