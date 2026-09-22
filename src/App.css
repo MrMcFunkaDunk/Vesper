@@ -11374,6 +11374,12 @@ body[data-reduce-motion="true"] .mineral-ticker-half-clone {
   color: var(--text);
 }
 
+.appraisal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .appraisal {
   display: flex;
   flex-direction: column;
