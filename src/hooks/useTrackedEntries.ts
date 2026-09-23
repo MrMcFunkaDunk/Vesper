@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { entryKey, type TrackedEntry } from "../lib/kills";
+import { backupSetting } from "../lib/settingsBackup";
 
 const STORAGE_KEY = "vesper.kills.trackedEntries";
 /** Superseded system-only watchlist format, kept only to migrate existing
@@ -40,7 +41,9 @@ export function useTrackedEntries() {
       hydrated.current = true;
       return;
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const serialized = JSON.stringify(entries);
+    localStorage.setItem(STORAGE_KEY, serialized);
+    backupSetting(STORAGE_KEY, serialized);
   }, [entries]);
 
   function addEntry(entry: TrackedEntry) {

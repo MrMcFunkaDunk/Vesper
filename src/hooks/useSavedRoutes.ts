@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { backupSetting } from "../lib/settingsBackup";
 
 const STORAGE_KEY = "vesper.gatecheck.savedRoutes";
 
@@ -38,7 +39,9 @@ export function useSavedRoutes() {
       hydrated.current = true;
       return;
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(routes));
+    const serialized = JSON.stringify(routes);
+    localStorage.setItem(STORAGE_KEY, serialized);
+    backupSetting(STORAGE_KEY, serialized);
   }, [routes]);
 
   function addRoute(route: SavedRoute) {

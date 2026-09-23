@@ -38,23 +38,33 @@ import { LocationTrackingProvider } from "./hooks/useLocationTracking";
 import { NotificationCenterProvider } from "./hooks/useNotificationCenter";
 import { ToastProvider } from "./hooks/useToast";
 import { TrackedEntitiesProvider } from "./hooks/useTrackedEntities";
+import { restoreSettingsFromDisk } from "./lib/settingsBackup";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <ErrorReporterProvider>
-      <NotificationCenterProvider>
-        <ToastProvider>
-          <TrackedEntitiesProvider>
-            <RecentActivityProvider>
-              <TrackedSystemsProvider>
-                <LocationTrackingProvider>
-                  <App />
-                </LocationTrackingProvider>
-              </TrackedSystemsProvider>
-            </RecentActivityProvider>
-          </TrackedEntitiesProvider>
-        </ToastProvider>
-      </NotificationCenterProvider>
-    </ErrorReporterProvider>
-  </React.StrictMode>,
-);
+// Awaited before the very first render (not just fired in the background)
+// so every hook's own `useState(() => readFromLocalStorage())`-style
+// initializer sees fully-restored values on its first read, rather than
+// reading empty defaults and only fixing up after a later re-render (or,
+// for the several hooks that only ever read localStorage once at mount,
+// never fixing up at all this session). A local Tauri IPC round-trip plus
+// a small file read is imperceptible next to the rest of app startup.
+restoreSettingsFromDisk().finally(() => {
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <ErrorReporterProvider>
+        <NotificationCenterProvider>
+          <ToastProvider>
+            <TrackedEntitiesProvider>
+              <RecentActivityProvider>
+                <TrackedSystemsProvider>
+                  <LocationTrackingProvider>
+                    <App />
+                  </LocationTrackingProvider>
+                </TrackedSystemsProvider>
+              </RecentActivityProvider>
+            </TrackedEntitiesProvider>
+          </ToastProvider>
+        </NotificationCenterProvider>
+      </ErrorReporterProvider>
+    </React.StrictMode>,
+  );
+});

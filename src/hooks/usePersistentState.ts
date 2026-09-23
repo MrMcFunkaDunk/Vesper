@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
+import { backupSetting } from "../lib/settingsBackup";
 
 interface Store<T> {
   value: T;
@@ -65,7 +66,9 @@ export function usePersistentState<T>(
       const resolved = typeof next === "function" ? (next as (prev: T) => T)(store.value) : next;
       store.value = resolved;
       try {
-        localStorage.setItem(key, JSON.stringify(resolved));
+        const serialized = JSON.stringify(resolved);
+        localStorage.setItem(key, serialized);
+        backupSetting(key, serialized);
       } catch {
         // Not worth surfacing - worst case the preference doesn't persist.
       }

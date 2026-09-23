@@ -6,6 +6,7 @@ import { useErrorReporter } from "./useErrorReporter";
 import { readNotificationPreferences } from "./useNotificationPreferences";
 import { notify } from "../lib/notifications";
 import { isTransientServerError } from "../lib/overviewCache";
+import { backupSetting } from "../lib/settingsBackup";
 
 /** 0 means "just this system, no neighbors" - systemsWithinJumps below
  * already handles it correctly (its BFS loop simply never runs), so it's a
@@ -201,8 +202,11 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
       currentHydrated.current = true;
       return;
     }
-    if (currentSystem) localStorage.setItem(CURRENT_SYSTEM_KEY, JSON.stringify(currentSystem));
-    else localStorage.removeItem(CURRENT_SYSTEM_KEY);
+    if (currentSystem) {
+      const serialized = JSON.stringify(currentSystem);
+      localStorage.setItem(CURRENT_SYSTEM_KEY, serialized);
+      backupSetting(CURRENT_SYSTEM_KEY, serialized);
+    } else localStorage.removeItem(CURRENT_SYSTEM_KEY);
   }, [currentSystem]);
 
   const radiusHydrated = useRef(false);
@@ -212,6 +216,7 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
       return;
     }
     localStorage.setItem(RADIUS_KEY, String(radius));
+    backupSetting(RADIUS_KEY, String(radius));
   }, [radius]);
 
   const liveTrackingHydrated = useRef(false);
@@ -220,8 +225,10 @@ export function LocationTrackingProvider({ children }: LocationTrackingProviderP
       liveTrackingHydrated.current = true;
       return;
     }
-    if (liveTrackingCharacterId != null) localStorage.setItem(LIVE_TRACKING_CHARACTER_KEY, String(liveTrackingCharacterId));
-    else localStorage.removeItem(LIVE_TRACKING_CHARACTER_KEY);
+    if (liveTrackingCharacterId != null) {
+      localStorage.setItem(LIVE_TRACKING_CHARACTER_KEY, String(liveTrackingCharacterId));
+      backupSetting(LIVE_TRACKING_CHARACTER_KEY, String(liveTrackingCharacterId));
+    } else localStorage.removeItem(LIVE_TRACKING_CHARACTER_KEY);
   }, [liveTrackingCharacterId]);
 
   const adjacency = useMemo(() => {

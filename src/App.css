@@ -8517,9 +8517,19 @@ img.fit-wheel-clickable:hover {
   letter-spacing: 0.05em;
 }
 
+/* max-height raised from a fixed 240px to a proportional 50% - a fixed cap
+   meant the box could never actually grow to fit more than a couple of
+   tracked/nearby kills, so extra ones just scrolled inside a cramped box
+   instead of the box taking more of the panel's real height (which
+   .map-ticker-list, its flex:1 sibling below, happily gives up since it
+   already shrinks to fit whatever's left). Shrinks back down to just its
+   own content's height the moment there are fewer kills to show, handing
+   that space straight back to the main list - no separate "collapse" logic
+   needed, that's just what a flex-shrink:0 box sized by its own content
+   already does. */
 .map-ticker-proximity {
   flex-shrink: 0;
-  max-height: 240px;
+  max-height: 50%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -8529,8 +8539,19 @@ img.fit-wheel-clickable:hover {
    to its own row underneath "Nearby" - the ticker panel is only 300px
    wide, nowhere near enough to fit that label AND eight radius options
    (0/1/2/3/5/7/9/region) on one line without the buttons spilling past the
-   panel's own edge. */
+   panel's own edge.
+   position: sticky (not just a plain flow child) so that if enough tracked/
+   nearby kills stack up to hit the 50% cap above and this box has to
+   scroll internally, the header/radius-picker stay pinned at its top
+   instead of scrolling away with the kill rows - previously reported as
+   "the nearby and tracked part isn't fixed, it moves up and down with the
+   list". Needs its own opaque background since sticky content still paints
+   over whatever scrolls underneath it. */
 .map-ticker-proximity-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-elevated);
   display: flex;
   align-items: center;
   flex-wrap: wrap;

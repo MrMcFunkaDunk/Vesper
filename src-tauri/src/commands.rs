@@ -1,4 +1,7 @@
-use crate::{abyssal, asset_history, auth, characters, config, esi, fittings, intel_feed, kill_history, kills, map, market, multibox, news, pi, route, scout, settings_sync, skillplans, threats, tracked_entities, wars, wormholes};
+use crate::{
+    abyssal, app_settings_backup, asset_history, auth, characters, config, esi, fittings, intel_feed, kill_history, kills, map, market,
+    multibox, news, pi, route, scout, settings_sync, skillplans, threats, tracked_entities, wars, wormholes,
+};
 #[cfg(windows)]
 use crate::combat_overlay;
 use futures::stream::{self, StreamExt};
@@ -1447,6 +1450,22 @@ pub fn remove_tracked_entity(
 #[tauri::command]
 pub fn restore_settings_backup(app: AppHandle, backup_id: String) -> Result<(), String> {
     settings_sync::restore_backup(&app, &backup_id)
+}
+
+/// The full localStorage-mirroring bag - see app_settings_backup.rs's own
+/// doc comment for why this exists. Read once at app startup to backfill
+/// anything localStorage is missing.
+#[tauri::command]
+pub fn get_app_settings_backup(app: AppHandle) -> HashMap<String, String> {
+    app_settings_backup::load_backup(&app)
+}
+
+/// Mirrors one localStorage key/value pair into the on-disk backup -
+/// called after every write usePersistentState (and the handful of hooks
+/// that manage localStorage directly) makes.
+#[tauri::command]
+pub fn set_app_settings_backup_entry(app: AppHandle, key: String, value: String) -> Result<(), String> {
+    app_settings_backup::set_entry(&app, key, value)
 }
 
 #[tauri::command]

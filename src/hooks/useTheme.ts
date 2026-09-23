@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { backupSetting } from "../lib/settingsBackup";
 
 export type ThemeId =
   | "dark"
@@ -114,7 +115,9 @@ export function useTheme() {
 
   function setTheme(next: ThemeId) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      const serialized = JSON.stringify(next);
+      localStorage.setItem(STORAGE_KEY, serialized);
+      backupSetting(STORAGE_KEY, serialized);
     } catch {
       // Not worth surfacing - worst case the choice doesn't persist across restarts.
     }

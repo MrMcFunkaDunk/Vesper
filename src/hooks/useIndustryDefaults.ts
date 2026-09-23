@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReprocessingFacility, ReprocessingRig, SecurityBand } from "../lib/industryMath";
+import { backupSetting } from "../lib/settingsBackup";
 
 const STORAGE_KEY = "vesper.settings.industryDefaults";
 
@@ -70,7 +71,9 @@ export function useIndustryDefaults() {
       return;
     }
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(defaults));
+      const serialized = JSON.stringify(defaults);
+      localStorage.setItem(STORAGE_KEY, serialized);
+      backupSetting(STORAGE_KEY, serialized);
     } catch {
       // Not worth surfacing - worst case the preference doesn't persist.
     }

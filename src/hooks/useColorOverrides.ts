@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { backupSetting } from "../lib/settingsBackup";
 
 type ColorMap = Record<string, string>;
 
@@ -28,7 +29,9 @@ export function useColorOverrides(storageKey: string) {
       hydrated.current = true;
       return;
     }
-    localStorage.setItem(storageKey, JSON.stringify(colors));
+    const serialized = JSON.stringify(colors);
+    localStorage.setItem(storageKey, serialized);
+    backupSetting(storageKey, serialized);
   }, [storageKey, colors]);
 
   const setColor = useCallback((id: string, hex: string) => {

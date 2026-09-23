@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { RefreshCw, FolderOpen, FolderCog, RotateCcw, Trash2, Save, Plus, Pencil, Copy, Check, X } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import { backupSetting } from "../lib/settingsBackup";
 import {
   getDefaultEveSettingsPath,
   listEveSettingsServers,
@@ -302,6 +303,7 @@ function SettingsSyncPanel({ characters }: SettingsSyncPanelProps) {
       const picked = await openFolderDialog({ directory: true, title: "Select your EVE settings folder (…\\CCP\\EVE)" });
       if (!picked || Array.isArray(picked)) return;
       localStorage.setItem(CUSTOM_PATH_KEY, picked);
+      backupSetting(CUSTOM_PATH_KEY, picked);
       setBasePath(picked);
       setServerPath(null);
       setProfilePath(null);

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { backupSetting } from "../lib/settingsBackup";
 
 const STORAGE_KEY = "vesper.sidebar.order";
 
@@ -32,7 +33,9 @@ export function useNavOrder(defaultIds: string[]) {
       hydrated.current = true;
       return;
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
+    const serialized = JSON.stringify(order);
+    localStorage.setItem(STORAGE_KEY, serialized);
+    backupSetting(STORAGE_KEY, serialized);
   }, [order]);
 
   return { order, setOrder };

@@ -1,4 +1,5 @@
 mod abyssal;
+mod app_settings_backup;
 mod asset_history;
 mod auth;
 mod characters;
@@ -279,6 +280,8 @@ pub fn run() {
             commands::delete_mass_log_entry,
             commands::clear_mass_log,
             commands::get_type_mass,
+            commands::get_app_settings_backup,
+            commands::set_app_settings_backup_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
