@@ -8428,6 +8428,22 @@ img.fit-wheel-clickable:hover {
   cursor: grab;
 }
 
+/* A second, transparent canvas stacked exactly on top of .map-canvas,
+   used only for the small number of actively-pulsing kill dots - see
+   drawPulseOverlay in MapView.tsx for why this is split out from the main
+   canvas (which redraws the entire dense scene - labels, hulls, every
+   system - on every real change, but never the live pulse animation
+   itself any more). pointer-events: none so it never intercepts clicks
+   meant for the real map underneath. */
+.map-pulse-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+
 .map-canvas:active {
   cursor: grabbing;
 }

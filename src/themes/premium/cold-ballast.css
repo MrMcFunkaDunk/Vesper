@@ -56,13 +56,18 @@
 /* Signature atmosphere - the CRT raster running across the whole console,
    fixed to the viewport (not the .shell background, which is mostly
    covered by opaque panels) so it sits over every panel and table the way
-   a real glass tube's scanlines would sit over everything behind it. */
+   a real glass tube's scanlines would sit over everything behind it.
+   Thinned from a 2px-dark/2px-clear, 0.14-alpha cycle to 1px-dark/3px-clear
+   at 0.08 - at z-index 500 (above the map canvas) the old version was a
+   multiply-darkened band across literally half the map's pixel rows, which
+   read as haze/lost contrast rather than texture once compared directly
+   against a competing EVE-map product's much cleaner background. */
 :root[data-theme="cold-ballast"] body::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 500;
   pointer-events: none;
-  background: repeating-linear-gradient(rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.14) 2px 4px);
+  background: repeating-linear-gradient(rgba(0, 0, 0, 0) 0 3px, rgba(0, 0, 0, 0.08) 3px 4px);
   mix-blend-mode: multiply;
 }

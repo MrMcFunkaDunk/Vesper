@@ -1226,36 +1226,6 @@
   z-index: 5;
 }
 
-/* A slow long-range-scanner sweep - screen-blended so it brightens the
-   map underneath rather than covering it, and slow enough (14s) to read
-   as ambient sensor activity, not an attention-grabbing spinner. */
-:root[data-tier="premium"] .map-canvas-wrap::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 4;
-  mix-blend-mode: screen;
-  background: conic-gradient(from 0deg, transparent 0deg, var(--accent-soft) 8deg, transparent 26deg, transparent 360deg);
-  animation: premium-map-sweep 14s linear infinite;
-}
-
-@keyframes premium-map-sweep {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-:root[data-tier="premium"] body[data-reduce-motion="true"] .map-canvas-wrap::after {
-  display: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root[data-tier="premium"] .map-canvas-wrap::after {
-    display: none;
-  }
-}
-
 /* ---------------------------------------------------------------------------
    TARGETING HUD - a scope frame around the whole viewport, a live cursor
    grid-position readout, and a "lock-on" bracket animation on every system
@@ -1274,8 +1244,12 @@
      same "looking at this through a CRT sensor screen" language the
      dashboard monitors and telemetry readouts already use, extended to
      the one full-viewport display in the app. Thin and low-opacity enough
-     to read as texture, not as a pattern fighting the map underneath it. */
-  background-image: repeating-linear-gradient(rgba(255, 255, 255, 0.025) 0px, rgba(255, 255, 255, 0.025) 1px, transparent 1px, transparent 3px);
+     to read as texture, not as a pattern fighting the map underneath it.
+     (Cold Ballast additionally layers its own, much stronger multiply
+     raster on top via body::after - see cold-ballast.css - that one, not
+     this one, was the real source of the map looking hazy/muted next to a
+     reference screenshot; this shared one was already faint.) */
+  background-image: repeating-linear-gradient(rgba(255, 255, 255, 0.02) 0px, rgba(255, 255, 255, 0.02) 1px, transparent 1px, transparent 3px);
 }
 
 :root[data-tier="premium"] .map-hud-corner {

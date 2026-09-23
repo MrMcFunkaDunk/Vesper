@@ -87,36 +87,16 @@ const LABEL_MAX_VISIBLE = 200;
 // budget without the glow costing a stutter.
 const GLOW_SPRITE_SIZE = 128;
 
-function buildGlowSprite(rgb: string): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = GLOW_SPRITE_SIZE;
-  canvas.height = GLOW_SPRITE_SIZE;
-  const c = canvas.getContext("2d")!;
-  const r = GLOW_SPRITE_SIZE / 2;
-  const gradient = c.createRadialGradient(r, r, 0, r, r, r);
-  gradient.addColorStop(0, `rgba(${rgb}, 0.3)`);
-  gradient.addColorStop(0.5, `rgba(${rgb}, 0.08)`);
-  gradient.addColorStop(1, `rgba(${rgb}, 0)`);
-  c.fillStyle = gradient;
-  c.beginPath();
-  c.arc(r, r, r, 0, Math.PI * 2);
-  c.fill();
-  return canvas;
-}
-
-function getGlowSprite(cache: Map<number, HTMLCanvasElement>, secTenth: number, rgb: string): HTMLCanvasElement {
-  let sprite = cache.get(secTenth);
-  if (!sprite) {
-    sprite = buildGlowSprite(rgb);
-    cache.set(secTenth, sprite);
-  }
-  return sprite;
-}
-
-/** Same pre-rendered-sprite trick as buildGlowSprite/getGlowSprite above,
- * for the node's own "glassy disc" fill - a different gradient shape (a
- * hard edge at the circle boundary rather than a soft falloff well beyond
- * it), so it gets its own sprite/cache rather than reusing the glow's. */
+/** The node's normal, at-rest fill - a dim glassy disc (radial gradient,
+ * darker at the center than the rim) inside a crisp full-brightness
+ * security-colour ring drawn separately in draw()/drawPulseOverlay. Tonight
+ * briefly went through a much brighter "neon" version of this (white-hot
+ * core, bigger glow) applied to every system regardless of activity - that
+ * read as bold up close but defeated the actual point of a kill pulse: if
+ * every system is already blazing, a pulsing one doesn't stand out. Reverted
+ * back to this original look for anything NOT actively pulsing; the bright
+ * version now lives on as buildActiveDiscSprite below, used only by
+ * drawPulseOverlay for systems a kill is actually happening in. */
 function buildDiscSprite(rgb: string): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = GLOW_SPRITE_SIZE;
@@ -137,6 +117,48 @@ function getDiscSprite(cache: Map<number, HTMLCanvasElement>, secTenth: number, 
   let sprite = cache.get(secTenth);
   if (!sprite) {
     sprite = buildDiscSprite(rgb);
+    cache.set(secTenth, sprite);
+  }
+  return sprite;
+}
+
+/** The BRIGHT, neon look - used only for systems actively pulsing from a
+ * kill (drawPulseOverlay), never for a system at rest (draw() uses the
+ * normal buildDiscSprite above instead, and no longer draws any ambient
+ * glow at all for a resting system - see the removed showGlow block in
+ * draw()'s main loop). This is tonight's full "reference EVE-map product"
+ * treatment: a white-hot core that blows out toward white before the
+ * security color takes over, the way an actual neon tube's hottest point
+ * overexposes to white with the tube's true color only visible around it -
+ * solid white out to ~45% of the radius before fading into the security
+ * color, tuned against a reference screenshot until it read as genuinely
+ * neon rather than just "a bright colored circle". Now exclusively an
+ * "something just happened here" signal rather than every system's default
+ * look, so a pulsing system actually contrasts against a normal, quiet map
+ * instead of blending into one that's already bright everywhere. */
+function buildActiveDiscSprite(rgb: string): HTMLCanvasElement {
+  const canvas = document.createElement("canvas");
+  canvas.width = GLOW_SPRITE_SIZE;
+  canvas.height = GLOW_SPRITE_SIZE;
+  const c = canvas.getContext("2d")!;
+  const r = GLOW_SPRITE_SIZE / 2;
+  const gradient = c.createRadialGradient(r, r, 0, r, r, r);
+  gradient.addColorStop(0, `rgba(255, 255, 255, 1)`);
+  gradient.addColorStop(0.45, `rgba(255, 255, 255, 0.95)`);
+  gradient.addColorStop(0.65, `rgba(${rgb}, 0.95)`);
+  gradient.addColorStop(0.85, `rgba(${rgb}, 0.85)`);
+  gradient.addColorStop(1, `rgba(${rgb}, 0.55)`);
+  c.fillStyle = gradient;
+  c.beginPath();
+  c.arc(r, r, r, 0, Math.PI * 2);
+  c.fill();
+  return canvas;
+}
+
+function getActiveDiscSprite(cache: Map<number, HTMLCanvasElement>, secTenth: number, rgb: string): HTMLCanvasElement {
+  let sprite = cache.get(secTenth);
+  if (!sprite) {
+    sprite = buildActiveDiscSprite(rgb);
     cache.set(secTenth, sprite);
   }
   return sprite;
@@ -185,8 +207,6 @@ function getHeatGlowSprite(
   }
   return sprite;
 }
-
-const GLOW_MAX_VISIBLE = 2500;
 
 interface ServiceIcon {
   abbr: string;
@@ -547,7 +567,6 @@ interface MapThemeColors {
   inkColor: string;
   accentHex: string;
   accentRgb: string;
-  dangerRgb: string;
   gateRgb: string;
   gateHex: string;
   homeRoofBg: string;
@@ -589,7 +608,6 @@ function resolveThemeColors(): MapThemeColors {
     inkColor: rootStyle.getPropertyValue("--text").trim() || "#e6ecf5",
     accentHex,
     accentRgb: hexToRgbTriple(accentHex),
-    dangerRgb: hexToRgbTriple(rootStyle.getPropertyValue("--danger").trim() || "#e0685f"),
     gateRgb: hexToRgbTriple(rootStyle.getPropertyValue("--gate").trim() || "#d9a35b"),
     gateHex,
     homeRoofBg: rootStyle.getPropertyValue("--bg-elevated-2").trim() || "#1a1c21",
@@ -703,22 +721,70 @@ function computeSystemHeat(heat: SystemKillHeat[]): Map<number, SystemHeat> {
  * pulse window before the data even arrives, silently making the pulse a
  * no-op despite kills flowing in correctly. Anchoring to first-noticed
  * instead guarantees the full window is always available, independent of
- * how stale the upstream data was by the time it got here. */
-const PULSE_ANIMATION_MS = 15_000;
+ * how stale the upstream data was by the time it got here.
+ *
+ * A second, separate delay stacks on top of that one: the map's own heat
+ * data only re-polls every HEAT_REFRESH_MS (30s), entirely independent of
+ * the live kill ticker feed - a kill can already be sitting on the ticker
+ * for the better part of 30s before the map's next poll even notices it
+ * and starts this clock. A short window was mostly or fully spent by the
+ * time a pilot's attention actually made it from the ticker to the map, so
+ * this needs real headroom past that 30s poll gap, not just past the
+ * enrichment delay above - back up to a full minute now that drawing the
+ * animation itself is cheap regardless of how long it runs (see
+ * drawPulseOverlay), which was the only reason it had been trimmed down. */
+const PULSE_ANIMATION_MS = 60_000;
 
-/** Shared breathing wave for anything tied to a system's active-kill pulse
- * (the heat glow/rings and the system dot itself) - phase-offset per
- * system (via systemId) so a cluster of active systems doesn't throb in
- * lockstep, and using the same now/systemId inputs in both places keeps
- * them visibly in sync with each other. Returns a value from `floor` up
+/** How long before PULSE_ANIMATION_MS's own deadline the breathing starts
+ * winding down, rather than just cutting off mid-breath whatever size it
+ * happens to be at - see the damping factor in drawPulseOverlay. Roughly
+ * two full breath cycles (see pulseWave), so it reads as "settling down"
+ * rather than the abrupt stop a shorter taper would still look like. */
+const PULSE_FADE_MS = 9_000;
+
+/** Caps how often the pulse loop actually redraws, independent of the
+ * display's real refresh rate (60/120/144Hz). draw() redraws the *entire*
+ * scene from scratch every call - full label layout (measureText + overlap
+ * placement for every candidate), hull paths, every visible system - not
+ * just the couple of pixels the pulsing dot itself needs, so letting a
+ * ~4.7s breathing cycle (see pulseWave) run at the display's native rate
+ * means paying that full cost 2-4x more often than the animation actually
+ * needs to look smooth. 30fps is already well past what a wave this slow
+ * needs to read as continuous. */
+const PULSE_FRAME_INTERVAL_MS = 1000 / 30;
+
+/** The ongoing breathing glow alone wasn't a loud enough announcement that a
+ * kill had just landed - reported as "not immediately obvious when it starts
+ * to pulse". This is a one-shot "sonar ping" layered on top of it for the
+ * first PULSE_BURST_MS of a system's pulse only: a few expanding, fading
+ * rings plus a brief bright flash, modeled on a reference screenshot of
+ * concentric rings radiating outward from a just-hit system. Purely a
+ * one-time attention-getter for the *start* of a pulse - the steady
+ * breathing (pulseWave/dotAlpha/baseRadius above) is unaffected and keeps
+ * running for the system's full PULSE_ANIMATION_MS as before. */
+const PULSE_BURST_MS = 1300;
+const PULSE_BURST_RING_COUNT = 3;
+const PULSE_BURST_RING_STAGGER_MS = 220;
+const PULSE_BURST_RING_LIFE_MS = 850;
+const PULSE_BURST_FLASH_MS = 350;
+
+/** Shared breathing wave for the system dot itself while a kill's actively
+ * landing there - phase-offset per system (via systemId) so a cluster of
+ * active systems doesn't throb in lockstep. Returns a value from `floor` up
  * to 1. reducedMotion skips the oscillation entirely and holds at the
  * brightest/fully-visible end (1) - the information ("this is actively
  * pulsing") stays legible, only the motion itself is removed, matching
- * prefers-reduced-motion's own intent rather than just dimming things. */
+ * prefers-reduced-motion's own intent rather than just dimming things.
+ *
+ * A slow, deliberate breath (~4.7s per cycle) rather than a fast flicker -
+ * this now carries the *entire* "a kill just happened here" signal on its
+ * own (see isDotActive below), not just an alpha fade backed up by a
+ * separate colored ring, so it needs to read as a clear, calm pulse rather
+ * than something urgent or twitchy. */
 function pulseWave(now: number, systemId: number, floor: number, reducedMotion: boolean): number {
   if (reducedMotion) return 1;
   const phase = (systemId % 1000) * 0.31;
-  const wave = 0.5 + 0.5 * Math.sin(now / 300 + phase);
+  const wave = 0.5 + 0.5 * Math.sin(now / 750 + phase);
   return floor + (1 - floor) * wave;
 }
 
@@ -1014,6 +1080,7 @@ function MapView({
   onToggleFullscreen,
 }: MapViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pulseCanvasRef = useRef<HTMLCanvasElement>(null);
   const dataRef = useRef<MapData | null>(null);
   const regionCentersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const constellationCentersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -1054,8 +1121,8 @@ function MapView({
   const fwGatePathsRef = useRef<FocusGatePaths>(emptyFocusGatePaths());
   const sovGatePathsRef = useRef<FocusGatePaths>(emptyFocusGatePaths());
   const incursionGatePathsRef = useRef<FocusGatePaths>(emptyFocusGatePaths());
-  const glowSpriteCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const discSpriteCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const activeDiscSpriteCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   // Not cleared on theme change like the two above - kill/traffic/NPC heat
   // colors are fixed constants (HEAT_COLOR_STOPS etc.), not theme-derived.
   const heatGlowSpriteCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
@@ -1129,8 +1196,13 @@ function MapView({
   // this is populated for why the two can differ by a lot). The pulse
   // check below reads this instead of heatEntry.mostRecentAt directly.
   const heatFirstNoticedAtRef = useRef<Map<number, number>>(new Map());
+  // Killmail ids already handed to the ticker-triggered pulse effect below,
+  // so a kill already in useRecentActivity's feed by the time this mounts
+  // (or one that arrives again in a later poll batch) never re-triggers.
+  const processedTickerKillIdsRef = useRef<Set<number>>(new Set());
   const animFrameRef = useRef<number | null>(null);
   const rafPulseIdRef = useRef<number | null>(null);
+  const lastPulseDrawAtRef = useRef(0);
   // Whether any CURRENTLY VISIBLE system is actively pulsing, set once per
   // draw() by the main node loop below (which already checks this per
   // system for the dot-pulse itself, so tracking it here is free) - the
@@ -1272,8 +1344,8 @@ function MapView({
       // Cached sprites bake in the OLD theme's security colors - stale
       // once the palette changes, so they're dropped and lazily rebuilt
       // from the freshly-resolved colors above on the next draw().
-      glowSpriteCacheRef.current.clear();
       discSpriteCacheRef.current.clear();
+      activeDiscSpriteCacheRef.current.clear();
       requestDraw();
     }
     window.addEventListener(THEME_CHANGE_EVENT, handleThemeChange);
@@ -1282,6 +1354,48 @@ function MapView({
   }, []);
   const reportError = useErrorReporter();
   const { kills } = useRecentActivity();
+
+  // Pulses the map the instant a kill actually reaches the ticker, instead
+  // of waiting for the map's own much slower HEAT_REFRESH_MS (30s) poll to
+  // separately notice the same kill - useRecentActivity's own feed already
+  // updates far more often than that (see its own doc comment), so there's
+  // no reason to make a pilot wait out two independent delays stacked on
+  // top of each other just to see something they can already read on the
+  // ticker. The next real resync() still runs on its normal schedule and
+  // simply confirms/overwrites this - this only ever shortens how long the
+  // pulse takes to *start*, never how the "last hour" heat count itself is
+  // computed.
+  useEffect(() => {
+    const now = Date.now();
+    let sawNew = false;
+    for (const kill of kills) {
+      if (processedTickerKillIdsRef.current.has(kill.killmail_id)) continue;
+      processedTickerKillIdsRef.current.add(kill.killmail_id);
+      // The initial snapshot on mount can include kills from minutes ago -
+      // those aren't "just happening" any more and shouldn't get a fresh
+      // pulse just because this client only now loaded them.
+      const killedAt = Date.parse(kill.time);
+      if (!Number.isFinite(killedAt) || now - killedAt > PULSE_ANIMATION_MS) continue;
+
+      const existing = heatMapRef.current.get(kill.system_id);
+      heatMapRef.current.set(kill.system_id, { count: (existing?.count ?? 0) + 1, mostRecentAt: killedAt });
+      heatFirstNoticedAtRef.current.set(kill.system_id, now);
+      sawNew = true;
+    }
+    if (sawNew) {
+      // Paints the very first frame synchronously, right now, rather than
+      // relying entirely on ensureAnimating's loop to schedule it whenever
+      // it next happens to tick - the loop takes over from here for every
+      // frame after this one, but the pilot shouldn't wait even one extra
+      // tick to see the system they just watched land on the ticker start
+      // pulsing.
+      drawPulseOverlay();
+      ensureAnimating();
+      requestDraw();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kills]);
+
   const { alertKillIds, currentSystem, setCurrentSystem, radius, setRadius } = useLocationTracking();
   // A tracked friend's own death belongs in the same "surface this above
   // everything else" box as a nearby kill, regardless of where in New Eden
@@ -1605,7 +1719,6 @@ function MapView({
       inkColor,
       accentHex,
       accentRgb,
-      dangerRgb,
       gateRgb,
       gateHex,
       homeRoofBg,
@@ -1677,8 +1790,12 @@ function MapView({
     // lineWidth/dash lengths are divided by scale to compensate, since
     // they're interpreted in the transform's own coordinate space once it's
     // applied, not screen pixels.
-    const localLineAlpha = isLightTheme ? 0.62 : 0.5;
-    const distantLineAlpha = isLightTheme ? 0.48 : 0.36;
+    // Dark-theme values pushed up from 0.5/0.36 - a reference screenshot of
+    // a similar EVE-map product had noticeably more saturated, visible gate
+    // lines than ours; light theme is untouched since it wasn't part of
+    // that comparison and already has its own separate contrast needs.
+    const localLineAlpha = isLightTheme ? 0.62 : 0.68;
+    const distantLineAlpha = isLightTheme ? 0.48 : 0.52;
     // Every currently-active "focus" filter's own geometry (see
     // buildFocusGatePaths/*GatePathsRef) - empty when nothing is toggled on,
     // in which case the plain security-tiered gateBucketPathsRef below draws
@@ -1792,7 +1909,11 @@ function MapView({
       ctx.restore();
     }
 
-    const dotRadius = Math.min(6, Math.max(1.4, 1.4 * Math.sqrt(zoomRatio)));
+    // Floor/cap/multiplier all bumped from 1.4/6/1.4 - a matched-zoom
+    // comparison against a reference EVE-map product showed its nodes
+    // reading noticeably chunkier than ours even once zoom was equalized,
+    // not just brighter.
+    const dotRadius = Math.min(7, Math.max(1.6, 1.6 * Math.sqrt(zoomRatio)));
     const now = Date.now();
 
     // Whether ANY "focus" filter (FW / Sov / Incursion) is on - hoisted up
@@ -1879,12 +2000,6 @@ function MapView({
       if (inView(system.x, system.y)) visible.push(system);
     }
     visibleSystemsRef.current = visible;
-    // A soft glow behind every node's ring (see below) reads great at a
-    // constellation/region view but adds a radial gradient per system - skip
-    // it past this many on screen at once (a whole-cluster/full-universe
-    // zoom-out, where individual glows wouldn't be legible at that density
-    // anyway) so panning around a busy area of space never drops frames.
-    const showGlow = visible.length <= GLOW_MAX_VISIBLE;
     let anyVisiblePulse = false;
 
     for (const system of visible) {
@@ -1897,11 +2012,19 @@ function MapView({
       const isDestination = system.id === destinationIdRef.current;
       const heatEntryForDot = heatMapRef.current.get(system.id);
       const heatBump = heatIntensity(heatEntryForDot?.count ?? 0) * 3.4;
-      // The dot itself pulses too while a kill's actively landing here -
-      // fading from fully transparent back up to its real security color,
-      // not swapping color, so "which system is this" (security status)
-      // never gets lost underneath "something's happening here right now".
-      // Same now/systemId pulse as the glow above, so they breathe together.
+      // The dot itself pulses - both bigger and brighter, not a different
+      // color - while a kill's actively landing here. This is now the
+      // *entire* "something just happened" signal (there's no separate
+      // colored ring any more): no single fixed ring color could ever read
+      // clearly against every security tier / FW / Sov color already on
+      // the map, but the dot's own real color simply growing and
+      // brightening doesn't have to compete with anything, and "which
+      // system is this" (security status) never gets lost underneath it.
+      // Reads off secHex/secRgb further down (computed after any
+      // focus-filter dimming), so a dimmed system still visibly pulses
+      // under an active FW/Sov/Incursion filter too - just in the same
+      // muted grey every other dimmed system uses, exactly like an
+      // undimmed one pulses in its own real color.
       // Keyed off heatFirstNoticedAtRef (when THIS client first saw this
       // kill), not heatEntryForDot.mostRecentAt (the kill's own timestamp,
       // which can already be a minute or more old by the time the
@@ -1918,7 +2041,15 @@ function MapView({
       // brief assemble-in animation (see drawSelectionReticle) to actually
       // play, rather than only ever redrawing on the next unrelated event.
       if (isSelected && !prefersReducedMotionRef.current && now - selectedAtRef.current < 150) anyVisiblePulse = true;
-      const dotAlpha = isDotActive ? pulseWave(now, system.id, 0.04, prefersReducedMotionRef.current) : 1;
+      // This canvas never renders the live breathing animation itself any
+      // more - see drawPulseOverlay, a separate and much cheaper canvas
+      // layered on top that draws just the actively-pulsing dots each
+      // frame. Redoing the *entire* scene (full label layout, hull paths,
+      // every visible system) at up to 144fps just to animate a couple of
+      // pixels was the real performance cost, not the animation itself -
+      // isDotActive is still computed above purely to know whether that
+      // separate loop needs to keep running at all.
+      const dotAlpha = 1;
       const baseRadius =
         (isSelected ? dotRadius * 2.2 : isCurrentLocation ? dotRadius * 2 : isHovered ? dotRadius * 1.7 : dotRadius) + heatBump;
       const secTenth = clamp(Math.round(system.security * 10), 0, 10);
@@ -1945,29 +2076,14 @@ function MapView({
       const secHex = focusDimmed ? mutedHex : securityHexByTenth[secTenth];
       const secRgb = focusDimmed ? mutedRgb : securityRgbByTenth[secTenth];
 
-      // Soft halo behind the node - the in-game 2D map's systems read as
-      // glowing points of light, not flat dots, and this is the cheap
-      // Canvas2D approximation of that (a real bloom pass needs WebGL).
-      // Skipped entirely (for BOTH dimmed and undimmed systems) while any
-      // focus filter is active - not just for dimmed ones. A relevant
-      // system's own glow radius (baseRadius * 2.1) is over double the dot
-      // itself, and with many relevant systems packed into one cluster
-      // (e.g. a whole sov-owned null-sec region) their overlapping glows
-      // compound into a big blob of circles - while dimmed neighbors right
-      // next to them render as plain small dots with no glow at all, since
-      // dimming already skips it. That asymmetry reads as "some systems
-      // arbitrarily got extra decoration" rather than the intended "color
-      // alone marks what's relevant" - so under a filter, glow is off for
-      // everyone and color is the only thing doing the work.
-      if (showGlow && !isFocusFilterActive) {
-        const glowRadius = baseRadius * 2.1;
-        const sprite = getGlowSprite(glowSpriteCacheRef.current, spriteKey, secRgb);
-        ctx.save();
-        ctx.globalCompositeOperation = "screen";
-        ctx.globalAlpha = dotAlpha;
-        ctx.drawImage(sprite, sx - glowRadius, sy - glowRadius, glowRadius * 2, glowRadius * 2);
-        ctx.restore();
-      }
+      // No ambient glow/halo for a resting system any more - that's now
+      // exclusively a "kill happening here" signal, drawn only by
+      // drawPulseOverlay for systems actively pulsing (see
+      // buildActiveDiscSprite's own comment). A resting system gets just
+      // the plain disc + ring below, same as before any of tonight's neon
+      // work - the point being contrast: a pulsing system should stand out
+      // against a normal, quiet map, not blend into one that already glows
+      // everywhere.
 
       // The node itself: a dim glassy disc (radial gradient, darker at the
       // center than the rim) inside a crisp full-brightness security-colour
@@ -2001,20 +2117,6 @@ function MapView({
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.globalAlpha = 1;
-      }
-
-      // A pulsing outline just outside the dot itself, separate from the
-      // (non-pulsing) heat glow above - the glow says "this system has been
-      // hot", this ring says "a kill is landing here right now", and
-      // without its own border the dot's alpha-only pulse was too subtle to
-      // notice at a glance.
-      if (isDotActive) {
-        const borderWave = pulseWave(now, system.id, 0.15, prefersReducedMotionRef.current);
-        ctx.beginPath();
-        ctx.arc(sx, sy, baseRadius + 2.5, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${dangerRgb}, ${clamp(borderWave, 0.15, 1)})`;
-        ctx.lineWidth = 1.2 + borderWave * 1.6;
-        ctx.stroke();
       }
 
       // A fixed-pixel-radius ring (not scaled by zoom, unlike the dot itself)
@@ -2090,9 +2192,9 @@ function MapView({
       // jumps to the new system the moment the location changes (see the
       // currentSystemIdRef effect below).
       if (isCurrentLocation) {
-        // A warm bloom behind the ring - always drawn regardless of
-        // showGlow, since there's only ever one of these on screen at once,
-        // matching the soft white/gold halo the in-game 2D map puts on
+        // A warm bloom behind the ring - unrelated to the kill-pulse glow
+        // removed above, since there's only ever one of these on screen at
+        // once, matching the soft white/gold halo the in-game 2D map puts on
         // wherever your ship actually is.
         const haloRadius = baseRadius * 6.5;
         const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, haloRadius);
@@ -2354,6 +2456,193 @@ function MapView({
    * purely the backstop for when rAF itself is the thing not firing -
    * whichever wins the race clears drawScheduledRef, so only one actually
    * draws. */
+  /** The cheap counterpart to draw() - repaints only the small, separate
+   * .map-pulse-canvas layered on top of the real map (see its own CSS
+   * comment) with just the systems actively pulsing right now, at their
+   * live animated size/alpha. draw() itself never renders that live
+   * animation any more (see the dotAlpha/baseRadius comment in its main
+   * loop) - it always paints every system "at rest", including the ones
+   * this function is also drawing, so the two layers only ever differ by
+   * exactly the couple of pixels the pulse itself adds, and align exactly
+   * once a pulse settles back to its resting phase. Duplicates a chunk of
+   * per-system math draw() already does (spriteKey/secHex/secRgb, glow +
+   * disc + ring) rather than sharing a helper - the two need genuinely
+   * different inputs (this one only ever looks at heatMapRef's own
+   * handful of entries, never the full visible-systems list), and keeping
+   * draw() itself completely untouched by this split was worth the
+   * duplication given its size. */
+  /** The one-shot "sonar ping" that announces a pulse's very start - see
+   * PULSE_BURST_MS above. A brief additive flash at the center (fades over
+   * PULSE_BURST_FLASH_MS) plus a few staggered rings expanding outward and
+   * fading as they grow, so the moment a kill lands reads as an unmistakable
+   * event rather than just a dot that's slightly bigger than before. */
+  function drawPulseBurst(ctx: CanvasRenderingContext2D, sx: number, sy: number, baseRadius: number, secRgb: string, elapsed: number) {
+    if (elapsed < PULSE_BURST_FLASH_MS) {
+      const flashProgress = elapsed / PULSE_BURST_FLASH_MS;
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = `rgba(${secRgb}, ${((1 - flashProgress) * 0.85).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, baseRadius * (1.5 + flashProgress * 1.5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    for (let i = 0; i < PULSE_BURST_RING_COUNT; i++) {
+      const ringElapsed = elapsed - i * PULSE_BURST_RING_STAGGER_MS;
+      if (ringElapsed < 0 || ringElapsed >= PULSE_BURST_RING_LIFE_MS) continue;
+      const progress = ringElapsed / PULSE_BURST_RING_LIFE_MS;
+      const eased = 1 - (1 - progress) * (1 - progress);
+      const ringRadius = baseRadius + eased * baseRadius * 6;
+      ctx.beginPath();
+      ctx.arc(sx, sy, ringRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${secRgb}, ${((1 - progress) * 0.75).toFixed(3)})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
+  function drawPulseOverlay() {
+    const canvas = canvasRef.current;
+    const pulseCanvas = pulseCanvasRef.current;
+    const data = dataRef.current;
+    if (!canvas || !pulseCanvas || !data) return;
+    const ctx = pulseCanvas.getContext("2d");
+    if (!ctx) return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (pulseCanvas.width !== Math.round(width * dpr) || pulseCanvas.height !== Math.round(height * dpr)) {
+      pulseCanvas.width = Math.round(width * dpr);
+      pulseCanvas.height = Math.round(height * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const now = Date.now();
+    const { scale, translateX, translateY } = transformRef.current;
+    const toScreenX = (x: number) => x * scale + translateX;
+    const toScreenY = (y: number) => y * scale + translateY;
+    const marginPx = 60;
+    const dataMinX = (-translateX - marginPx) / scale;
+    const dataMaxX = (width - translateX + marginPx) / scale;
+    const dataMinY = (-translateY - marginPx) / scale;
+    const dataMaxY = (height - translateY + marginPx) / scale;
+    const inView = (x: number, y: number) => x >= dataMinX && x <= dataMaxX && y >= dataMinY && y <= dataMaxY;
+
+    const zoomRatio = scale / (fitScaleRef.current || scale);
+    // Must match draw()'s own dotRadius formula exactly - otherwise a
+    // system's dot would visibly jump in size the moment it starts or
+    // stops pulsing, switching between whichever function last drew it.
+    const dotRadius = Math.min(7, Math.max(1.6, 1.6 * Math.sqrt(zoomRatio)));
+    const isFocusFilterActive = showFwContestedRef.current || showSovRef.current || showIncursionsRef.current;
+    const systemById = systemByIdRef.current;
+    const { mutedRgb, mutedHex, securityHexByTenth, securityRgbByTenth } = themeColorsRef.current;
+    const reducedMotion = prefersReducedMotionRef.current;
+
+    // Same "only while a real kill just landed, never off the loop's own
+    // schedule" gate draw() used to apply inline - reducedMotion never
+    // keeps this loop alive on its own (matching pulseWave's own contract:
+    // it holds at the brightest/biggest state instead of animating), so a
+    // reduced-motion pilot still gets exactly one settled-in paint of that
+    // held state from whichever real change triggered this tick, then the
+    // loop stops rescheduling itself.
+    let anyActive = false;
+
+    for (const [systemId, entry] of heatMapRef.current) {
+      if (entry.count <= 0) continue;
+      const firstNoticed = heatFirstNoticedAtRef.current.get(systemId) ?? 0;
+      if (now - firstNoticed >= PULSE_ANIMATION_MS) continue;
+      const system = systemById.get(systemId);
+      if (!system || !inView(system.x, system.y)) continue;
+
+      if (!reducedMotion) anyActive = true;
+
+      // Winds the breathing down to nothing over the final PULSE_FADE_MS
+      // instead of just cutting off wherever it happens to be mid-cycle -
+      // by PULSE_ANIMATION_MS itself, fadeFactor has already reached 0, so
+      // this always settles back to a small, resting-sized dot rather than
+      // vanishing mid-enlarged.
+      const elapsed = now - firstNoticed;
+      const fadeStart = PULSE_ANIMATION_MS - PULSE_FADE_MS;
+      const fadeFactor = elapsed <= fadeStart ? 1 : clamp(1 - (elapsed - fadeStart) / PULSE_FADE_MS, 0, 1);
+      const killPulse = pulseWave(now, systemId, 0, reducedMotion) * fadeFactor;
+      const dotAlpha = 0.45 + killPulse * 0.55;
+      const heatBump = heatIntensity(entry.count) * 3.4;
+      const isSelected = systemId === selectedIdRef.current;
+      const isCurrentLocation = systemId === currentSystemIdRef.current;
+      const isHovered = !isSelected && systemId === hoveredIdRef.current;
+      const baseRadius =
+        (isSelected ? dotRadius * 2.2 : isCurrentLocation ? dotRadius * 2 : isHovered ? dotRadius * 1.7 : dotRadius) +
+        heatBump +
+        killPulse * dotRadius * 1.4;
+
+      const secTenth = clamp(Math.round(system.security * 10), 0, 10);
+      const isFocusRelevant =
+        (showFwContestedRef.current && fwSystemsRef.current.has(system.id)) ||
+        (showSovRef.current && hasSovOwner(sovRef.current.get(system.id))) ||
+        (showIncursionsRef.current && incursionsRef.current.has(system.id));
+      const focusDimmed = isFocusFilterActive && !isFocusRelevant;
+      const spriteKey = focusDimmed ? -1 : secTenth;
+      const secHex = focusDimmed ? mutedHex : securityHexByTenth[secTenth];
+      const secRgb = focusDimmed ? mutedRgb : securityRgbByTenth[secTenth];
+
+      const sx = toScreenX(system.x);
+      const sy = toScreenY(system.y);
+
+      if (!isFocusFilterActive) {
+        // The exact same neon recipe the ticker's own security/wormhole/
+        // abyssal badges use (.map-ticker-sec-badge etc in App.css: two
+        // stacked `text-shadow` blurs, both the badge's own color at 55%
+        // opacity) - via canvas's shadowBlur/shadowColor, the direct
+        // equivalent of CSS's text-shadow, cast from the dot's own bright
+        // ring rather than a separate soft gradient-sprite haze. Drawn as
+        // two throwaway strokes of the real ring (same shape the crisp
+        // stroke below draws again on top, without a shadow), so only
+        // each pass's blurred halo actually shows - the strokes
+        // themselves are fully hidden under the disc/ring drawn after.
+        const glowColor = `rgba(${secRgb}, ${(dotAlpha * 0.55).toFixed(3)})`;
+        ctx.save();
+        ctx.strokeStyle = secHex;
+        ctx.lineWidth = isCurrentLocation ? 2 : 1.3;
+        ctx.shadowColor = glowColor;
+        ctx.beginPath();
+        ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
+        ctx.shadowBlur = baseRadius * 1.6;
+        ctx.stroke();
+        ctx.shadowBlur = baseRadius * 0.8;
+        ctx.stroke();
+        ctx.restore();
+
+        // Skipped under reduced motion, same as the rest of this loop's
+        // animation - a fast-expanding ring is exactly the kind of motion
+        // that setting exists to suppress, and the loop doesn't keep
+        // rescheduling for such users anyway (see the anyActive comment
+        // above), so it would only ever render one arbitrary frozen frame
+        // of the ring mid-expansion rather than the intended full sweep.
+        if (elapsed < PULSE_BURST_MS && !reducedMotion) {
+          drawPulseBurst(ctx, sx, sy, baseRadius, secRgb, elapsed);
+        }
+      }
+
+      const discSprite = getActiveDiscSprite(activeDiscSpriteCacheRef.current, spriteKey, secRgb);
+      ctx.globalAlpha = dotAlpha;
+      ctx.drawImage(discSprite, sx - baseRadius, sy - baseRadius, baseRadius * 2, baseRadius * 2);
+      ctx.globalAlpha = 1;
+
+      ctx.beginPath();
+      ctx.arc(sx, sy, baseRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = secHex;
+      ctx.globalAlpha = dotAlpha;
+      ctx.lineWidth = isCurrentLocation ? 2 : 1.3;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    hasVisiblePulseRef.current = anyActive;
+  }
+
   function requestDraw() {
     if (drawScheduledRef.current) return;
     drawScheduledRef.current = true;
@@ -2393,10 +2682,25 @@ function MapView({
   // Both stop rescheduling themselves independently once nothing is
   // actively pulsing, and either one restarts the other on the next real
   // kill via ensureAnimating's own guard.
+  /** Everything this loop needs to keep alive uses drawPulseOverlay's cheap
+   * separate-canvas path, EXCEPT the selection reticle's own brief (150ms)
+   * assemble-in animation, which is real DOM/canvas content drawPulseOverlay
+   * doesn't touch and only draw() itself knows how to paint - falling back
+   * to the full redraw for that one short, rare window costs nothing
+   * meaningful next to how much cheaper the common (kill-pulse) case just
+   * got. */
+  function pulseTick() {
+    if (selectedIdRef.current != null && !prefersReducedMotionRef.current && Date.now() - selectedAtRef.current < 150) {
+      draw();
+    } else {
+      drawPulseOverlay();
+    }
+  }
+
   function ensureAnimating() {
     if (animFrameRef.current === null) {
       animFrameRef.current = window.setInterval(() => {
-        draw();
+        pulseTick();
         // Viewport-aware, not a universe-wide check - see
         // hasVisiblePulseRef's own comment for why that check almost never
         // returns false and was keeping this loop running near-permanently.
@@ -2409,7 +2713,16 @@ function MapView({
 
     if (rafPulseIdRef.current === null) {
       const tick = () => {
-        draw();
+        // Still requests every real display frame (rAF itself can't be
+        // paced any coarser than that), but only pays for an actual redraw
+        // at PULSE_FRAME_INTERVAL_MS - see its own comment for why that's
+        // already smooth enough for this animation, and how much that
+        // saves on a 120Hz+ display in particular.
+        const now = performance.now();
+        if (now - lastPulseDrawAtRef.current >= PULSE_FRAME_INTERVAL_MS) {
+          lastPulseDrawAtRef.current = now;
+          pulseTick();
+        }
         if (hasVisiblePulseRef.current) {
           rafPulseIdRef.current = requestAnimationFrame(tick);
         } else {
@@ -3422,6 +3735,9 @@ function MapView({
               <p className="detail-empty">Loading universe map...</p>
             ) : (
               <canvas ref={canvasRef} className="map-canvas" />
+            )}
+            {!loading && (
+              <canvas ref={pulseCanvasRef} className="map-pulse-canvas" aria-hidden="true" />
             )}
 
             {premium && (
